@@ -1,0 +1,4 @@
+pyrightconfig.json
+__pycache__
+wandb
+*.egg-info
