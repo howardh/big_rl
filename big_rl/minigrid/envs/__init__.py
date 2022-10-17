@@ -48,6 +48,7 @@ class MinigridPreprocessing(gym.Wrapper):
         env,
         rgb = True,
         screen_size = None,
+        with_mission = False,
     ):
         super().__init__(env)
         assert ( cv2 is not None ), 'opencv-python package not installed!'
@@ -64,6 +65,14 @@ class MinigridPreprocessing(gym.Wrapper):
                         self.env.observation_space['image'].shape[0],
                         self.env.observation_space['image'].shape[1]),
                     dtype=np.uint8)
+
+        self._with_mission = with_mission
+        if not with_mission:
+            assert isinstance(self.env.observation_space, gymnasium.spaces.Dict)
+            self.observation_space = gymnasium.spaces.Dict({
+                k:v for k,v in self.env.observation_space.items()
+                if k != 'mission'
+            })
 
         self.screen_size = screen_size
         self.rgb = rgb
@@ -91,6 +100,8 @@ class MinigridPreprocessing(gym.Wrapper):
         ## XXX: Check for reward permutation (until bug is mixed in minigrid)
         #if self.env.unwrapped.include_reward_permutation:
         #    obs['reward_permutation'] = self.env.unwrapped.reward_permutation
+        if not self._with_mission:
+            obs = {k:v for k,v in obs.items() if k != 'mission'}
         return obs, reward, terminated, truncated, info
 
     def reset(self, **kwargs):
@@ -100,6 +111,8 @@ class MinigridPreprocessing(gym.Wrapper):
         ## XXX: Check for reward permutation (until bug is mixed in minigrid)
         #if self.env.unwrapped.include_reward_permutation:
         #    obs['reward_permutation'] = self.env.unwrapped.reward_permutation
+        if not self._with_mission:
+            obs = {k:v for k,v in obs.items() if k != 'mission'}
         return obs, info
 
 
@@ -1195,6 +1208,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
         fetch_config: dict = None,
         bandits_config: dict = None,
         task_randomization_prob: float = 0,
+        max_steps_multiplier: int = 1,
         seed = None,
     ):
         """
@@ -1224,6 +1238,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
         self.fetch_config = fetch_config
         self.bandits_config = bandits_config
         self.task_randomization_prob = task_randomization_prob
+        self.max_steps_multiplier = max_steps_multiplier
 
         self.rooms = []
 
@@ -1340,7 +1355,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
 
         # Set max steps
         total_room_sizes = sum([room.height * room.width for room in room_list])
-        self.max_steps = total_room_sizes * self.num_trials
+        self.max_steps = total_room_sizes * self.num_trials * self.max_steps_multiplier
 
     def _init_fetch(self, num_objs, num_obj_types=2, num_obj_colors=6, unique_objs=True, prob=1.0):
         """

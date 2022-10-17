@@ -1,5 +1,5 @@
 import itertools
-from typing import Optional, Generator, Dict, List, Any, Sequence, Iterable, Union, Tuple, Mapping
+from typing import Optional, Generator, Dict, List, Any, Sequence, Iterable, Union, Tuple, Mapping, Callable
 import time
 
 from torchtyping import TensorType
@@ -144,6 +144,7 @@ def zip2(*args) -> Iterable[Union[Tuple,Mapping]]:
 def compute_ppo_losses(
         history : VecHistoryBuffer,
         model : torch.nn.Module,
+        preprocess_input_fn: Optional[Callable],
         discount : float,
         gae_lambda : float,
         norm_adv : bool,
@@ -172,9 +173,10 @@ def compute_ppo_losses(
         curr_hidden = tuple([h[0].detach() for h in hidden])
         for o,term in zip2(obs,terminal):
             curr_hidden = tuple([
-                torch.where(term.unsqueeze(0).unsqueeze(2), init_h, h)
+                torch.where(term.unsqueeze(1), init_h, h)
                 for init_h,h in zip(initial_hidden,curr_hidden)
             ])
+            o = preprocess_input_fn(o) if preprocess_input_fn is not None else o
             no = model(o,curr_hidden)
             curr_hidden = no['hidden']
             net_output.append(no)
@@ -202,9 +204,10 @@ def compute_ppo_losses(
         curr_hidden = tuple([h[0].detach() for h in hidden])
         for o,term in zip2(obs,terminal):
             curr_hidden = tuple([
-                torch.where(term.unsqueeze(0).unsqueeze(2), init_h, h)
+                torch.where(term.unsqueeze(1), init_h, h)
                 for init_h,h in zip(initial_hidden,curr_hidden)
             ])
+            o = preprocess_input_fn(o) if preprocess_input_fn is not None else o
             no = model(o,curr_hidden)
             curr_hidden = no['hidden']
             net_output.append(no)
@@ -296,6 +299,12 @@ def train_ppo_atari_single_env(
 
     device = next(model.parameters()).device
 
+    def preprocess_input(obs: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        return {
+            k: torch.tensor(v, device=device)*obs_scale.get(k,1)
+            for k,v in obs.items() if k not in obs_ignore
+        }
+
     history = VecHistoryBuffer(
             num_envs = num_envs,
             max_len=rollout_length+1,
@@ -346,7 +355,7 @@ def train_ppo_atari_single_env(
 
             history.append_obs(
                     {k:v for k,v in obs.items() if k not in obs_ignore}, reward, done,
-                    misc={'hidden': hidden}
+                    misc = {'hidden': hidden}
             )
 
             if done.any():
@@ -365,6 +374,12 @@ def train_ppo_atari_single_env(
                                 'step': global_step_counter[0],
                         }, step = global_step_counter[0])
                     print(f'  reward: {episode_reward[done].mean():.2f}\t len: {episode_steps[done].mean()} \t env: {env_label} ({done2.sum().item()})')
+                # Reset hidden state for finished episodes
+                hidden = tuple(
+                        torch.where(torch.tensor(done, device=device).unsqueeze(1), h0, h)
+                        for h0,h in zip(hidden, model.init_hidden(num_envs)) # type: ignore (???)
+                )
+                # Reset episode stats
                 episode_reward[done] = 0
                 episode_steps[done] = 0
 
@@ -372,6 +387,7 @@ def train_ppo_atari_single_env(
         losses = compute_ppo_losses(
                 history = history,
                 model = model,
+                preprocess_input_fn = preprocess_input,
                 discount = discount,
                 gae_lambda = gae_lambda,
                 norm_adv = norm_adv,
@@ -480,85 +496,43 @@ def train_ppo_atari(
                 remaining_seconds = (remaining_time % 3600) % 60
                 print(f"Step {env_steps:,}/{max_steps:,} \t {int(steps_per_sec):,} SPS \t Remaining: {remaining_hours:02d}:{remaining_minutes:02d}:{remaining_seconds:02d}")
             else:
-                print(f"Step {env_steps:,}/{max_steps:,} \t {int(steps_per_sec):,} SPS")
+                elapsed_time = int(elapsed_time)
+                elapsed_hours = elapsed_time // 3600
+                elapsed_minutes = (elapsed_time % 3600) // 60
+                elapsed_seconds = (elapsed_time % 3600) % 60
+                print(f"Step {env_steps:,} \t {int(steps_per_sec):,} SPS \t Elapsed: {elapsed_hours:02d}:{elapsed_minutes:02d}:{elapsed_seconds:02d}")
 
 
-if __name__ == '__main__':
-    import argparse
-
-    parser = argparse.ArgumentParser()
-
-    #parser.add_argument('--env', type=str, default=['PongNoFrameskip-v4'], nargs='*', help='Environments to train on')
-    #parser.add_argument('--num-envs', type=int, default=[8], nargs='*',
-    #        help='Number of environments to train on. If a single number is specified, it will be used for all environments. If a list of numbers is specified, it must have the same length as --env.')
-    #parser.add_argument('--env-labels', type=str, default=None, nargs='*',
-    #        help='')
-    parser.add_argument('--max-steps', type=int, default=0, help='Number of training steps to run. One step is one weight update.')
-    parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate.')
-    parser.add_argument('--rollout-length', type=int, default=128, help='Length of rollout.')
-    parser.add_argument('--reward-clip', type=float, default=1, help='Clip the reward magnitude to this value.')
-    parser.add_argument('--reward-scale', type=float, default=1, help='Scale the reward magnitude by this value.')
-    parser.add_argument('--discount', type=float, default=0.99, help='Discount factor.')
-    parser.add_argument('--gae-lambda', type=float, default=0.95, help='Lambda for GAE.')
-    parser.add_argument('--norm-adv', type=bool, default=True, help='Normalize the advantages.')
-    parser.add_argument('--clip-vf-loss', type=bool, default=True, help='Clip the value function loss.')
-    parser.add_argument('--vf-loss-coeff', type=float, default=0.5, help='Coefficient for the value function loss.')
-    parser.add_argument('--entropy-loss-coeff', type=float, default=0.01, help='Coefficient for the entropy loss.')
-    parser.add_argument('--target-kl', type=float, default=0.01, help='Target KL divergence.')
-    parser.add_argument('--num-epochs', type=int, default=5, help='Number of minibatches.')
-    parser.add_argument('--max-grad-norm', type=float, default=None, help='Maximum gradient norm.')
-
-    parser.add_argument('--model-type', type=str, default='ModularPolicy5', help='Model type', choices=['ModularPolicy5'])
-    parser.add_argument('--recurrence-type', type=str, default='RecurrentAttention11', help='Recurrence type', choices=['RecurrentAttention11'])
-
-    parser.add_argument('--cuda', action='store_true', help='Use CUDA.')
-    parser.add_argument('--wandb', action='store_true', help='Save results to W&B.')
-
-    args = parser.parse_args()
-
-    #breakpoint()
-
-    if args.wandb:
-        wandb.init(project='ppo-multitask-minigrid')
-        wandb.config.update(args)
-
-    #num_envs = args.num_envs
-    #if len(num_envs) == 1:
-    #    num_envs = num_envs * len(args.env)
-    #env_name_to_label = {}
-    #if args.env_labels is None:
-    #    env_name_to_labels = {n: n for n in args.env}
-    #else:
-    #    env_name_to_labels = {n: l for n, l in zip(args.env, args.env_labels)}
-    #env_names = list(itertools.chain(*[[e] * n for e, n in zip(args.env, num_envs)]))
-    #env_labels = [env_name_to_labels[e] for e in env_names]
-
-    env_configs = [ # TODO: Make this configurable
-        #[{
-        #    'env_name': 'MiniGrid-Delayed-Reward-v0',
-        #    'minigrid_config': {},
-        #    'meta_config': {
-        #        'episode_stack': 1,
-        #        'dict_obs': True,
-        #        'randomize': False,
-        #    },
-        #    'config': {
-        #        'num_trials': 100,
-        #        'min_num_rooms': 1,
-        #        'max_num_rooms': 1,
-        #        'min_room_size': 5,
-        #        'max_room_size': 6,
-        #        'door_prob': 0.5,
-        #        'fetch_config': {
-        #            'num_objs': 2,
-        #            'num_obj_colors': 6,
-        #            'prob': 1.0, # 0.0 chance of flipping the reward
-        #        },
-        #        #'task_randomization_prob': 0.02, # 86% chance of happening at least once, with a 50% change of the randomized task being unchanged.
-        #    }
-        #} for _ in range(16)], # TODO: Add parameter for number of environments
-        [{
+def env_config_presets():
+    return {
+        'fetch-001': {
             'env_name': 'MiniGrid-MultiRoom-v1',
+            'minigrid_config': {},
+            'meta_config': {
+                'episode_stack': 1,
+                'dict_obs': True,
+                'randomize': False,
+            },
+            'config': {
+                'num_trials': 100,
+                'min_num_rooms': 1,
+                'max_num_rooms': 1,
+                'min_room_size': 5,
+                'max_room_size': 5,
+                'door_prob': 0.5,
+                'max_steps_multiplier': 5,
+                'fetch_config': {
+                    'num_objs': 2,
+                    'num_obj_types': 1,
+                    'num_obj_colors': 2,
+                    'prob': 1.0, # 0.0 chance of flipping the reward
+                },
+                #'task_randomization_prob': 0.02, # 86% chance of happening at least once, with a 50% change of the randomized task being unchanged.
+            }
+        },
+
+        'delayed-001': {
+            'env_name': 'MiniGrid-Delayed-Reward-v0',
             'minigrid_config': {},
             'meta_config': {
                 'episode_stack': 1,
@@ -579,10 +553,70 @@ if __name__ == '__main__':
                 },
                 #'task_randomization_prob': 0.02, # 86% chance of happening at least once, with a 50% change of the randomized task being unchanged.
             }
-        } for _ in range(16)], # TODO: Add parameter for number of environments
+        }
+    }
+
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--envs', type=str, default=['fetch-001'], nargs='*', help='Environments to train on')
+    parser.add_argument('--num-envs', type=int, default=[16], nargs='*',
+            help='Number of environments to train on. If a single number is specified, it will be used for all environments. If a list of numbers is specified, it must have the same length as --env.')
+    #parser.add_argument('--env-labels', type=str, default=None, nargs='*',
+    #        help='')
+    parser.add_argument('--max-steps', type=int, default=0, help='Number of training steps to run. One step is one weight update.')
+    parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate.')
+    parser.add_argument('--rollout-length', type=int, default=128, help='Length of rollout.')
+    parser.add_argument('--reward-clip', type=float, default=1, help='Clip the reward magnitude to this value.')
+    parser.add_argument('--reward-scale', type=float, default=1, help='Scale the reward magnitude by this value.')
+    parser.add_argument('--discount', type=float, default=0.99, help='Discount factor.')
+    parser.add_argument('--gae-lambda', type=float, default=0.95, help='Lambda for GAE.')
+    parser.add_argument('--norm-adv', type=bool, default=True, help='Normalize the advantages.')
+    parser.add_argument('--clip-vf-loss', type=float, default=None, help='Clip the value function loss.')
+    parser.add_argument('--vf-loss-coeff', type=float, default=0.5, help='Coefficient for the value function loss.')
+    parser.add_argument('--entropy-loss-coeff', type=float, default=0.01, help='Coefficient for the entropy loss.')
+    parser.add_argument('--target-kl', type=float, default=None, help='Target KL divergence.')
+    parser.add_argument('--num-epochs', type=int, default=5, help='Number of minibatches.')
+    parser.add_argument('--max-grad-norm', type=float, default=None, help='Maximum gradient norm.')
+
+    parser.add_argument('--model-type', type=str, default='ModularPolicy5', help='Model type', choices=['ModularPolicy5'])
+    parser.add_argument('--recurrence-type', type=str, default='RecurrentAttention11', help='Recurrence type', choices=[f'RecurrentAttention{i}' for i in [11,14]])
+    parser.add_argument('--architecture', type=int, default=[3,3], nargs='*', help='Size of each layer in the model\'s core')
+
+    parser.add_argument('--cuda', action='store_true', help='Use CUDA.')
+    parser.add_argument('--wandb', action='store_true', help='Save results to W&B.')
+
+    args = parser.parse_args()
+
+    if args.wandb:
+        wandb.init(project='ppo-multitask-minigrid')
+        wandb.config.update(args)
+
+    #num_envs = args.num_envs
+    #if len(num_envs) == 1:
+    #    num_envs = num_envs * len(args.env)
+    #env_name_to_label = {}
+    #if args.env_labels is None:
+    #    env_name_to_labels = {n: n for n in args.env}
+    #else:
+    #    env_name_to_labels = {n: l for n, l in zip(args.env, args.env_labels)}
+    #env_names = list(itertools.chain(*[[e] * n for e, n in zip(args.env, num_envs)]))
+    #env_labels = [env_name_to_labels[e] for e in env_names]
+
+    ENV_CONFIG_PRESETS = env_config_presets()
+    #env_configs = [ # TODO: Make this configurable
+    #    #[ENV_CONFIG_PRESETS['delayed-001'] for _ in range(16)], # TODO: Add parameter for number of environments
+    #    [ENV_CONFIG_PRESETS['fetch-001'] for _ in range(16)], # TODO: Add parameter for number of environments
+    #]
+    env_configs = [
+        [ENV_CONFIG_PRESETS[e] for _ in range(n)]
+        for e,n in zip(args.envs, args.num_envs)
     ]
     envs = [
-        gymnasium.vector.SyncVectorEnv([lambda conf=conf: make_env(**conf) for conf in env_config]) # type: ignore (Why is `make_env` missing an argument?)
+        gymnasium.vector.AsyncVectorEnv([lambda conf=conf: make_env(**conf) for conf in env_config]) # type: ignore (Why is `make_env` missing an argument?)
         for env_config in env_configs
     ]
 
@@ -594,9 +628,9 @@ if __name__ == '__main__':
     model = init_model(
             observation_space = merge_space(*[env.single_observation_space for env in envs]),
             action_space = envs[0].single_action_space, # Assume the same action space for all environments
-            model_type = 'ModularPolicy5',
-            recurrence_type = 'RecurrentAttention11',
-            architecture = [1],
+            model_type = args.model_type,
+            recurrence_type = args.recurrence_type,
+            architecture = args.architecture,
             device = device,
     )
     model.to(device)
