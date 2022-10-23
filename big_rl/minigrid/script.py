@@ -265,7 +265,7 @@ def compute_ppo_losses(
                 break
 
 
-def train_ppo_atari_single_env(
+def train_single_env(
         global_step_counter: List[int],
         model: torch.nn.Module,
         env: gymnasium.vector.VectorEnv,
@@ -377,7 +377,7 @@ def train_ppo_atari_single_env(
                 # Reset hidden state for finished episodes
                 hidden = tuple(
                         torch.where(torch.tensor(done, device=device).unsqueeze(1), h0, h)
-                        for h0,h in zip(hidden, model.init_hidden(num_envs)) # type: ignore (???)
+                        for h0,h in zip(model.init_hidden(num_envs), hidden) # type: ignore (???)
                 )
                 # Reset episode stats
                 episode_reward[done] = 0
@@ -408,10 +408,10 @@ def train_ppo_atari_single_env(
         history.clear()
 
 
-def train_ppo_atari(
+def train(
         model: torch.nn.Module,
         envs: List[gymnasium.vector.VectorEnv],
-        env_labels: List[str],
+        env_labels: List[List[str]],
         optimizer: torch.optim.Optimizer,
         lr_scheduler: Optional[torch.optim.lr_scheduler._LRScheduler], # XXX: Private class. This might break in the future.
         *,
@@ -432,11 +432,11 @@ def train_ppo_atari(
         ):
     global_step_counter = [0]
     trainers = [
-        train_ppo_atari_single_env(
+        train_single_env(
             global_step_counter = global_step_counter,
             model = model,
             env = env,
-            env_labels = env_labels, # ???
+            env_labels = labels,
             obs_scale = obs_scale,
             rollout_length = rollout_length,
             reward_scale = reward_scale,
@@ -450,7 +450,7 @@ def train_ppo_atari(
             target_kl = target_kl,
             norm_adv = norm_adv,
         )
-        for env in envs
+        for env,labels in zip(envs, env_labels)
     ]
     start_time = time.time()
     for _, losses in enumerate(zip(*trainers)):
@@ -565,10 +565,13 @@ if __name__ == '__main__':
     parser.add_argument('--envs', type=str, default=['fetch-001'], nargs='*', help='Environments to train on')
     parser.add_argument('--num-envs', type=int, default=[16], nargs='*',
             help='Number of environments to train on. If a single number is specified, it will be used for all environments. If a list of numbers is specified, it must have the same length as --env.')
-    #parser.add_argument('--env-labels', type=str, default=None, nargs='*',
-    #        help='')
+    parser.add_argument('--env-labels', type=str, default=None, nargs='*', help='')
+
     parser.add_argument('--max-steps', type=int, default=0, help='Number of training steps to run. One step is one weight update.')
+
+    parser.add_argument('--optimizer', type=str, default='Adam', help='Optimizer', choices=['Adam', 'RMSprop'])
     parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate.')
+
     parser.add_argument('--rollout-length', type=int, default=128, help='Length of rollout.')
     parser.add_argument('--reward-clip', type=float, default=1, help='Clip the reward magnitude to this value.')
     parser.add_argument('--reward-scale', type=float, default=1, help='Scale the reward magnitude by this value.')
@@ -607,10 +610,6 @@ if __name__ == '__main__':
     #env_labels = [env_name_to_labels[e] for e in env_names]
 
     ENV_CONFIG_PRESETS = env_config_presets()
-    #env_configs = [ # TODO: Make this configurable
-    #    #[ENV_CONFIG_PRESETS['delayed-001'] for _ in range(16)], # TODO: Add parameter for number of environments
-    #    [ENV_CONFIG_PRESETS['fetch-001'] for _ in range(16)], # TODO: Add parameter for number of environments
-    #]
     env_configs = [
         [ENV_CONFIG_PRESETS[e] for _ in range(n)]
         for e,n in zip(args.envs, args.num_envs)
@@ -634,14 +633,20 @@ if __name__ == '__main__':
             device = device,
     )
     model.to(device)
-    #optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr)
-    lr_scheduler = None
 
-    trainer = train_ppo_atari(
+    if args.optimizer == 'Adam':
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    elif args.optimizer == 'RMSprop':
+        optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr)
+    else:
+        raise ValueError(f'Unknown optimizer: {args.optimizer}')
+
+    lr_scheduler = None # TODO
+
+    trainer = train(
             model = model,
             envs = envs, # type: ignore (??? AsyncVectorEnv is not a subtype of VectorEnv ???)
-            env_labels = ['doot']*len(envs), # TODO: Make this configurable
+            env_labels = [['doot']*len(envs)], # TODO: Make this configurable
             optimizer = optimizer,
             lr_scheduler = lr_scheduler,
             max_steps = args.max_steps,
