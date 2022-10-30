@@ -202,6 +202,7 @@ def compute_ppo_losses(
     for _ in range(num_epochs):
         net_output = []
         curr_hidden = tuple([h[0].detach() for h in hidden])
+        initial_hidden = model.init_hidden(num_training_envs) # type: ignore
         for o,term in zip2(obs,terminal):
             curr_hidden = tuple([
                 torch.where(term.unsqueeze(1), init_h, h)
@@ -462,6 +463,12 @@ def train(
         mean_loss.backward()
         if max_grad_norm is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+        for p in model.parameters(): # XXX: Debugging code
+            if p._grad is None:
+                continue
+            if p._grad.isnan().any():
+                print('NaNs in gradients!')
+                breakpoint()
         optimizer.step()
 
         if wandb.run is not None:
@@ -505,6 +512,32 @@ def train(
 
 def env_config_presets():
     return {
+        'fetch-debug': {
+            'env_name': 'MiniGrid-MultiRoom-v1',
+            'minigrid_config': {},
+            'meta_config': {
+                'episode_stack': 1,
+                'dict_obs': True,
+                'randomize': False,
+            },
+            'config': {
+                'num_trials': 1,
+                'min_num_rooms': 1,
+                'max_num_rooms': 1,
+                'min_room_size': 5,
+                'max_room_size': 5,
+                'door_prob': 0.5,
+                'max_steps_multiplier': 5,
+                'fetch_config': {
+                    'num_objs': 2,
+                    'num_obj_types': 1,
+                    'num_obj_colors': 2,
+                    'prob': 1.0, # 0.0 chance of flipping the reward
+                },
+                #'task_randomization_prob': 0.02, # 86% chance of happening at least once, with a 50% change of the randomized task being unchanged.
+            }
+        },
+
         'fetch-001': {
             'env_name': 'MiniGrid-MultiRoom-v1',
             'minigrid_config': {},

@@ -1208,7 +1208,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
         fetch_config: dict = None,
         bandits_config: dict = None,
         task_randomization_prob: float = 0,
-        max_steps_multiplier: int = 1,
+        max_steps_multiplier: float = 1.,
         seed = None,
     ):
         """
@@ -1355,7 +1355,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
 
         # Set max steps
         total_room_sizes = sum([room.height * room.width for room in room_list])
-        self.max_steps = total_room_sizes * self.num_trials * self.max_steps_multiplier
+        self.max_steps = int(total_room_sizes * self.num_trials * self.max_steps_multiplier)
 
     def _init_fetch(self, num_objs, num_obj_types=2, num_obj_colors=6, unique_objs=True, prob=1.0):
         """
