@@ -812,10 +812,10 @@ class BanditsFetch(MiniGridEnv):
 
         # Choose a random object to be picked up
         target = objs[self._rand_int(0, len(objs))]
-        self.targetType = target.type
-        self.targetColor = target.color
+        self.target_type = target.type
+        self.target_color = target.color
 
-        descStr = '%s %s' % (self.targetColor, self.targetType)
+        descStr = '%s %s' % (self.target_color, self.target_type)
 
         # Generate the mission string
         idx = self._rand_int(0, 5)
@@ -843,8 +843,8 @@ class BanditsFetch(MiniGridEnv):
         done = terminated or truncated
 
         if self.carrying:
-            if self.carrying.color == self.targetColor and \
-               self.carrying.type == self.targetType:
+            if self.carrying.color == self.target_color and \
+               self.carrying.type == self.target_type:
                 reward = self.reward_correct
             else:
                 reward = self.reward_incorrect
@@ -865,7 +865,7 @@ class BanditsFetch(MiniGridEnv):
     def reward_permutation(self):
         r = [self.reward_incorrect, self.reward_correct]
         return [
-            r[t == self.targetType and c == self.targetColor]
+            r[t == self.target_type and c == self.target_color]
             for t in self.types for c in self.colors
         ]
 
@@ -1209,6 +1209,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
         bandits_config: dict = None,
         task_randomization_prob: float = 0,
         max_steps_multiplier: float = 1.,
+        shaped_reward_setting: int = None,
         seed = None,
     ):
         """
@@ -1239,6 +1240,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
         self.bandits_config = bandits_config
         self.task_randomization_prob = task_randomization_prob
         self.max_steps_multiplier = max_steps_multiplier
+        self.shaped_reward_setting = shaped_reward_setting
 
         self.rooms = []
 
@@ -1256,6 +1258,13 @@ class MultiRoomEnv_v1(MiniGridEnv):
             see_through_walls = False,
             mission_space = default_mission_space,
         )
+
+        if shaped_reward_setting is not None:
+            assert isinstance(self.observation_space, gymnasium.spaces.Dict)
+            self.observation_space = gymnasium.spaces.Dict({
+                **self.observation_space.spaces,
+                'shaped_reward': gymnasium.spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32),
+            })
 
     def _gen_grid(self, width, height):
         room_list = []
@@ -1397,8 +1406,8 @@ class MultiRoomEnv_v1(MiniGridEnv):
 
         # Choose a random object to be picked up
         target = objs[self._rand_int(0, len(objs))]
-        self.targetType = target.type
-        self.targetColor = target.color
+        self.target_type = target.type
+        self.target_color = target.color
 
     def _init_bandits(self, probs=[1,0]):
         reward_scale = 1
@@ -1564,12 +1573,32 @@ class MultiRoomEnv_v1(MiniGridEnv):
 
         # Fetch task
         target = self.objects[self._rand_int(0, len(self.objects))]
-        self.targetType = target.type
-        self.targetColor = target.color
+        self.target_type = target.type
+        self.target_color = target.color
 
         # Bandit task
         if self.bandits_config is not None:
             raise NotImplementedError('Task randomization not implemented for bandits')
+
+    def _shaped_reward(self, setting=0):
+        """ Return the shaped reward for the current state. """
+        if setting == 0: # Distance-based reward bounded by 1
+            dest = None
+            for obj in self.objects:
+                if obj.color != self.target_color:
+                    continue
+                if obj.type != self.target_type:
+                    continue
+                dest = obj
+            assert dest is not None
+            assert dest.cur_pos is not None
+            distance = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
+            
+            reward = 1 / (distance + 1)
+
+            return reward
+
+        raise ValueError(f'Unknown setting: {setting}')
 
     def reset(self):
         obs, info = super().reset()
@@ -1578,10 +1607,15 @@ class MultiRoomEnv_v1(MiniGridEnv):
             self._init_fetch(**self.fetch_config)
         if self.bandits_config is not None:
             self._init_bandits(**self.bandits_config)
+        if self.shaped_reward_setting is not None:
+            obs['shaped_reward'] = self._shaped_reward(self.shaped_reward_setting)
         return obs, info
 
     def step(self, action):
         obs, reward, terminated, truncated, info = super().step(action)
+
+        if self.shaped_reward_setting is not None: # Must happen before `self.carrying` is cleared.
+            obs['shaped_reward'] = self._shaped_reward(self.shaped_reward_setting)
 
         if self.fetch_config is not None:
             if self.carrying:
@@ -1589,8 +1623,8 @@ class MultiRoomEnv_v1(MiniGridEnv):
                 reward_incorrect = self.fetch_config.get('reward_incorrect', -1)
                 p = self._fetch_reward_prob
                 # Check if the agent picked up the correct object
-                if self.carrying.color == self.targetColor and \
-                   self.carrying.type == self.targetType:
+                if self.carrying.color == self.target_color and \
+                   self.carrying.type == self.target_type:
                     reward = reward_correct
                     info['regret'] = 0
                 else:
@@ -1773,6 +1807,7 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
             #'predetermined_objects': [] # Specify the exact objects to use. e.g. `['red ball', 'green key']`
         },
         task_randomization_prob: float = 0,
+        max_steps_multiplier: float = 1.,
         shaped_reward_setting: int = None,
         seed = None,
     ):
@@ -1799,6 +1834,8 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
             num_trials = num_trials,
             fetch_config = fetch_config,
             task_randomization_prob = task_randomization_prob,
+            max_steps_multiplier = max_steps_multiplier,
+            shaped_reward_setting = shaped_reward_setting,
             seed = seed,
         )
 
@@ -1902,7 +1939,14 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
         total_room_sizes = sum([room.height * room.width for room in room_list])
         self.max_steps = total_room_sizes * self.num_trials
 
-    def _init_fetch(self, num_objs, num_obj_types=2, num_obj_colors=6, unique_objs=True, prob=1.0, predetermined_objects=[]):
+    def _init_fetch(self,
+                    num_objs,
+                    num_obj_types=2,
+                    num_obj_colors=6,
+                    unique_objs=True,
+                    prob=1.0,
+                    predetermined_objects=[],
+        ):
         """
         Initialize the fetch task
 
@@ -1912,6 +1956,8 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
             num_obj_colors: number of object colours to choose from. Colours are taken from `gym_minigrid.minigrid.COLOR_NAMES`.
             unique_objs: if True, all objects will be unique. If False, objects can be repeated.
             prob: Probability of obtaining a positive reward upon picking up the target object, or a negative reward upon picking up non-target objects.
+            predetermined_objects: list of objects to be placed in the environment. If there are more objects than `num_objs`, the extra objects will be ignored. If there are fewer, then the rest is filled with randomly generated objects.
+                Should be a list of strings of the form "[COLOUR] [OBJECT]", e.g. "red ball".
         """
         self._fetch_reward_prob = prob
 
@@ -1948,8 +1994,9 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
 
         # Choose a random object to be picked up
         target = objs[self._rand_int(0, len(objs))]
-        self.targetType = target.type
-        self.targetColor = target.color
+        self.target_type = target.type
+        self.target_color = target.color
+        self.target_object = target # FIXME: This assumes no duplicates
 
         # Create goal state
         # If the agent enters this state, it will receive a reward based on the objects it has picked up
@@ -1959,34 +2006,39 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
     def _randomize_task(self):
         """ Randomize the goal object/states """
         target = self.objects[self._rand_int(0, len(self.objects))]
-        self.targetType = target.type
-        self.targetColor = target.color
+        self.target_type = target.type
+        self.target_color = target.color
 
     def _shaped_reward(self, setting=0):
         """ Return the shaped reward for the current state. """
         if setting == 0: # Reward for subtasks
             obj = self.carrying
             if obj is not None:
-                if obj.type == self.targetType and obj.color == self.targetColor:
+                if obj.type == self.target_type and obj.color == self.target_color:
                     return 1.0
+                else:
+                    return -1.0
             curr_cell = self.grid.get(*self.agent_pos) # type: ignore
             if curr_cell == self.goal and len(self.removed_objects) > 0:
-                ...
-            raise NotImplementedError()
+                removed_objects_value = self._removed_objects_value()
+                if removed_objects_value['target_object_picked_up']:
+                    return 1.0
+                else:
+                    return -1.0
+            return 0.0
         elif setting == 1: # Distance-based reward
             # If the agent has picked up the target object, then the destination is the goal state. Otherwise, the destination is the target object.
-            dest = self.goal
+            dest = self.target_object
             for obj in self.removed_objects:
-                # Calculate reward and regret for the object
-                if obj.color != self.targetColor:
+                if obj.color != self.target_color:
                     continue
-                if obj.type != self.targetType:
+                if obj.type != self.target_type:
                     continue
-                dest = obj
+                dest = self.goal
                 break
             # Compute the distance to the goal
             assert dest.cur_pos is not None
-            distance = dest.cur_pos[0] - self.agent_pos[0] + dest.cur_pos[1] - self.agent_pos[1]
+            distance = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
             # Compute a reward based on the distance
             reward = 1/(distance + 1)
 
@@ -1998,15 +2050,47 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
         obs, info = super().reset()
         self.trial_count = 0
         self._init_fetch(**self.fetch_config)
-        if self.shaped_reward_setting is not None:
-            obs['shaped_reward'] = self._shaped_reward(self.shaped_reward_setting)
         return obs, info
+
+    def _removed_objects_value(self):
+        """ Return the total value of all objects that were picked up. """
+        total_regret = 0
+        total_expected_value = 0
+        total_reward = 0
+        target_object_picked_up = False # Whether the target object was picked up
+
+        reward_correct = self.fetch_config.get('reward_correct', 1)
+        reward_incorrect = self.fetch_config.get('reward_incorrect', -1)
+        p = self._fetch_reward_prob # Probability that the reward is not flipped
+        expected_value_correct = reward_correct*p + reward_incorrect*(1-p)
+        expected_value_incorrect = reward_incorrect*p + reward_correct*(1-p)
+        # Process all objects that were picked up
+        for obj in self.removed_objects:
+            # Calculate reward and regret for the object
+            if obj.color == self.target_color and \
+               obj.type == self.target_type:
+                reward = reward_correct
+                total_expected_value += expected_value_correct
+                target_object_picked_up = True
+            else:
+                reward = reward_incorrect
+                total_expected_value += expected_value_incorrect
+                total_regret += expected_value_correct - expected_value_incorrect
+            # Flip the reward with some probability
+            if self.np_random.uniform() > p:
+                reward *= -1
+            # Sum up reward
+            total_reward += reward
+
+        return {
+            'total_reward': total_reward,
+            'total_regret': total_regret,
+            'total_expected_value': total_expected_value,
+            'target_object_picked_up': target_object_picked_up,
+        }
 
     def step(self, action):
         obs, _, terminated, truncated, info = super().step(action)
-
-        if self.shaped_reward_setting is not None: # Must happen before `self.carrying` is cleared.
-            obs['shaped_reward'] = self._shaped_reward(self.shaped_reward_setting)
 
         if self.carrying:
             self.removed_objects.append(self.carrying)
@@ -2016,14 +2100,15 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
         total_reward = 0
         total_regret = 0
         if curr_cell == self.goal and len(self.removed_objects) > 0:
+            removed_objects_value = self._removed_objects_value()
             reward_correct = self.fetch_config.get('reward_correct', 1)
             reward_incorrect = self.fetch_config.get('reward_incorrect', -1)
             p = self._fetch_reward_prob
             # Process all objects that were picked up
             for obj in self.removed_objects:
                 # Calculate reward and regret for the object
-                if obj.color == self.targetColor and \
-                   obj.type == self.targetType:
+                if obj.color == self.target_color and \
+                   obj.type == self.target_type:
                     reward = reward_correct
                 else:
                     reward = reward_incorrect
@@ -2033,6 +2118,9 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
                     reward *= -1
                 # Sum up reward
                 total_reward += reward
+            # TODO: Replace code above with `removed_objects_value` once it is tested.
+            assert total_reward == removed_objects_value['total_reward']
+            assert total_regret == removed_objects_value['total_regret']
             info['regret'] = total_regret
             # Place the objects back in the environment
             for obj in self.removed_objects:

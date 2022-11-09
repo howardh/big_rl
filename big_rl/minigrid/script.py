@@ -1,3 +1,4 @@
+import os
 import itertools
 from typing import Optional, Generator, Dict, List, Any, Sequence, Iterable, Union, Tuple, Mapping, Callable
 import time
@@ -17,6 +18,7 @@ from frankenstein.loss.policy_gradient import clipped_advantage_policy_gradient_
 
 from big_rl.model.model import ModularPolicy2, ModularPolicy4, ModularPolicy5
 from big_rl.minigrid.envs import make_env
+from big_rl.utils import torch_save
 
 
 def init_model(observation_space, action_space,
@@ -43,14 +45,19 @@ def init_model(observation_space, action_space,
             },
         },
     }
-    if 'obs (reward_permutation)' in observation_space.keys():
+    # XXX: The membership test behaviour changes between gym and gymnasium. If any libraries are updated, make sure that this still works.
+    if 'obs (reward_permutation)' in list(observation_space.keys()):
         inputs['obs (reward_permutation)'] = {
             'type': 'LinearInput',
             'config': {
                 'input_size': observation_space['obs (reward_permutation)'].shape[0]
             }
         }
-    if 'action_map' in observation_space.keys():
+    if 'obs (shaped_reward)' in list(observation_space.keys()):
+        inputs['obs (shaped_reward)'] = {
+            'type': 'ScalarInput',
+        }
+    if 'action_map' in list(observation_space.keys()):
         inputs['action_map'] = {
             'type': 'MatrixInput',
             'config': {
@@ -310,6 +317,7 @@ def train_single_env(
             num_envs = num_envs,
             max_len=rollout_length+1,
             device=device)
+    log = {}
 
     obs, info = env.reset()
     hidden = model.init_hidden(num_envs) # type: ignore (???)
@@ -384,6 +392,21 @@ def train_single_env(
                 episode_reward[done] = 0
                 episode_steps[done] = 0
 
+        assert isinstance(model.last_attention, list)
+        assert isinstance(model.last_input_labels, list)
+        assert isinstance(model.last_output_attention, dict)
+        log['attention max'] = {
+            label: max([a.max().item() for a in attn])
+            for label, attn in
+            zip(model.last_input_labels,
+                zip(
+                    model.last_attention[0].split(1,dim=2),
+                    model.last_output_attention['action'].split(1,dim=1), # type: ignore (???)
+                    model.last_output_attention['value'].split(1,dim=1), # type: ignore (???)
+                )
+            )
+        }
+
         # Train
         losses = compute_ppo_losses(
                 history = history,
@@ -399,11 +422,15 @@ def train_single_env(
                 num_epochs = num_epochs,
         )
         for x in losses:
+            log['state_value'] = torch.stack(state_values)
+            log['entropy'] = torch.stack(entropies)
+
             yield {
-                'state_value': torch.stack(state_values),
-                'entropy': torch.stack(entropies),
+                'log': log,
                 **x
             }
+
+            log = {}
 
         # Clear data
         history.clear()
@@ -413,6 +440,7 @@ def train(
         model: torch.nn.Module,
         envs: List[gymnasium.vector.VectorEnv],
         env_labels: List[List[str]],
+        env_group_labels: List[str],
         optimizer: torch.optim.Optimizer,
         lr_scheduler: Optional[torch.optim.lr_scheduler._LRScheduler], # XXX: Private class. This might break in the future.
         *,
@@ -472,19 +500,23 @@ def train(
         optimizer.step()
 
         if wandb.run is not None:
-            for label,x in zip(env_labels, losses):
-                wandb.log({
+            for label,x in zip(env_group_labels, losses):
+                data = {
                     f'loss/pi/{label}': x['loss_pi'].item(),
                     f'loss/v/{label}': x['loss_vf'].item(),
                     f'loss/entropy/{label}': x['loss_entropy'].item(),
                     f'loss/total/{label}': x['loss'].item(),
                     f'approx_kl/{label}': x['approx_kl'].item(),
-                    f'state_value/{label}': x['state_value'].mean().item(),
-                    f'entropy/{label}': x['entropy'].mean().item(),
+                    f'state_value/{label}': x['log']['state_value'].mean().item(),
+                    f'entropy/{label}': x['log']['entropy'].mean().item(),
                     #last_approx_kl=approx_kl.item(),
                     #'learning_rate': lr_scheduler.get_lr()[0],
                     'step': global_step_counter[0],
-                }, step = global_step_counter[0])
+                }
+                if 'attention max' in x['log']:
+                    for k,v in x['log']['attention max'].items():
+                        data[f'attention max/{k}'] = v
+                wandb.log(data, step = global_step_counter[0])
 
         yield
 
@@ -564,6 +596,59 @@ def env_config_presets():
             }
         },
 
+        'fetch-002': {
+            'env_name': 'MiniGrid-MultiRoom-v1',
+            'minigrid_config': {},
+            'meta_config': {
+                'episode_stack': 1,
+                'dict_obs': True,
+                'randomize': False,
+            },
+            'config': {
+                'num_trials': 100,
+                'min_num_rooms': 1,
+                'max_num_rooms': 1,
+                'min_room_size': 8,
+                'max_room_size': 16,
+                'door_prob': 0.5,
+                'max_steps_multiplier': 5,
+                'fetch_config': {
+                    'num_objs': 2,
+                    'num_obj_types': 2,
+                    'num_obj_colors': 6,
+                    'prob': 1.0, # 0.0 chance of flipping the reward
+                },
+                #'task_randomization_prob': 0.02, # 86% chance of happening at least once, with a 50% change of the randomized task being unchanged.
+            }
+        },
+
+        'fetch-002-shaped': {
+            'env_name': 'MiniGrid-MultiRoom-v1',
+            'minigrid_config': {},
+            'meta_config': {
+                'episode_stack': 1,
+                'dict_obs': True,
+                'randomize': False,
+            },
+            'config': {
+                'num_trials': 100,
+                'min_num_rooms': 1,
+                'max_num_rooms': 1,
+                'min_room_size': 8,
+                'max_room_size': 16,
+                'door_prob': 0.5,
+                'max_steps_multiplier': 5,
+                'fetch_config': {
+                    'num_objs': 2,
+                    'num_obj_types': 2,
+                    'num_obj_colors': 6,
+                    'prob': 1.0, # 0.0 chance of flipping the reward
+                },
+                #'task_randomization_prob': 0.02, # 86% chance of happening at least once, with a 50% change of the randomized task being unchanged.
+                'shaped_reward_setting': 0,
+            }
+        },
+
         'delayed-001': {
             'env_name': 'MiniGrid-Delayed-Reward-v0',
             'minigrid_config': {},
@@ -586,7 +671,32 @@ def env_config_presets():
                 },
                 #'task_randomization_prob': 0.02, # 86% chance of happening at least once, with a 50% change of the randomized task being unchanged.
             }
-        }
+        },
+
+        'delayed-002': {
+            'env_name': 'MiniGrid-Delayed-Reward-v0',
+            'minigrid_config': {},
+            'meta_config': {
+                'episode_stack': 1,
+                'dict_obs': True,
+                'randomize': False,
+            },
+            'config': {
+                'num_trials': 100,
+                'min_num_rooms': 1,
+                'max_num_rooms': 1,
+                'min_room_size': 5,
+                'max_room_size': 6,
+                'door_prob': 0.5,
+                'fetch_config': {
+                    'num_objs': 2,
+                    'num_obj_colors': 6,
+                    'prob': 1.0, # 0.0 chance of flipping the reward
+                },
+                #'task_randomization_prob': 0.02, # 86% chance of happening at least once, with a 50% change of the randomized task being unchanged.
+                'shaped_reward_setting': 1,
+            }
+        },
     }
 
 
@@ -621,6 +731,13 @@ if __name__ == '__main__':
     parser.add_argument('--model-type', type=str, default='ModularPolicy5', help='Model type', choices=['ModularPolicy5'])
     parser.add_argument('--recurrence-type', type=str, default='RecurrentAttention11', help='Recurrence type', choices=[f'RecurrentAttention{i}' for i in [11,14]])
     parser.add_argument('--architecture', type=int, default=[3,3], nargs='*', help='Size of each layer in the model\'s core')
+
+    parser.add_argument('--starting-model', type=str, default=None,
+                        help='Path to a model checkpoint to start training from.')
+    parser.add_argument('--model-checkpoint', type=str, default=None,
+                        help='Path to a model checkpoint to save the model to.')
+    parser.add_argument('--checkpoint-interval', type=int, default=1000,
+                        help='Number of training steps between checkpoints.')
 
     parser.add_argument('--cuda', action='store_true', help='Use CUDA.')
     parser.add_argument('--wandb', action='store_true', help='Save results to W&B.')
@@ -676,10 +793,23 @@ if __name__ == '__main__':
 
     lr_scheduler = None # TODO
 
+    # Load checkpoint
+    if args.starting_model is not None:
+        checkpoint = torch.load(args.starting_model, map_location=device)
+        model.load_state_dict(checkpoint['model'], strict=False)
+        if 'optimizer' in checkpoint:
+            optimizer.load_state_dict(checkpoint['optimizer'])
+        if lr_scheduler is not None and 'lr_scheduler' in checkpoint:
+            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        print(f'Loaded checkpoint from {args.starting_model}')
+
     trainer = train(
             model = model,
             envs = envs, # type: ignore (??? AsyncVectorEnv is not a subtype of VectorEnv ???)
-            env_labels = [['doot']*len(envs)], # TODO: Make this configurable
+            #env_labels = [['doot']*len(envs)], # TODO: Make this configurable
+            #env_labels = [[e]*n for e,n in zip(args.envs, args.num_envs)],
+            env_labels = [[e]*n for e,n in zip(args.envs, args.num_envs)],
+            env_group_labels = args.envs,
             optimizer = optimizer,
             lr_scheduler = lr_scheduler,
             max_steps = args.max_steps,
@@ -697,5 +827,16 @@ if __name__ == '__main__':
             num_epochs = args.num_epochs,
             max_grad_norm = args.max_grad_norm,
     )
-    for _ in trainer:
-        pass
+    if args.model_checkpoint is not None:
+        os.makedirs(os.path.dirname(args.model_checkpoint), exist_ok=True)
+        while True:
+            for _ in zip(range(args.checkpoint_interval), trainer):
+                pass
+            torch_save({
+                'model': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+            }, args.model_checkpoint)
+            print(f'Saved checkpoint to {os.path.abspath(args.model_checkpoint)}')
+    else:
+        for _ in trainer:
+            pass
