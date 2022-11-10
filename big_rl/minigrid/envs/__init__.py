@@ -29,7 +29,7 @@ def make_env(env_name: str,
         episode_stack=None,
         dict_obs=False,
         action_shuffle=False) -> gym.Env:
-    env = gym.make(env_name, **config)
+    env = gym.make(env_name, render_mode='rgb_array', **config)
     env = MinigridPreprocessing(env, **minigrid_config)
     if episode_stack is not None:
         env = EpisodeStack(env, episode_stack, dict_obs=dict_obs)
@@ -1211,6 +1211,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
         max_steps_multiplier: float = 1.,
         shaped_reward_setting: int = None,
         seed = None,
+        render_mode = 'rgb_array',
     ):
         """
         Args:
@@ -1257,6 +1258,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
             max_steps=self.max_num_rooms * 20 * self.num_trials,
             see_through_walls = False,
             mission_space = default_mission_space,
+            render_mode = render_mode,
         )
 
         if shaped_reward_setting is not None:
@@ -1598,7 +1600,17 @@ class MultiRoomEnv_v1(MiniGridEnv):
 
             return reward
 
+        if setting == 1: # Always 0. Use to test the agent's ability to handle having a shaped reward signal but the signal is constant.
+            return 0
+
+        if setting == 2: # Same as setting 0, but converted to a potential-based shaped reward
+            raise NotImplementedError('Potential-based shaped reward not implemented')
+
         raise ValueError(f'Unknown setting: {setting}')
+
+    @property
+    def goal_str(self):
+        return f'{self.target_color} {self.target_type}'
 
     def reset(self):
         obs, info = super().reset()
@@ -1608,14 +1620,14 @@ class MultiRoomEnv_v1(MiniGridEnv):
         if self.bandits_config is not None:
             self._init_bandits(**self.bandits_config)
         if self.shaped_reward_setting is not None:
-            obs['shaped_reward'] = self._shaped_reward(self.shaped_reward_setting)
+            obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_setting)], dtype=np.float32)
         return obs, info
 
     def step(self, action):
         obs, reward, terminated, truncated, info = super().step(action)
 
         if self.shaped_reward_setting is not None: # Must happen before `self.carrying` is cleared.
-            obs['shaped_reward'] = self._shaped_reward(self.shaped_reward_setting)
+            obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_setting)], dtype=np.float32)
 
         if self.fetch_config is not None:
             if self.carrying:
@@ -1810,6 +1822,7 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
         max_steps_multiplier: float = 1.,
         shaped_reward_setting: int = None,
         seed = None,
+        render_mode = 'rgb_array',
     ):
         """
         Args:
@@ -1837,6 +1850,7 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
             max_steps_multiplier = max_steps_multiplier,
             shaped_reward_setting = shaped_reward_setting,
             seed = seed,
+            render_mode = render_mode,
         )
 
     def _gen_grid(self, width, height):
@@ -2026,6 +2040,7 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
                 else:
                     return -1.0
             return 0.0
+
         elif setting == 1: # Distance-based reward
             # If the agent has picked up the target object, then the destination is the goal state. Otherwise, the destination is the target object.
             dest = self.target_object
@@ -2047,9 +2062,11 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
         raise ValueError(f'Unknown setting: {setting}')
 
     def reset(self):
-        obs, info = super().reset()
+        obs, info = MiniGridEnv.reset(self)
         self.trial_count = 0
         self._init_fetch(**self.fetch_config)
+        if self.shaped_reward_setting is not None:
+            obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_setting)], dtype=np.float32)
         return obs, info
 
     def _removed_objects_value(self):
@@ -2090,7 +2107,10 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
         }
 
     def step(self, action):
-        obs, _, terminated, truncated, info = super().step(action)
+        obs, _, terminated, truncated, info = MiniGridEnv.step(self, action)
+
+        if self.shaped_reward_setting is not None: # Must happen before `self.carrying` is cleared.
+            obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_setting)], dtype=np.float32)
 
         if self.carrying:
             self.removed_objects.append(self.carrying)

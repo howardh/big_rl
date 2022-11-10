@@ -15,8 +15,10 @@ setup(name='big_rl',
         'opencv-python',
         'permutation',
         'scipy',
+        'font-roboto==0.0.1',
+        'fonts==0.0.3',
 
-        # Atari
+        # Atari (Not yet compatible with Gymnasium)
         #'gym[atari,accept-rom-license]',
 
         # Testing
