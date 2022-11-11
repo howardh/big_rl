@@ -282,12 +282,33 @@ def env_config_presets():
                     'num_obj_colors': 6,
                     'prob': 1.0, # 0.0 chance of flipping the reward
                 },
-                #'task_randomization_prob': 0.02, # 86% chance of happening at least once, with a 50% change of the randomized task being unchanged.
-                'shaped_reward_setting': 1,
             }
         },
 
         'delayed-003': {
+            'env_name': 'MiniGrid-Delayed-Reward-v0',
+            'minigrid_config': {},
+            'meta_config': {
+                'episode_stack': 1,
+                'dict_obs': True,
+                'randomize': False,
+            },
+            'config': {
+                'num_trials': 100,
+                'min_num_rooms': 1,
+                'max_num_rooms': 1,
+                'min_room_size': 8,
+                'max_room_size': 16,
+                'door_prob': 0.5,
+                'fetch_config': {
+                    'num_objs': 2,
+                    'num_obj_colors': 6,
+                    'prob': 1.0, # 0.0 chance of flipping the reward
+                },
+            }
+        },
+
+        'delayed-003-shaped': {
             'env_name': 'MiniGrid-Delayed-Reward-v0',
             'minigrid_config': {},
             'meta_config': {

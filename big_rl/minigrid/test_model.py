@@ -263,6 +263,7 @@ class VideoCallback:
                  size: Tuple[int,int] = None,
                  fps: int = 30):
         assert filename.endswith('.webm')
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
 
         self.filename = filename
         self.fps = fps
