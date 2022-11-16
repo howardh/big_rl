@@ -74,7 +74,7 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
         if terminated or truncated:
             break
 
-        video_callback_fn(model, env, results)
+        video_callback_fn(model, env, obs, results)
 
     return {
         'episode_reward': episode_reward,
@@ -83,6 +83,12 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
 
 
 def concat_images(images, padding=0, direction='h', align=0):
+    """
+    Concatenate images along a given direction.
+
+    Args:
+        images: list of PIL images or callable functions that return PIL images. The functions must take two arguments: width and height.
+    """
     if direction == 'h':
         width = sum([i.size[0] for i in images]) + padding * (len(images) + 1)
         height = max([i.size[1] for i in images]) + padding*2
@@ -257,6 +263,15 @@ def draw_rewards(rewards: list, target_object):
     img3 = draw_text(f'Target: {target_object}')
     return concat_images([img1, img2, img3], direction='v', align=-1)
 
+def draw_observations(observations: dict):
+    """ Draw reward, shaped reward, last action """
+    images = [
+            draw_text(f'{k}: {v.item()}')
+            for k,v in observations.items()
+            if k in ['reward', 'obs (shaped_reward)', 'action']
+    ]
+    return concat_images(images, direction='v', align=-1)
+
 
 class VideoCallback:
     def __init__(self, filename: str, 
@@ -288,9 +303,10 @@ class VideoCallback:
             )
         return self._video_writer
 
-    def __call__(self, model, env, results):
+    def __call__(self, model, env, obs, results):
         frame = env.render()
 
+        obs_image = draw_observations(obs)
         attn_img = draw_attention(
                 core_attention = model.last_attention,
                 query_gating = model.last_ff_gating,
@@ -307,7 +323,12 @@ class VideoCallback:
         )
         frame_and_attn = concat_images(
             [
-                PIL.Image.fromarray(frame),
+                concat_images(
+                    [PIL.Image.fromarray(frame), obs_image],
+                    padding=2,
+                    direction='v',
+                    align=-1,
+                ),
                 concat_images(
                     [attn_img, rewards_img],
                     padding = 5,

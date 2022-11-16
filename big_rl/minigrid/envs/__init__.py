@@ -1209,7 +1209,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
         bandits_config: dict = None,
         task_randomization_prob: float = 0,
         max_steps_multiplier: float = 1.,
-        shaped_reward_setting: int = None,
+        shaped_reward_config: dict = None,
         seed = None,
         render_mode = 'rgb_array',
     ):
@@ -1241,7 +1241,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
         self.bandits_config = bandits_config
         self.task_randomization_prob = task_randomization_prob
         self.max_steps_multiplier = max_steps_multiplier
-        self.shaped_reward_setting = shaped_reward_setting
+        self.shaped_reward_config = shaped_reward_config
 
         self.rooms = []
 
@@ -1261,12 +1261,14 @@ class MultiRoomEnv_v1(MiniGridEnv):
             render_mode = render_mode,
         )
 
-        if shaped_reward_setting is not None:
+        if shaped_reward_config is not None:
             assert isinstance(self.observation_space, gymnasium.spaces.Dict)
             self.observation_space = gymnasium.spaces.Dict({
                 **self.observation_space.spaces,
                 'shaped_reward': gymnasium.spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32),
             })
+
+        self._agent_pos_prev = None
 
     def _gen_grid(self, width, height):
         room_list = []
@@ -1582,9 +1584,11 @@ class MultiRoomEnv_v1(MiniGridEnv):
         if self.bandits_config is not None:
             raise NotImplementedError('Task randomization not implemented for bandits')
 
-    def _shaped_reward(self, setting=0):
+    def _shaped_reward(self, config: dict):
         """ Return the shaped reward for the current state. """
-        if setting == 0: # Distance-based reward bounded by 1
+        reward_type = config['type'].lower()
+
+        def get_dest():
             dest = None
             for obj in self.objects:
                 if obj.color != self.target_color:
@@ -1594,19 +1598,47 @@ class MultiRoomEnv_v1(MiniGridEnv):
                 dest = obj
             assert dest is not None
             assert dest.cur_pos is not None
+            return dest
+
+        all_dests = self.objects
+
+        if reward_type == 'inverse distance': # Distance-based reward bounded by 1
+            dest = get_dest()
             distance = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
             
             reward = 1 / (distance + 1)
 
             return reward
 
-        if setting == 1: # Always 0. Use to test the agent's ability to handle having a shaped reward signal but the signal is constant.
+        elif reward_type == 'zero': # Always 0. Use to test the agent's ability to handle having a shaped reward signal but the signal is constant.
             return 0
 
-        if setting == 2: # Same as setting 0, but converted to a potential-based shaped reward
+        elif reward_type == 'pbrs': # Same as inverse distance, but converted to a potential-based shaped reward
             raise NotImplementedError('Potential-based shaped reward not implemented')
 
-        raise ValueError(f'Unknown setting: {setting}')
+        elif reward_type == 'adjacent to subtask':
+            dest = get_dest()
+
+            assert self.agent_pos is not None
+            if self._agent_pos_prev is None:
+                return 0
+
+            dist = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
+            dist_prev = abs(dest.cur_pos[0] - self._agent_pos_prev[0]) + abs(dest.cur_pos[1] - self._agent_pos_prev[1])
+            all_dists = [abs(obj.cur_pos[0] - self.agent_pos[0]) + abs(obj.cur_pos[1] - self.agent_pos[1]) for obj in all_dests]
+            all_dists_prev = [abs(obj.cur_pos[0] - self._agent_pos_prev[0]) + abs(obj.cur_pos[1] - self._agent_pos_prev[1]) for obj in all_dests]
+
+            if dist == 1:
+                if dist_prev != 1:
+                    return 1
+                else:
+                    return 0
+            elif min(all_dists) == 1 and min(all_dists_prev) != 1:
+                return -1
+            else:
+                return 0
+
+        raise ValueError(f'Unknown reward type: {reward_type}')
 
     @property
     def goal_str(self):
@@ -1615,19 +1647,22 @@ class MultiRoomEnv_v1(MiniGridEnv):
     def reset(self):
         obs, info = super().reset()
         self.trial_count = 0
+        self._agent_pos_prev = None
         if self.fetch_config is not None:
             self._init_fetch(**self.fetch_config)
         if self.bandits_config is not None:
             self._init_bandits(**self.bandits_config)
-        if self.shaped_reward_setting is not None:
-            obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_setting)], dtype=np.float32)
+        if self.shaped_reward_config is not None:
+            obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_config)], dtype=np.float32)
         return obs, info
 
     def step(self, action):
+        self._agent_pos_prev = self.agent_pos
+
         obs, reward, terminated, truncated, info = super().step(action)
 
-        if self.shaped_reward_setting is not None: # Must happen before `self.carrying` is cleared.
-            obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_setting)], dtype=np.float32)
+        if self.shaped_reward_config is not None: # Must happen before `self.carrying` is cleared.
+            obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_config)], dtype=np.float32)
 
         if self.fetch_config is not None:
             if self.carrying:
@@ -1820,7 +1855,7 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
         },
         task_randomization_prob: float = 0,
         max_steps_multiplier: float = 1.,
-        shaped_reward_setting: int = None,
+        shaped_reward_config: dict = None,
         seed = None,
         render_mode = 'rgb_array',
     ):
@@ -1836,7 +1871,6 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
             task_randomization_prob (float): probability of switching tasks at the beginning of each trial.
             seed (int): random seed.
         """
-        self.shaped_reward_setting = shaped_reward_setting
         self.fetch_config = fetch_config # Needed to appease pyright
         super().__init__(
             min_num_rooms = min_num_rooms,
@@ -1848,7 +1882,7 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
             fetch_config = fetch_config,
             task_randomization_prob = task_randomization_prob,
             max_steps_multiplier = max_steps_multiplier,
-            shaped_reward_setting = shaped_reward_setting,
+            shaped_reward_config = shaped_reward_config,
             seed = seed,
             render_mode = render_mode,
         )
@@ -2023,9 +2057,26 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
         self.target_type = target.type
         self.target_color = target.color
 
-    def _shaped_reward(self, setting=0):
+    def _shaped_reward(self, config: dict):
         """ Return the shaped reward for the current state. """
-        if setting == 0: # Reward for subtasks
+        reward_type = config['type'].lower()
+
+        def get_dest():
+            for obj in self.removed_objects:
+                if obj.color != self.target_color:
+                    continue
+                if obj.type != self.target_type:
+                    continue
+                assert self.goal is not None
+                assert self.goal.cur_pos is not None
+                return self.goal
+            assert self.target_object is not None
+            assert self.target_object.cur_pos is not None
+            return self.target_object
+
+        all_dests = [self.goal, *self.objects]
+
+        if reward_type == 'subtask': # Reward for subtasks
             obj = self.carrying
             if obj is not None:
                 if obj.type == self.target_type and obj.color == self.target_color:
@@ -2041,7 +2092,7 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
                     return -1.0
             return 0.0
 
-        elif setting == 1: # Distance-based reward
+        elif reward_type == 'inverse distance': # Distance-based reward
             # If the agent has picked up the target object, then the destination is the goal state. Otherwise, the destination is the target object.
             dest = self.target_object
             for obj in self.removed_objects:
@@ -2059,14 +2110,73 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
 
             return reward
 
-        raise ValueError(f'Unknown setting: {setting}')
+        elif reward_type == 'near subtask': # Reward near subtask
+            # When the agent enters the space that is one step away from an object or the goal state, it receives a reward based on whether it should interact with that object.
+
+            raise NotImplementedError()
+            ## Compute distance to all objects
+            #assert self.goal.cur_pos is not None
+            #goal_dist = abs(self.goal.cur_pos[0] - self.agent_pos[0]) + abs(self.goal.cur_pos[1] - self.agent_pos[1])
+            #obj_dists = [
+            #    abs(obj.cur_pos[0] - self.agent_pos[0]) + abs(obj.cur_pos[1] - self.agent_pos[1])
+            #    for obj in self.objects
+            #]
+            #all_dists = obj_dists + [goal_dist]
+            #min_dist = min(all_dists)
+            ## Destination
+            #dest = self.target_object
+            #for obj in self.removed_objects:
+            #    if obj.color != self.target_color:
+            #        continue
+            #    if obj.type != self.target_type:
+            #        continue
+            #    dest = self.goal
+            #    break
+            ## Compute the distance to the goal
+            #assert dest.cur_pos is not None
+            #distance = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
+            ## Check if the agent is one step away from the goal or an object, give an appropriate reward
+            #if min_dist == 1:
+            #    # Did we just enter the radius of the object? If yes, then give the reward. Otherwise, don't.
+            #    if self._shaped_reward_last_dist > 1:
+            #        if distance == 1: # FIXME: This gives a positive reward if the agent is adjacent to both the correct and the incorrect object. I guess this is acceptable?
+            #            return 1.0
+            #        else:
+            #            return -1.0
+            #self._shaped_reward_last_dist = distance
+            #return 0.0
+
+        elif reward_type == 'adjacent to subtask':
+            dest = get_dest()
+
+            assert dest.cur_pos is not None
+            assert self.agent_pos is not None
+            if self._agent_pos_prev is None:
+                return 0.0
+
+            dist = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
+            dist_prev = abs(dest.cur_pos[0] - self._agent_pos_prev[0]) + abs(dest.cur_pos[1] - self._agent_pos_prev[1])
+            all_dists = [abs(dest.cur_pos[0] - obj.cur_pos[0]) + abs(dest.cur_pos[1] - obj.cur_pos[1]) for obj in all_dests]
+
+            if dist == 1:
+                if dist_prev != 1:
+                    return 1
+                else:
+                    return 0
+            elif min(all_dists) == 1:
+                return -1
+            else:
+                return 0
+
+        raise ValueError(f'Unknown reward type: {reward_type}')
 
     def reset(self):
         obs, info = MiniGridEnv.reset(self)
         self.trial_count = 0
+        self._agent_pos_prev = None
         self._init_fetch(**self.fetch_config)
-        if self.shaped_reward_setting is not None:
-            obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_setting)], dtype=np.float32)
+        if self.shaped_reward_config is not None:
+            obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_config)], dtype=np.float32)
         return obs, info
 
     def _removed_objects_value(self):
@@ -2107,10 +2217,12 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
         }
 
     def step(self, action):
+        self._agent_pos_prev = self.agent_pos
+
         obs, _, terminated, truncated, info = MiniGridEnv.step(self, action)
 
-        if self.shaped_reward_setting is not None: # Must happen before `self.carrying` is cleared.
-            obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_setting)], dtype=np.float32)
+        if self.shaped_reward_config is not None: # Must happen before `self.carrying` is cleared.
+            obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_config)], dtype=np.float32)
 
         if self.carrying:
             self.removed_objects.append(self.carrying)
