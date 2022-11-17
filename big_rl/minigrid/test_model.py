@@ -371,6 +371,8 @@ if __name__ == '__main__':
     parser.add_argument('--num-episodes', type=int, default=1,
                         help='Number of episodes to test for.')
     parser.add_argument('--verbose', action='store_true', default=False)
+    parser.add_argument('--video', type=str, default='test.webm',
+                        help='Path to a video file to save.')
     init_parser_model(parser)
     args = parser.parse_args()
 
@@ -397,7 +399,7 @@ if __name__ == '__main__':
     print(f'Loaded checkpoint from {args.model}')
 
     # Test model
-    video_filename = os.path.abspath('test.webm')
+    video_filename = os.path.abspath(args.video)
     video_callback = VideoCallback(video_filename)
 
     test_results = [

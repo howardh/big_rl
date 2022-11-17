@@ -2110,42 +2110,6 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
 
             return reward
 
-        elif reward_type == 'near subtask': # Reward near subtask
-            # When the agent enters the space that is one step away from an object or the goal state, it receives a reward based on whether it should interact with that object.
-
-            raise NotImplementedError()
-            ## Compute distance to all objects
-            #assert self.goal.cur_pos is not None
-            #goal_dist = abs(self.goal.cur_pos[0] - self.agent_pos[0]) + abs(self.goal.cur_pos[1] - self.agent_pos[1])
-            #obj_dists = [
-            #    abs(obj.cur_pos[0] - self.agent_pos[0]) + abs(obj.cur_pos[1] - self.agent_pos[1])
-            #    for obj in self.objects
-            #]
-            #all_dists = obj_dists + [goal_dist]
-            #min_dist = min(all_dists)
-            ## Destination
-            #dest = self.target_object
-            #for obj in self.removed_objects:
-            #    if obj.color != self.target_color:
-            #        continue
-            #    if obj.type != self.target_type:
-            #        continue
-            #    dest = self.goal
-            #    break
-            ## Compute the distance to the goal
-            #assert dest.cur_pos is not None
-            #distance = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
-            ## Check if the agent is one step away from the goal or an object, give an appropriate reward
-            #if min_dist == 1:
-            #    # Did we just enter the radius of the object? If yes, then give the reward. Otherwise, don't.
-            #    if self._shaped_reward_last_dist > 1:
-            #        if distance == 1: # FIXME: This gives a positive reward if the agent is adjacent to both the correct and the incorrect object. I guess this is acceptable?
-            #            return 1.0
-            #        else:
-            #            return -1.0
-            #self._shaped_reward_last_dist = distance
-            #return 0.0
-
         elif reward_type == 'adjacent to subtask':
             dest = get_dest()
 
