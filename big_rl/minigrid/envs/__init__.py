@@ -347,7 +347,7 @@ class MetaWrapper(gym.Wrapper):
                 return obs, reward, False, False, info
         return obs, reward, terminated, truncated, info
 
-    def reset(self):
+    def reset(self, seed=None, options=None):
         self.episode_count = 0
         if self.randomize:
             self.env.randomize()
@@ -356,7 +356,7 @@ class MetaWrapper(gym.Wrapper):
 
         self._regret = []
 
-        obs, info = self.env.reset()
+        obs, info = self.env.reset(seed=seed, options=options)
 
         obs = self._transform(obs)
         if self.dict_obs:
@@ -1257,12 +1257,12 @@ class MultiRoomEnv_v1(MiniGridEnv):
             grid_size=25,
             max_steps=self.max_num_rooms * 20 * self.num_trials,
             see_through_walls = False,
-            mission_space = default_mission_space,
+            mission_space = MissionSpace(mission_func = lambda: 'Do whatever'),
             render_mode = render_mode,
         )
 
+        assert isinstance(self.observation_space, gymnasium.spaces.Dict)
         if shaped_reward_config is not None:
-            assert isinstance(self.observation_space, gymnasium.spaces.Dict)
             self.observation_space = gymnasium.spaces.Dict({
                 **self.observation_space.spaces,
                 'shaped_reward': gymnasium.spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32),
@@ -1364,7 +1364,9 @@ class MultiRoomEnv_v1(MiniGridEnv):
                     self.doors.append(door)
 
         self._init_agent()
-        self.mission = 'Do whatever'
+
+        assert isinstance(self.observation_space, gymnasium.spaces.Dict)
+        self.mission = self.observation_space.spaces['mission'].sample()
 
         # Set max steps
         total_room_sizes = sum([room.height * room.width for room in room_list])
@@ -1644,8 +1646,8 @@ class MultiRoomEnv_v1(MiniGridEnv):
     def goal_str(self):
         return f'{self.target_color} {self.target_type}'
 
-    def reset(self):
-        obs, info = super().reset()
+    def reset(self, seed=None, options=None):
+        obs, info = super().reset(seed=seed, options=options)
         self.trial_count = 0
         self._agent_pos_prev = None
         if self.fetch_config is not None:
@@ -1981,7 +1983,9 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
                     self.doors.append(door)
 
         self._init_agent()
-        self.mission = 'Pick up the correct object, then reach the green goal square.'
+
+        assert isinstance(self.observation_space, gymnasium.spaces.Dict)
+        self.mission = self.observation_space.spaces['mission'].sample()
 
         # Set max steps
         total_room_sizes = sum([room.height * room.width for room in room_list])
@@ -2134,8 +2138,8 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
 
         raise ValueError(f'Unknown reward type: {reward_type}')
 
-    def reset(self):
-        obs, info = MiniGridEnv.reset(self)
+    def reset(self, seed=None, options=None):
+        obs, info = MiniGridEnv.reset(self, seed=seed, options=options)
         self.trial_count = 0
         self._agent_pos_prev = None
         self._init_fetch(**self.fetch_config)

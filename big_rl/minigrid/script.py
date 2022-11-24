@@ -192,7 +192,7 @@ def train_single_env(
             device=device)
     log = {}
 
-    obs, info = env.reset()
+    obs, info = env.reset(seed=0)
     hidden = model.init_hidden(num_envs) # type: ignore (???)
     history.append_obs(
             {k:v for k,v in obs.items() if k not in obs_ignore},

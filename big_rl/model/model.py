@@ -1974,6 +1974,9 @@ class ModularPolicy5(torch.nn.Module):
             hidden[1],
         ], dim=0)
 
+        self.last_keys = keys
+        self.last_values = values
+
         # Core module computation
         new_keys = hidden[0]
         new_values = hidden[1]

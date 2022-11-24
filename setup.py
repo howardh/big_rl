@@ -9,6 +9,7 @@ setup(name='big_rl',
         'matplotlib',
         'tqdm',
         'wandb',
+        'scikit-learn',
 
         # Minigrid
         'minigrid',

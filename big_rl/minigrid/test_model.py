@@ -12,7 +12,7 @@ from fonts.ttf import Roboto # type: ignore
 
 from big_rl.minigrid.envs import make_env
 from big_rl.minigrid.arguments import init_parser_model
-from big_rl.minigrid.common import env_config_presets, init_model
+from big_rl.minigrid.common import env_config_presets, init_model, merge_space
 
 
 def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=False):
@@ -27,10 +27,12 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
             'hidden': [],
             'input_labels': [],
             'target': [], # Goal string
+            'shaped_reward': [], # Predicted shaped reward
     }
 
     hidden = model.init_hidden(1) # type: ignore (???)
     steps_iterator = itertools.count()
+    #steps_iterator = range(100+np.random.randint(50))
     if verbose:
         steps_iterator = tqdm(steps_iterator)
 
@@ -63,6 +65,17 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
         ])
         results['input_labels'].append(model.last_input_labels)
         results['target'] = env.goal_str # type: ignore
+        results['shaped_reward'].append(compute_shaped_reward(model))
+
+        #if results['shaped_reward'][-1].sum() > 0:
+        #    breakpoint()
+        #tqdm.write(
+        #        '\t'.join([
+        #        str(results['shaped_reward'][-1].mean().item()),
+        #        str(results['shaped_reward'][-1].min().item()),
+        #        str(results['shaped_reward'][-1].max().item()),
+        #        ])
+        #)
 
         episode_reward += reward
         episode_length += 1
@@ -79,7 +92,17 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
     return {
         'episode_reward': episode_reward,
         'episode_length': episode_length,
+        'results': results,
     }
+
+
+def compute_shaped_reward(model):
+    query = model.input_modules['obs (shaped_reward)'].key
+    key = model.last_keys
+    value = model.last_values
+    attention = torch.einsum('k,bik->b', query, key).softmax(0)
+    output = torch.einsum('b,bik->k', attention, value)
+    return output.cpu().detach()
 
 
 def concat_images(images, padding=0, direction='h', align=0):
@@ -361,18 +384,21 @@ def preprocess_obs(obs):
 
 
 if __name__ == '__main__':
-
     # Parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('--env', type=str,
                         help='Environments to test on.')
     parser.add_argument('--model', type=str, default=None,
                         help='Path to a model checkpoint to test.')
+    parser.add_argument('--model-envs', type=str, nargs='*', default=None,
+                        help='Environments whose observation spaces are used to initialize the model. If not specified, the "--env" environment will be used.')
     parser.add_argument('--num-episodes', type=int, default=1,
                         help='Number of episodes to test for.')
     parser.add_argument('--verbose', action='store_true', default=False)
     parser.add_argument('--video', type=str, default='test.webm',
                         help='Path to a video file to save.')
+    parser.add_argument('--results', type=str, default=None,
+                        help='Path to a file to save results.')
     init_parser_model(parser)
     args = parser.parse_args()
 
@@ -381,11 +407,17 @@ if __name__ == '__main__':
     env_config = ENV_CONFIG_PRESETS[args.env]
 
     env = make_env(**env_config)
+    if args.model_envs is not None:
+        dummy_envs = [
+                make_env(**ENV_CONFIG_PRESETS[c]) for c in args.model_envs]
+    else:
+        dummy_envs = [env]
+    observation_space = merge_space(*[e.observation_space for e in dummy_envs])
 
     # Load model
     device = torch.device('cpu')
     model = init_model(
-            observation_space = env.observation_space,
+            observation_space = observation_space,
             action_space = env.action_space,
             model_type = args.model_type,
             recurrence_type = args.recurrence_type,
@@ -419,3 +451,8 @@ if __name__ == '__main__':
     print(f"Reward mean: {reward_mean:.2f}")
     print(f"Reward std: {reward_std:.2f}")
     print(f'Video saved to {video_filename}')
+
+    if args.results is not None:
+        results_filename = os.path.abspath(args.results)
+        torch.save(test_results, results_filename)
+        print(f'Results saved to {results_filename}')
