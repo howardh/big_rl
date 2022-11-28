@@ -1,6 +1,6 @@
 import os
-import copy
-from typing import Mapping
+from typing_extensions import Literal
+#from typing import Literal
 import threading
 import time
 
@@ -22,6 +22,9 @@ import minigrid.core.world_object
 from minigrid.minigrid_env import MiniGridEnv, MissionSpace
 
 
+default_mission_space = MissionSpace(mission_func=lambda: "")
+
+
 def make_env(env_name: str,
         config={},
         minigrid_config={},
@@ -40,6 +43,11 @@ def make_env(env_name: str,
     if action_shuffle:
         env = ActionShuffle(env)
     return env
+
+
+##################################################
+# Wrappers
+##################################################
 
 
 class MinigridPreprocessing(gym.Wrapper):
@@ -138,8 +146,6 @@ class EpisodeStack(gym.Wrapper):
 
     def step(self, action):
         if self._done:
-            if isinstance(self.env.unwrapped, NRoomBanditsSmall):
-                self.env.unwrapped.shuffle_goals_on_reset = False
             self.episode_count += 1
             self._done = False
             (obs, info), reward, terminated, truncated = self.env.reset(), 0, False, False
@@ -174,8 +180,6 @@ class EpisodeStack(gym.Wrapper):
 
     def reset(self, **kwargs):
         self.episode_count = 0
-        if isinstance(self.env.unwrapped, NRoomBanditsSmall):
-            self.env.unwrapped.shuffle_goals_on_reset = True
         obs, info = self.env.reset(**kwargs)
         if self.dict_obs:
             if isinstance(self.env.observation_space, gymnasium.spaces.Dict):
@@ -426,50 +430,57 @@ class ActionShuffle(gym.Wrapper):
         return self.env.step(action)
 
 
-def merge(source, destination):
-    """
-    (Source: https://stackoverflow.com/a/20666342/382388)
-
-    run me with nosetests --with-doctest file.py
-
-    >>> a = { 'first' : { 'all_rows' : { 'pass' : 'dog', 'number' : '1' } } }
-    >>> b = { 'first' : { 'all_rows' : { 'fail' : 'cat', 'number' : '5' } } }
-    >>> merge(b, a) == { 'first' : { 'all_rows' : { 'pass' : 'dog', 'fail' : 'cat', 'number' : '5' } } }
-    True
-    """
-    destination = copy.deepcopy(destination)
-    if isinstance(source, Mapping):
-        for key, value in source.items():
-            if isinstance(value, dict):
-                # get node or create one
-                node = destination.setdefault(key, {})
-                destination[key] = merge(value, node)
-            elif isinstance(value, list):
-                if isinstance(destination[key],list):
-                    destination[key] = [merge(s,d) for s,d in zip(source[key],destination[key])]
-                else:
-                    destination[key] = value
-            else:
-                destination[key] = value
-
-        return destination
-    else:
-        return source
+##################################################
+# Utility functions/classes
+##################################################
 
 
-class ExperimentConfigs(dict):
-    def __init__(self):
-        self._last_key = None
-    def add(self, key, config, inherit=None):
-        if key in self:
-            raise Exception(f'Key {key} already exists.')
-        if inherit is None:
-            self[key] = config
+
+def init_rng(seed=None):
+    if seed is None:
+        seed = os.getpid() + int(time.time())
+        thread_id = threading.current_thread().ident
+        if thread_id is not None:
+            seed += thread_id
+        seed = seed % (2**32 - 1)
+    np_random, seed = gymnasium.utils.seeding.np_random(seed)
+    return np_random, seed
+
+
+class PotentialBasedReward:
+    def __init__(self, scale=1.0):
+        self._scale = scale
+
+        self._prev_potential = None
+        self._potential = None
+
+    def update_potential(self, potential):
+        self._prev_potential = self._potential
+        self._potential = potential
+
+    def reset(self):
+        self._prev_potential = None
+        self._potential = None
+
+    @property
+    def potential(self):
+        return self._potential
+
+    @property
+    def prev_potential(self):
+        return self._prev_potential
+
+    @property
+    def reward(self):
+        if self.prev_potential is None:
+            return 0
         else:
-            self[key] = merge(config,self[inherit])
-        self._last_key = key
-    def add_change(self, key, config):
-        self.add(key, config, inherit=self._last_key)
+            return (self.prev_potential - self.potential) * self._scale
+
+
+##################################################
+# Minigrid Objects
+##################################################
 
 
 class GoalDeterministic(minigrid.core.world_object.Goal):
@@ -490,660 +501,6 @@ class GoalMultinomial(minigrid.core.world_object.Goal):
     @property
     def expected_value(self):
         return (np.array(self.rewards, dtype=np.float32) * np.array(self.probs, dtype=np.float32)).sum()
-
-
-default_mission_space = MissionSpace(
-        mission_func=lambda: ""
-)
-
-
-class NRoomBanditsSmall(MiniGridEnv):
-    def __init__(self, rewards=[-1,1], shuffle_goals_on_reset=True, include_reward_permutation=False, seed=None):
-        self.mission = 'Reach the goal with the highest reward.'
-        self.rewards = rewards
-        self.goals = [
-            GoalDeterministic(reward=r) for r in self.rewards
-        ]
-        self.shuffle_goals_on_reset = shuffle_goals_on_reset
-        self.include_reward_permutation = include_reward_permutation
-
-        if seed is None:
-            seed = os.getpid() + int(time.time())
-            thread_id = threading.current_thread().ident
-            if thread_id is not None:
-                seed += thread_id
-            seed = seed % (2**32 - 1)
-            self.np_random, seed = gymnasium.utils.seeding.np_random(seed)
-
-        super().__init__(width=5, height=5, mission_space=default_mission_space)
-
-        assert isinstance(self.observation_space, gymnasium.spaces.Dict)
-        if include_reward_permutation:
-            self.observation_space = gymnasium.spaces.Dict({
-                **self.observation_space.spaces,
-                'reward_permutation': gymnasium.spaces.Box(low=-np.inf, high=np.inf, shape=(len(self.rewards),), dtype=np.float32),
-            })
-
-    @property
-    def reward_permutation(self):
-        return [g.reward for g in self.goals]
-
-    def randomize(self):
-        self._shuffle_goals()
-
-    def _shuffle_goals(self):
-        reward_indices = self.np_random.permutation(len(self.rewards))
-        for g,i in zip(self.goals,reward_indices):
-            g.reward = self.rewards[i]
-
-    def _gen_grid(self, width, height):
-        self.grid = minigrid.core.grid.Grid(width, height)
-
-        self.grid.horz_wall(0, 0)
-        self.grid.horz_wall(0, height - 1)
-        self.grid.vert_wall(0, 0)
-        self.grid.vert_wall(width - 1, 0)
-
-        self.agent_pos = np.array([2, height-2])
-        self.agent_dir = self._rand_int(0, 4)
-
-        if self.shuffle_goals_on_reset:
-            self._shuffle_goals()
-
-        for i,g in enumerate(self.goals):
-            self.put_obj(g, 1+i*2, 1)
-
-    def _reward(self):
-        curr_cell = self.grid.get(*self.agent_pos) # type: ignore (where is self.grid assigned?)
-        if curr_cell != None and hasattr(curr_cell,'reward'):
-            return curr_cell.reward
-        breakpoint()
-        return 0
-
-    def reset(self):
-        obs, info = super().reset()
-        if self.include_reward_permutation:
-            assert isinstance(obs, dict)
-            obs['reward_permutation'] = self.reward_permutation
-        if self.shuffle_goals_on_reset:
-            self._shuffle_goals()
-        return obs, info
-
-    def step(self, action):
-        obs, reward, terminated, truncated, info = super().step(action)
-        done = terminated or truncated
-        info['reward_permutation'] = self.reward_permutation
-        if self.include_reward_permutation:
-            obs['reward_permutation'] = info['reward_permutation']
-        return obs, reward, done, info
-
-
-register(
-    id='MiniGrid-NRoomBanditsSmall-v0',
-    entry_point=NRoomBanditsSmall
-)
-
-
-class NRoomBanditsSmallBernoulli(MiniGridEnv):
-    def __init__(self, reward_scale=1, prob=0.9, shuffle_goals_on_reset=True, include_reward_permutation=False, seed=None):
-        self.mission = 'Reach the goal with the highest reward.'
-        self.reward_scale = reward_scale
-        self.prob = prob
-        self.goals = [
-            GoalMultinomial(rewards=[reward_scale,-reward_scale], probs=[prob,1-prob]),
-            GoalMultinomial(rewards=[reward_scale,-reward_scale], probs=[1-prob,prob]),
-        ]
-        self.shuffle_goals_on_reset = shuffle_goals_on_reset
-        self.include_reward_permutation = include_reward_permutation
-
-        if seed is None:
-            seed = os.getpid() + int(time.time())
-            thread_id = threading.current_thread().ident
-            if thread_id is not None:
-                seed += thread_id
-            seed = seed % (2**32 - 1)
-            self.np_random, seed = gymnasium.utils.seeding.np_random(seed)
-
-        super().__init__(width=5, height=5, mission_space=default_mission_space)
-
-        assert isinstance(self.observation_space, gymnasium.spaces.Dict)
-        if include_reward_permutation:
-            self.observation_space = gymnasium.spaces.Dict({
-                **self.observation_space.spaces,
-                'reward_permutation': gymnasium.spaces.Box(low=-np.inf, high=np.inf, shape=(2,), dtype=np.float32),
-            })
-
-        # Info
-        self._expected_return = 0
-
-    @property
-    def reward_permutation(self):
-        return [g.expected_value for g in self.goals]
-
-    def randomize(self):
-        self._shuffle_goals()
-
-    def _shuffle_goals(self):
-        permutation = self.np_random.permutation(2)
-        probs = [
-                [self.prob, 1-self.prob],
-                [1-self.prob, self.prob],
-        ]
-        for g,i in zip(self.goals,permutation):
-            g.probs = probs[i]
-
-    def _gen_grid(self, width, height):
-        self.grid = minigrid.core.grid.Grid(width, height)
-
-        self.grid.horz_wall(0, 0)
-        self.grid.horz_wall(0, height - 1)
-        self.grid.vert_wall(0, 0)
-        self.grid.vert_wall(width - 1, 0)
-
-        self.agent_pos = np.array([2, height-2])
-        self.agent_dir = self._rand_int(0, 4)
-
-        if self.shuffle_goals_on_reset:
-            self._shuffle_goals()
-
-        for i,g in enumerate(self.goals):
-            self.put_obj(g, 1+i*2, 1)
-
-    def _reward(self):
-        curr_cell = self.grid.get(*self.agent_pos) # type: ignore
-        if curr_cell != None and hasattr(curr_cell,'rewards') and hasattr(curr_cell,'probs'):
-            return self.np_random.choice(curr_cell.rewards, p=curr_cell.probs)
-        breakpoint()
-        return 0
-
-    def _expected_reward(self):
-        """ Expected reward of the current state """
-        curr_cell = self.grid.get(*self.agent_pos) # type: ignore (where is self.grid assigned?)
-        if curr_cell is None:
-            return 0
-        if hasattr(curr_cell,'expected_value'):
-            return curr_cell.expected_value
-        return 0
-    
-    @property
-    def max_return(self):
-        """ Expected return (undiscounted sum) of the optimal policy """
-        return max(self.reward_permutation)
-
-    def reset(self):
-        obs, info = super().reset()
-        if self.include_reward_permutation:
-            assert isinstance(obs, dict)
-            obs['reward_permutation'] = self.reward_permutation
-        if self.shuffle_goals_on_reset:
-            self._shuffle_goals()
-
-        self._expected_return = 0
-
-        return obs, info
-
-    def step(self, action):
-        obs, reward, terminated, truncated, info = super().step(action)
-        done = terminated or truncated
-        info['reward_permutation'] = self.reward_permutation
-        if self.include_reward_permutation:
-            obs['reward_permutation'] = info['reward_permutation']
-        self._expected_return += self._expected_reward()
-        info['expected_return'] = self._expected_return
-        info['max_return'] = self.max_return
-        return obs, reward, done, info
-
-
-register(
-    id='MiniGrid-NRoomBanditsSmallBernoulli-v0',
-    entry_point=NRoomBanditsSmallBernoulli
-)
-
-
-class BanditsFetch(MiniGridEnv):
-    """
-    Environment in which the agent has to fetch a random object
-    named using English text strings
-    """
-
-    def __init__(
-        self,
-        size=8,
-        num_objs=3,
-        num_trials=1,
-        reward_correct=1,
-        reward_incorrect=-1,
-        num_obj_types=2,
-        num_obj_colors=6,
-        unique_objs=False,
-        include_reward_permutation=False,
-        seed=None,
-    ):
-        """
-        Args:
-            size (int): Size of the grid
-            num_objs (int): Number of objects in the environment
-            num_trials (int): Number of trials to run with the same set of objects and goal
-            reward_correct (int): Reward for picking up the correct object
-            reward_incorrect (int): Reward for picking up the incorrect object
-            num_obj_types (int): Number of possible object types
-            num_obj_colors (int): Number of possible object colors
-            unique_objs (bool): If True, each object is unique
-            include_reward_permutation (bool): If True, include the reward permutation in the observation
-        """
-        self.numObjs = num_objs
-
-        self.num_trials = num_trials
-        self.reward_correct = reward_correct
-        self.reward_incorrect = reward_incorrect
-        self.num_obj_types = num_obj_types
-        self.num_obj_colors = num_obj_colors
-        self.unique_objs = unique_objs
-        self.include_reward_permutation = include_reward_permutation
-
-        self.types = ['key', 'ball']
-        self.colors = minigrid.core.constants.COLOR_NAMES
-
-        self.types = self.types[:self.num_obj_types]
-        self.colors = self.colors[:self.num_obj_colors]
-
-        if seed is None:
-            seed = os.getpid() + int(time.time())
-            thread_id = threading.current_thread().ident
-            if thread_id is not None:
-                seed += thread_id
-            seed = seed % (2**32 - 1)
-            self.np_random, seed = gymnasium.utils.seeding.np_random(seed)
-
-        super().__init__(
-            grid_size=size,
-            max_steps=5*size**2*num_trials,
-            # Set this to True for maximum speed
-            see_through_walls=True,
-            mission_space=default_mission_space,
-        )
-
-        self.trial_count = 0
-        self.objects = []
-
-        assert isinstance(self.observation_space, gymnasium.spaces.Dict)
-        if include_reward_permutation:
-            self.observation_space = gymnasium.spaces.Dict({
-                **self.observation_space.spaces,
-                'reward_permutation': gymnasium.spaces.Box(low=-np.inf, high=np.inf, shape=(len(self.types)*len(self.colors),), dtype=np.float32),
-            })
-
-    def _gen_grid(self, width, height):
-        self.grid = minigrid.core.grid.Grid(width, height)
-
-        # Generate the surrounding walls
-        self.grid.horz_wall(0, 0)
-        self.grid.horz_wall(0, height-1)
-        self.grid.vert_wall(0, 0)
-        self.grid.vert_wall(width-1, 0)
-
-        types = self.types
-        colors = self.colors
-
-        type_color_pairs = [(t,c) for t in types for c in colors]
-
-        objs = []
-
-        # For each object to be generated
-        while len(objs) < self.numObjs:
-            objType, objColor = self._rand_elem(type_color_pairs)
-            if self.unique_objs:
-                type_color_pairs.remove((objType, objColor))
-
-            if objType == 'key':
-                obj = minigrid.core.world_object.Key(objColor)
-            elif objType == 'ball':
-                obj = minigrid.core.world_object.Ball(objColor)
-            else:
-                raise ValueError(f'Unknown object type: {objType}')
-
-            self.place_obj(obj)
-            objs.append(obj)
-
-        self.objects = objs
-
-        # Randomize the player start position and orientation
-        self.place_agent()
-
-        # Choose a random object to be picked up
-        target = objs[self._rand_int(0, len(objs))]
-        self.target_type = target.type
-        self.target_color = target.color
-
-        descStr = '%s %s' % (self.target_color, self.target_type)
-
-        # Generate the mission string
-        idx = self._rand_int(0, 5)
-        if idx == 0:
-            self.mission = 'get a %s' % descStr
-        elif idx == 1:
-            self.mission = 'go get a %s' % descStr
-        elif idx == 2:
-            self.mission = 'fetch a %s' % descStr
-        elif idx == 3:
-            self.mission = 'go fetch a %s' % descStr
-        elif idx == 4:
-            self.mission = 'you must fetch a %s' % descStr
-        assert hasattr(self, 'mission')
-
-    def reset(self):
-        obs, info = super().reset()
-        if self.include_reward_permutation:
-            assert isinstance(obs, dict)
-            obs['reward_permutation'] = self.reward_permutation
-        return obs, info
-
-    def step(self, action):
-        obs, reward, terminated, truncated, info = super().step(action)
-        done = terminated or truncated
-
-        if self.carrying:
-            if self.carrying.color == self.target_color and \
-               self.carrying.type == self.target_type:
-                reward = self.reward_correct
-            else:
-                reward = self.reward_incorrect
-            self.place_obj(self.carrying)
-            self.carrying = None
-            self.trial_count += 1
-            if self.trial_count >= self.num_trials:
-                done = True
-                self.trial_count = 0
-
-        if self.include_reward_permutation:
-            assert isinstance(obs, dict)
-            obs['reward_permutation'] = self.reward_permutation
-
-        return obs, reward, done, info
-
-    @property
-    def reward_permutation(self):
-        r = [self.reward_incorrect, self.reward_correct]
-        return [
-            r[t == self.target_type and c == self.target_color]
-            for t in self.types for c in self.colors
-        ]
-
-
-register(
-    id='MiniGrid-BanditsFetch-v0',
-    entry_point=BanditsFetch,
-)
-
-
-class MultiRoomEnv(MiniGridEnv):
-    """
-    Environment with multiple rooms (subgoals)
-    """
-
-    def __init__(self,
-        min_num_rooms,
-        max_num_rooms,
-        max_room_size=10,
-        num_trials=100,
-        seed = None,
-    ):
-        assert min_num_rooms > 0
-        assert max_num_rooms >= min_num_rooms
-        assert max_room_size >= 4
-
-        self.minNumRooms = min_num_rooms
-        self.maxNumRooms = max_num_rooms
-        self.maxRoomSize = max_room_size
-
-        self.num_trials = num_trials
-
-        self.rooms = []
-
-        if seed is None:
-            seed = os.getpid() + int(time.time())
-            thread_id = threading.current_thread().ident
-            if thread_id is not None:
-                seed += thread_id
-            seed = seed % (2**32 - 1)
-            self.np_random, seed = gymnasium.utils.seeding.np_random(seed)
-
-        super(MultiRoomEnv, self).__init__(
-            grid_size=25,
-            max_steps=self.maxNumRooms * 20 * self.num_trials,
-            mission_space=default_mission_space,
-        )
-
-    def _gen_grid(self, width, height):
-        roomList = []
-
-        # Choose a random number of rooms to generate
-        numRooms = self._rand_int(self.minNumRooms, self.maxNumRooms+1)
-
-        while len(roomList) < numRooms:
-            curRoomList = []
-
-            entryDoorPos = (
-                self._rand_int(0, width - 2),
-                self._rand_int(0, width - 2)
-            )
-
-            # Recursively place the rooms
-            self._placeRoom(
-                numRooms,
-                roomList=curRoomList,
-                minSz=4,
-                maxSz=self.maxRoomSize,
-                entryDoorWall=2,
-                entryDoorPos=entryDoorPos
-            )
-
-            if len(curRoomList) > len(roomList):
-                roomList = curRoomList
-
-        # Store the list of rooms in this environment
-        assert len(roomList) > 0
-        self.rooms = roomList
-
-        # Create the grid
-        self.grid = minigrid.core.grid.Grid(width, height)
-        wall = minigrid.core.world_object.Wall()
-
-        prevDoorColor = None
-
-        # For each room
-        for idx, room in enumerate(roomList):
-
-            topX, topY = room.top
-            sizeX, sizeY = room.size
-
-            # Draw the top and bottom walls
-            for i in range(0, sizeX):
-                self.grid.set(topX + i, topY, wall)
-                self.grid.set(topX + i, topY + sizeY - 1, wall)
-
-            # Draw the left and right walls
-            for j in range(0, sizeY):
-                self.grid.set(topX, topY + j, wall)
-                self.grid.set(topX + sizeX - 1, topY + j, wall)
-
-            # If this isn't the first room, place the entry door
-            if idx > 0:
-                # Pick a door color different from the previous one
-                doorColors = set(minigrid.core.constants.COLOR_NAMES)
-                if prevDoorColor:
-                    doorColors.remove(prevDoorColor)
-                # Note: the use of sorting here guarantees determinism,
-                # This is needed because Python's set is not deterministic
-                doorColor = self._rand_elem(sorted(doorColors))
-
-                entryDoor = minigrid.core.world_object.Door(doorColor)
-                self.grid.set(*room.entryDoorPos, entryDoor) # type: ignore
-                prevDoorColor = doorColor
-
-                prevRoom = roomList[idx-1]
-                prevRoom.exitDoorPos = room.entryDoorPos
-
-        # Randomize the starting agent position and direction
-        self.place_agent(roomList[0].top, roomList[0].size)
-
-        # Place the final goal in the last room
-        self.goal = minigrid.core.world_object.Goal()
-        self.goal_pos = self.place_obj(self.goal, roomList[-1].top, roomList[-1].size)
-
-        self.mission = 'traverse the rooms to get to the goal'
-
-    def _placeRoom(
-        self,
-        numLeft,
-        roomList,
-        minSz,
-        maxSz,
-        entryDoorWall,
-        entryDoorPos
-    ):
-        # Choose the room size randomly
-        sizeX = self._rand_int(minSz, maxSz+1)
-        sizeY = self._rand_int(minSz, maxSz+1)
-
-        # The first room will be at the door position
-        if len(roomList) == 0:
-            topX, topY = entryDoorPos
-        # Entry on the right
-        elif entryDoorWall == 0:
-            topX = entryDoorPos[0] - sizeX + 1
-            y = entryDoorPos[1]
-            topY = self._rand_int(y - sizeY + 2, y)
-        # Entry wall on the south
-        elif entryDoorWall == 1:
-            x = entryDoorPos[0]
-            topX = self._rand_int(x - sizeX + 2, x)
-            topY = entryDoorPos[1] - sizeY + 1
-        # Entry wall on the left
-        elif entryDoorWall == 2:
-            topX = entryDoorPos[0]
-            y = entryDoorPos[1]
-            topY = self._rand_int(y - sizeY + 2, y)
-        # Entry wall on the top
-        elif entryDoorWall == 3:
-            x = entryDoorPos[0]
-            topX = self._rand_int(x - sizeX + 2, x)
-            topY = entryDoorPos[1]
-        else:
-            assert False, entryDoorWall
-
-        # If the room is out of the grid, can't place a room here
-        if topX < 0 or topY < 0:
-            return False
-        if topX + sizeX > self.width or topY + sizeY >= self.height: # type: ignore
-            return False
-
-        # If the room intersects with previous rooms, can't place it here
-        for room in roomList[:-1]:
-            nonOverlap = \
-                topX + sizeX < room.top[0] or \
-                room.top[0] + room.size[0] <= topX or \
-                topY + sizeY < room.top[1] or \
-                room.top[1] + room.size[1] <= topY
-
-            if not nonOverlap:
-                return False
-
-        # Add this room to the list
-        roomList.append(gym_minigrid.envs.multiroom.Room( # type: ignore
-            (topX, topY),
-            (sizeX, sizeY),
-            entryDoorPos,
-            None
-        ))
-
-        # If this was the last room, stop
-        if numLeft == 1:
-            return True
-
-        # Try placing the next room
-        for _ in range(0, 8):
-
-            # Pick which wall to place the out door on
-            wallSet = set((0, 1, 2, 3))
-            wallSet.remove(entryDoorWall)
-            exitDoorWall = self._rand_elem(sorted(wallSet))
-            nextEntryWall = (exitDoorWall + 2) % 4
-
-            # Pick the exit door position
-            # Exit on right wall
-            if exitDoorWall == 0:
-                exitDoorPos = (
-                    topX + sizeX - 1,
-                    topY + self._rand_int(1, sizeY - 1)
-                )
-            # Exit on south wall
-            elif exitDoorWall == 1:
-                exitDoorPos = (
-                    topX + self._rand_int(1, sizeX - 1),
-                    topY + sizeY - 1
-                )
-            # Exit on left wall
-            elif exitDoorWall == 2:
-                exitDoorPos = (
-                    topX,
-                    topY + self._rand_int(1, sizeY - 1)
-                )
-            # Exit on north wall
-            elif exitDoorWall == 3:
-                exitDoorPos = (
-                    topX + self._rand_int(1, sizeX - 1),
-                    topY
-                )
-            else:
-                assert False
-
-            # Recursively create the other rooms
-            success = self._placeRoom(
-                numLeft - 1,
-                roomList=roomList,
-                minSz=minSz,
-                maxSz=maxSz,
-                entryDoorWall=nextEntryWall,
-                entryDoorPos=exitDoorPos
-            )
-
-            if success:
-                break
-
-        return True
-
-    def reset(self):
-        obs, info = super().reset()
-        self.trial_count = 0
-        return obs, info
-
-    def step(self, action):
-        obs, reward, terminated, truncated, info = super().step(action)
-        done = terminated or truncated
-
-        if done:
-            self.trial_count += 1
-            if reward > 0:
-                reward = 1
-            self.grid.set(self.goal_pos[0], self.goal_pos[1], None)
-            r = self._rand_int(0, len(self.rooms) - 1)
-            self.goal_pos = self.place_obj(self.goal, self.rooms[r].top, self.rooms[r].size)
-            if self.trial_count >= self.num_trials:
-                done = True
-                self.trial_count = 0
-            else:
-                done = False
-            if self.step_count >= self.max_steps:
-                done = True
-
-        return obs, reward, done, info
-
-
-register(
-    id='MiniGrid-MultiRoom-v0',
-    entry_point=MultiRoomEnv,
-)
 
 
 class Room:
@@ -1193,6 +550,11 @@ def room_is_valid(rooms, room, width, height):
     return True
 
 
+##################################################
+# Environments
+##################################################
+
+
 class MultiRoomEnv_v1(MiniGridEnv):
     """
     Environment with multiple rooms (subgoals)
@@ -1210,6 +572,8 @@ class MultiRoomEnv_v1(MiniGridEnv):
         task_randomization_prob: float = 0,
         max_steps_multiplier: float = 1.,
         shaped_reward_config: dict = None,
+        reward_type: Literal['standard', 'pbrs'] = 'standard',
+        pbrs_scale: float = 1.,
         seed = None,
         render_mode = 'rgb_array',
     ):
@@ -1242,16 +606,15 @@ class MultiRoomEnv_v1(MiniGridEnv):
         self.task_randomization_prob = task_randomization_prob
         self.max_steps_multiplier = max_steps_multiplier
         self.shaped_reward_config = shaped_reward_config
+        self.reward_type = reward_type
+
+        self.pbrs = PotentialBasedReward(
+            scale=pbrs_scale,
+        )
 
         self.rooms = []
 
-        if seed is None:
-            seed = os.getpid() + int(time.time())
-            thread_id = threading.current_thread().ident
-            if thread_id is not None:
-                seed += thread_id
-            seed = seed % (2**32 - 1)
-            self.np_random, seed = gymnasium.utils.seeding.np_random(seed)
+        self.np_random, seed = init_rng(seed)
 
         super(MultiRoomEnv_v1, self).__init__(
             grid_size=25,
@@ -1586,26 +949,26 @@ class MultiRoomEnv_v1(MiniGridEnv):
         if self.bandits_config is not None:
             raise NotImplementedError('Task randomization not implemented for bandits')
 
+    def _get_dest(self):
+        dest = None
+        for obj in self.objects:
+            if obj.color != self.target_color:
+                continue
+            if obj.type != self.target_type:
+                continue
+            dest = obj
+        assert dest is not None
+        assert dest.cur_pos is not None
+        return dest
+
     def _shaped_reward(self, config: dict):
         """ Return the shaped reward for the current state. """
         reward_type = config['type'].lower()
 
-        def get_dest():
-            dest = None
-            for obj in self.objects:
-                if obj.color != self.target_color:
-                    continue
-                if obj.type != self.target_type:
-                    continue
-                dest = obj
-            assert dest is not None
-            assert dest.cur_pos is not None
-            return dest
-
-        all_dests = self.objects
+        all_dests = self.objects # List of all possible destinations
 
         if reward_type == 'inverse distance': # Distance-based reward bounded by 1
-            dest = get_dest()
+            dest = self._get_dest()
             distance = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
             
             reward = 1 / (distance + 1)
@@ -1619,7 +982,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
             raise NotImplementedError('Potential-based shaped reward not implemented')
 
         elif reward_type == 'adjacent to subtask':
-            dest = get_dest()
+            dest = self._get_dest()
 
             assert self.agent_pos is not None
             if self._agent_pos_prev is None:
@@ -1642,6 +1005,13 @@ class MultiRoomEnv_v1(MiniGridEnv):
 
         raise ValueError(f'Unknown reward type: {reward_type}')
 
+    def _potential(self):
+        """ Potential function used for potential-based shaped reward. """
+        dest = self._get_dest()
+        dist = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
+        max_size = self.width + self.height
+        return -dist / max_size
+
     @property
     def goal_str(self):
         return f'{self.target_color} {self.target_type}'
@@ -1656,6 +1026,8 @@ class MultiRoomEnv_v1(MiniGridEnv):
             self._init_bandits(**self.bandits_config)
         if self.shaped_reward_config is not None:
             obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_config)], dtype=np.float32)
+        self.pbrs.reset()
+        info['reward'] = 0
         return obs, info
 
     def step(self, action):
@@ -1709,130 +1081,16 @@ class MultiRoomEnv_v1(MiniGridEnv):
             terminated = True
             self.trial_count = 0
 
+        info['reward'] = reward
+        if self.reward_type == 'pbrs':
+            self.pbrs.update_potential(self._potential())
+            return obs, reward+self.pbrs.reward, terminated, truncated, info
         return obs, reward, terminated, truncated, info
 
 
 register(
     id='MiniGrid-MultiRoom-v1',
     entry_point=MultiRoomEnv_v1,
-)
-
-class MultiRoomBanditsLarge(MultiRoomEnv_v1):
-    def __init__(self):
-        super().__init__(min_num_rooms=5, max_num_rooms=5, max_room_size=16, fetch_config={'num_objs': 5}, bandits_config={})
-
-register(
-    id='MiniGrid-MultiRoom-Large-v1',
-    entry_point=MultiRoomBanditsLarge,
-)
-
-
-class EmptyEnv(MiniGridEnv):
-    """
-    Empty grid environment, no obstacles, sparse reward
-    """
-
-    def __init__(
-        self,
-        size=5,
-        agent_start_pos=(1,1),
-        agent_start_dir=0,
-        num_trials = 100,
-        wall = False,
-        lava = False,
-        seed = None,
-    ):
-        self.num_trials = num_trials
-        self.wall = wall
-        self.lava = lava
-
-        self.agent_start_pos = agent_start_pos
-        self.agent_start_dir = agent_start_dir
-
-        if seed is None:
-            seed = os.getpid() + int(time.time())
-            thread_id = threading.current_thread().ident
-            if thread_id is not None:
-                seed += thread_id
-            seed = seed % (2**32 - 1)
-            self.np_random, seed = gymnasium.utils.seeding.np_random(seed)
-
-        super().__init__(
-            grid_size=size,
-            max_steps=4*size*size*num_trials,
-            # Set this to True for maximum speed
-            see_through_walls=True,
-            mission_space=default_mission_space,
-        )
-
-    def _gen_grid(self, width, height):
-        # Create an empty grid
-        self.grid = minigrid.core.grid.Grid(width, height)
-
-        # Generate the surrounding walls
-        self.grid.wall_rect(0, 0, width, height)
-
-        # Create a dividing wall if requested
-        if self.wall:
-            self.grid.vert_wall(width//2, height//2)
-
-        # Create a lava if requested
-        self.lava_obj = minigrid.core.world_object.Lava()
-        if self.lava:
-            self.place_obj(self.lava_obj)
-
-        # Place a goal square in the bottom-right corner
-        self.goal = minigrid.core.world_object.Goal()
-        self.place_obj(self.goal)
-
-        # Place the agent
-        if self.agent_start_pos is not None:
-            self.agent_pos = self.agent_start_pos
-            self.agent_dir = self.agent_start_dir
-        else:
-            self.place_agent()
-
-        self.mission = "get to the green goal square"
-
-    def reset(self):
-        obs, info = super().reset()
-        self.trial_count = 0
-        return obs, info
-
-    def step(self, action):
-        obs, reward, terminated, truncated, info = super().step(action)
-        done = terminated or truncated
-
-        curr_cell = self.grid.get(*self.agent_pos) # type: ignore
-        if curr_cell is self.goal:
-            # Give a reward
-            reward = self._reward()
-            if self.lava:
-                reward = 1 # If we also have a negative reward state, then reaching the goal state will always give a reward of 1 instead of a reward that scales on number of steps taken, since we now care about whether the agent can consistently reach the goal while avoiding bad states rather than how fast it reaches the goal.
-            done = False
-            self.trial_count += 1
-            # Move goal to a random location
-            self.grid.set(self.agent_pos[0], self.agent_pos[1], None)
-            self.place_obj(self.goal)
-        elif curr_cell is self.lava_obj:
-            # Give a reward
-            reward = -1
-            done = False
-            self.trial_count += 1
-            # Move lava to a random location
-            self.grid.set(self.agent_pos[0], self.agent_pos[1], None)
-            self.place_obj(self.lava_obj)
-
-        if self.trial_count >= self.num_trials:
-            done = True
-            self.trial_count = 0
-
-        return obs, reward, done, info
-
-
-register(
-    id='MiniGrid-Empty-Meta-v0',
-    entry_point=EmptyEnv,
 )
 
 
@@ -1858,6 +1116,7 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
         task_randomization_prob: float = 0,
         max_steps_multiplier: float = 1.,
         shaped_reward_config: dict = None,
+        reward_type: Literal['standard', 'pbrs'] = 'standard',
         seed = None,
         render_mode = 'rgb_array',
     ):
@@ -1871,6 +1130,7 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
             num_trials (int): number of trials per episode. A trial ends upon reaching the goal state or picking up an object.
             fetch_config (dict): configuration for the fetch task.
             task_randomization_prob (float): probability of switching tasks at the beginning of each trial.
+            reward_type (str): type of reward to use. 'standard' gives a reward only after an object is picked up and the agent steps on the green square. `pbrs` is the potential-based shaped reward. The potential function used is the negative of the Manhattan distance to the current subtask, normalized to be bounded between [-1,0].
             seed (int): random seed.
         """
         self.fetch_config = fetch_config # Needed to appease pyright
@@ -1885,6 +1145,7 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
             task_randomization_prob = task_randomization_prob,
             max_steps_multiplier = max_steps_multiplier,
             shaped_reward_config = shaped_reward_config,
+            reward_type = reward_type,
             seed = seed,
             render_mode = render_mode,
         )
@@ -2149,13 +1410,13 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
 
     def _removed_objects_value(self):
         """ Return the total value of all objects that were picked up. """
-        total_regret = 0
-        total_expected_value = 0
-        total_reward = 0
+        total_regret: float = 0
+        total_expected_value: float = 0
+        total_reward: float = 0
         target_object_picked_up = False # Whether the target object was picked up
 
-        reward_correct = self.fetch_config.get('reward_correct', 1)
-        reward_incorrect = self.fetch_config.get('reward_incorrect', -1)
+        reward_correct: float = self.fetch_config.get('reward_correct', 1)
+        reward_incorrect: float = self.fetch_config.get('reward_incorrect', -1)
         p = self._fetch_reward_prob # Probability that the reward is not flipped
         expected_value_correct = reward_correct*p + reward_incorrect*(1-p)
         expected_value_incorrect = reward_incorrect*p + reward_correct*(1-p)
@@ -2201,8 +1462,8 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
         total_regret = 0
         if curr_cell == self.goal and len(self.removed_objects) > 0:
             removed_objects_value = self._removed_objects_value()
-            reward_correct = self.fetch_config.get('reward_correct', 1)
-            reward_incorrect = self.fetch_config.get('reward_incorrect', -1)
+            reward_correct: float = self.fetch_config.get('reward_correct', 1)
+            reward_incorrect: float = self.fetch_config.get('reward_incorrect', -1)
             p = self._fetch_reward_prob
             # Process all objects that were picked up
             for obj in self.removed_objects:

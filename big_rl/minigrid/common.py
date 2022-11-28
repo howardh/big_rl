@@ -1,3 +1,4 @@
+import copy
 from typing import Sequence, Iterable, Union, Tuple, Mapping
 
 import gymnasium
@@ -134,9 +135,67 @@ def zip2(*args) -> Iterable[Union[Tuple,Mapping]]:
     return zip(*[zip2(a) for a in args])
 
 
+def merge(source, destination):
+    """
+    (Source: https://stackoverflow.com/a/20666342/382388)
+
+    run me with nosetests --with-doctest file.py
+
+    >>> a = { 'first' : { 'all_rows' : { 'pass' : 'dog', 'number' : '1' } } }
+    >>> b = { 'first' : { 'all_rows' : { 'fail' : 'cat', 'number' : '5' } } }
+    >>> merge(b, a) == { 'first' : { 'all_rows' : { 'pass' : 'dog', 'fail' : 'cat', 'number' : '5' } } }
+    True
+    """
+    destination = copy.deepcopy(destination)
+    if isinstance(source, Mapping):
+        for key, value in source.items():
+            if isinstance(value, dict):
+                # get node or create one
+                node = destination.setdefault(key, {})
+                destination[key] = merge(value, node)
+            elif isinstance(value, list):
+                if isinstance(destination[key],list):
+                    destination[key] = [merge(s,d) for s,d in zip(source[key],destination[key])]
+                else:
+                    destination[key] = value
+            else:
+                destination[key] = value
+
+        return destination
+    else:
+        return source
+
+
+class ExperimentConfigs(dict):
+    def __init__(self):
+        self._last_key = None
+    def add(self, key, config, inherit=None):
+        if key in self:
+            raise Exception(f'Key {key} already exists.')
+        if inherit is None:
+            self[key] = config
+        else:
+            self[key] = merge(config,self[inherit])
+        self._last_key = key
+    def add_change(self, key, config):
+        self.add(key, config, inherit=self._last_key)
+
+
+class ConfigReplace:
+    def __init__(self, value):
+        self.value = value
+
+
+class ConfigMerge:
+    def __init__(self, value):
+        self.value = value
+
+
 def env_config_presets():
-    return {
-        'fetch-debug': {
+    config = ExperimentConfigs()
+
+    def init_fetch():
+        config.add('fetch-debug', {
             'env_name': 'MiniGrid-MultiRoom-v1',
             'minigrid_config': {},
             'meta_config': {
@@ -160,9 +219,8 @@ def env_config_presets():
                 },
                 #'task_randomization_prob': 0.02, # 86% chance of happening at least once, with a 50% change of the randomized task being unchanged.
             }
-        },
-
-        'fetch-001': {
+        })
+        config.add('fetch-001', {
             'env_name': 'MiniGrid-MultiRoom-v1',
             'minigrid_config': {},
             'meta_config': {
@@ -184,94 +242,46 @@ def env_config_presets():
                     'num_obj_colors': 2,
                     'prob': 1.0, # 0.0 chance of flipping the reward
                 },
-                #'task_randomization_prob': 0.02, # 86% chance of happening at least once, with a 50% change of the randomized task being unchanged.
             }
-        },
-
-        'fetch-002': {
-            'env_name': 'MiniGrid-MultiRoom-v1',
-            'minigrid_config': {},
-            'meta_config': {
-                'episode_stack': 1,
-                'dict_obs': True,
-                'randomize': False,
-            },
+        })
+        config.add_change('fetch-002', {
             'config': {
                 'num_trials': 100,
                 'min_num_rooms': 1,
                 'max_num_rooms': 1,
                 'min_room_size': 8,
                 'max_room_size': 16,
-                'door_prob': 0.5,
-                'max_steps_multiplier': 5,
                 'fetch_config': {
                     'num_objs': 2,
                     'num_obj_types': 2,
                     'num_obj_colors': 6,
-                    'prob': 1.0, # 0.0 chance of flipping the reward
                 },
             }
-        },
-
-        'fetch-002-shaped': {
-            'env_name': 'MiniGrid-MultiRoom-v1',
-            'minigrid_config': {},
-            'meta_config': {
-                'episode_stack': 1,
-                'dict_obs': True,
-                'randomize': False,
-            },
+        })
+        config.add_change('fetch-002-shaped', {
             'config': {
-                'num_trials': 100,
-                'min_num_rooms': 1,
-                'max_num_rooms': 1,
-                'min_room_size': 8,
-                'max_room_size': 16,
-                'door_prob': 0.5,
-                'max_steps_multiplier': 5,
-                'fetch_config': {
-                    'num_objs': 2,
-                    'num_obj_types': 2,
-                    'num_obj_colors': 6,
-                    'prob': 1.0, # 0.0 chance of flipping the reward
-                },
-                #'shaped_reward_setting': 0,
                 'shaped_reward_config': {
                     'type': 'inverse distance',
                 },
             }
-        },
-
-        'fetch-002-shaped-adjacent': {
-            'env_name': 'MiniGrid-MultiRoom-v1',
-            'minigrid_config': {},
-            'meta_config': {
-                'episode_stack': 1,
-                'dict_obs': True,
-                'randomize': False,
-            },
+        })
+        config.add_change('fetch-002-shaped-adjacent', {
             'config': {
-                'num_trials': 100,
-                'min_num_rooms': 1,
-                'max_num_rooms': 1,
-                'min_room_size': 8,
-                'max_room_size': 16,
-                'door_prob': 0.5,
-                'max_steps_multiplier': 5,
-                'fetch_config': {
-                    'num_objs': 2,
-                    'num_obj_types': 2,
-                    'num_obj_colors': 6,
-                    'prob': 1.0, # 0.0 chance of flipping the reward
-                },
-                #'shaped_reward_setting': 0,
                 'shaped_reward_config': {
                     'type': 'adjacent to subtask',
                 },
             }
-        },
+        })
+        # Skipping 003 to match up with the delayed task numbering
+        config.add('fetch-002-pbrs', {
+            'config': {
+                'reward_type': 'pbrs',
+                'pbrs_scale': 0.1,
+            }
+        }, inherit='fetch-002')
 
-        'delayed-001': {
+    def init_delayed():
+        config.add('delayed-001', {
             'env_name': 'MiniGrid-Delayed-Reward-v0',
             'minigrid_config': {},
             'meta_config': {
@@ -292,107 +302,33 @@ def env_config_presets():
                     'prob': 1.0, # 0.0 chance of flipping the reward
                 },
             }
-        },
-
-        'delayed-002': {
-            'env_name': 'MiniGrid-Delayed-Reward-v0',
-            'minigrid_config': {},
-            'meta_config': {
-                'episode_stack': 1,
-                'dict_obs': True,
-                'randomize': False,
-            },
+        })
+        config.add_change('delayed-002', {
+            # Looks like I forgot to make changes?
+        })
+        config.add_change('delayed-003', {
             'config': {
-                'num_trials': 100,
-                'min_num_rooms': 1,
-                'max_num_rooms': 1,
-                'min_room_size': 5,
-                'max_room_size': 6,
-                'door_prob': 0.5,
-                'fetch_config': {
-                    'num_objs': 2,
-                    'num_obj_colors': 6,
-                    'prob': 1.0, # 0.0 chance of flipping the reward
-                },
-            }
-        },
-
-        'delayed-003': {
-            'env_name': 'MiniGrid-Delayed-Reward-v0',
-            'minigrid_config': {},
-            'meta_config': {
-                'episode_stack': 1,
-                'dict_obs': True,
-                'randomize': False,
-            },
-            'config': {
-                'num_trials': 100,
-                'min_num_rooms': 1,
-                'max_num_rooms': 1,
                 'min_room_size': 8,
                 'max_room_size': 16,
-                'door_prob': 0.5,
-                'fetch_config': {
-                    'num_objs': 2,
-                    'num_obj_colors': 6,
-                    'prob': 1.0, # 0.0 chance of flipping the reward
-                },
             }
-        },
-
-        'delayed-003-shaped': {
-            'env_name': 'MiniGrid-Delayed-Reward-v0',
-            'minigrid_config': {},
-            'meta_config': {
-                'episode_stack': 1,
-                'dict_obs': True,
-                'randomize': False,
-            },
+        })
+        config.add_change('delayed-003-shaped', {
             'config': {
-                'num_trials': 100,
-                'min_num_rooms': 1,
-                'max_num_rooms': 1,
-                'min_room_size': 8,
-                'max_room_size': 16,
-                'door_prob': 0.5,
-                'fetch_config': {
-                    'num_objs': 2,
-                    'num_obj_colors': 6,
-                    'prob': 1.0, # 0.0 chance of flipping the reward
-                },
-                #'task_randomization_prob': 0.02, # 86% chance of happening at least once, with a 50% change of the randomized task being unchanged.
-                #'shaped_reward_setting': 1,
                 'shaped_reward_config': {
                     'type': 'inverse distance',
                 },
             }
-        },
-
-        'delayed-003-shaped-adjacent': {
-            'env_name': 'MiniGrid-Delayed-Reward-v0',
-            'minigrid_config': {},
-            'meta_config': {
-                'episode_stack': 1,
-                'dict_obs': True,
-                'randomize': False,
-            },
+        })
+        config.add_change('delayed-003-shaped-adjacent', {
             'config': {
-                'num_trials': 100,
-                'min_num_rooms': 1,
-                'max_num_rooms': 1,
-                'min_room_size': 8,
-                'max_room_size': 16,
-                'door_prob': 0.5,
-                'fetch_config': {
-                    'num_objs': 2,
-                    'num_obj_colors': 6,
-                    'prob': 1.0, # 0.0 chance of flipping the reward
-                },
                 'shaped_reward_config': {
                     'type': 'adjacent to subtask',
                 },
             }
-        },
-    }
+        })
 
+    init_fetch()
+    init_delayed()
+
+    return config
 

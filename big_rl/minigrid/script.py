@@ -9,6 +9,8 @@ import gymnasium.spaces
 import gymnasium.vector
 import torch
 from torch.utils.data.dataloader import default_collate
+import torch.nn
+import torch.nn.utils
 import numpy as np
 import wandb
 

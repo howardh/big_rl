@@ -22,8 +22,9 @@ setup(name='big_rl',
         # Atari (Not yet compatible with Gymnasium)
         #'gym[atari,accept-rom-license]',
 
-        # Testing
+        # Dev stuff
         'pytest',
+        'flake8',
     ],
     packages=find_packages()
 )
