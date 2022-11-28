@@ -1,7 +1,7 @@
 import argparse
 import itertools
 import os
-from typing import Tuple
+from typing import Tuple, Optional
 
 import cv2
 import numpy as np
@@ -67,16 +67,6 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
         results['target'] = env.goal_str # type: ignore
         results['shaped_reward'].append(compute_shaped_reward(model))
 
-        #if results['shaped_reward'][-1].sum() > 0:
-        #    breakpoint()
-        #tqdm.write(
-        #        '\t'.join([
-        #        str(results['shaped_reward'][-1].mean().item()),
-        #        str(results['shaped_reward'][-1].min().item()),
-        #        str(results['shaped_reward'][-1].max().item()),
-        #        ])
-        #)
-
         episode_reward += reward
         episode_length += 1
 
@@ -87,7 +77,8 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
         if terminated or truncated:
             break
 
-        video_callback_fn(model, env, obs, results)
+        if video_callback_fn is not None:
+            video_callback_fn(model, env, obs, results)
 
     return {
         'episode_reward': episode_reward,
@@ -298,7 +289,7 @@ def draw_observations(observations: dict):
 
 class VideoCallback:
     def __init__(self, filename: str, 
-                 size: Tuple[int,int] = None,
+                 size: Optional[Tuple[int,int]] = None,
                  fps: int = 30):
         assert filename.endswith('.webm')
         os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -318,6 +309,7 @@ class VideoCallback:
 
     def get_video_writer(self, frame=None):
         if self._video_writer is None:
+            assert frame is not None
             self._video_writer = cv2.VideoWriter( # type: ignore
                     self.filename,
                     cv2.VideoWriter_fourcc(*'VP80'), # type: ignore
