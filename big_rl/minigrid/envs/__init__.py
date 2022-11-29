@@ -323,14 +323,14 @@ class MetaWrapper(gym.Wrapper):
         if self.dict_obs:
             if isinstance(self.env.observation_space, gymnasium.spaces.Dict):
                 obs = {
-                    'reward': np.array([reward], dtype=np.float32),
+                    'reward': np.array([info.get('reward',reward)], dtype=np.float32),
                     'done': np.array([done], dtype=np.float32),
                     **{f'obs ({k})': v for k,v in obs.items()},
                     'action': original_action,
                 }
             else:
                 obs = {
-                    'reward': np.array([reward], dtype=np.float32),
+                    'reward': np.array([info.get('reward',reward)], dtype=np.float32),
                     'done': np.array([done], dtype=np.float32),
                     'obs': obs,
                     'action': original_action,
@@ -448,8 +448,9 @@ def init_rng(seed=None):
 
 
 class PotentialBasedReward:
-    def __init__(self, scale=1.0):
+    def __init__(self, discount, scale=1.0):
         self._scale = scale
+        self._discount = discount
 
         self._prev_potential = None
         self._potential = None
@@ -475,7 +476,7 @@ class PotentialBasedReward:
         if self.prev_potential is None:
             return 0
         else:
-            return (self.prev_potential - self.potential) * self._scale
+            return (self._discount * self.potential - self.prev_potential) * self._scale
 
 
 ##################################################
@@ -574,6 +575,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
         shaped_reward_config: dict = None,
         reward_type: Literal['standard', 'pbrs'] = 'standard',
         pbrs_scale: float = 1.,
+        pbrs_discount: float = 0.99,
         seed = None,
         render_mode = 'rgb_array',
     ):
@@ -609,6 +611,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
         self.reward_type = reward_type
 
         self.pbrs = PotentialBasedReward(
+            discount=pbrs_discount,
             scale=pbrs_scale,
         )
 
@@ -962,48 +965,88 @@ class MultiRoomEnv_v1(MiniGridEnv):
         return dest
 
     def _shaped_reward(self, config: dict):
-        """ Return the shaped reward for the current state. """
+        """ Return the shaped reward for the current state.
+
+        Args:
+            config: dictionary containing the following keys:
+                - 'reward_type': 'zero', 'inverse distance', 'adjacent to subtask'
+                - 'noise': Tuple of (noise type, *noise params). Possible noise types with their parameters:
+                    - ('zero', p): Shaped reward is 0 with probability p
+                    - ('gaussian', std): Zero-mean Gaussian noise with standard deviation std is added to the shaped reward
+                    - ('stop', n): If n>1, the shaped reward is set to 0 after n steps. If 0<n<1, the shaped reward will be set to 0 for the rest of the episode with probability n at each time step.
+        """
         reward_type = config['type'].lower()
+        noise_config = config.get('noise', None)
 
-        all_dests = self.objects # List of all possible destinations
+        def compute_reward():
+            all_dests = self.objects # List of all possible destinations
 
-        if reward_type == 'inverse distance': # Distance-based reward bounded by 1
-            dest = self._get_dest()
-            distance = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
-            
-            reward = 1 / (distance + 1)
+            if reward_type == 'inverse distance': # Distance-based reward bounded by 1
+                dest = self._get_dest()
+                distance = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
+                
+                reward = 1 / (distance + 1)
 
-            return reward
+                return reward
 
-        elif reward_type == 'zero': # Always 0. Use to test the agent's ability to handle having a shaped reward signal but the signal is constant.
-            return 0
-
-        elif reward_type == 'pbrs': # Same as inverse distance, but converted to a potential-based shaped reward
-            raise NotImplementedError('Potential-based shaped reward not implemented')
-
-        elif reward_type == 'adjacent to subtask':
-            dest = self._get_dest()
-
-            assert self.agent_pos is not None
-            if self._agent_pos_prev is None:
+            elif reward_type == 'zero': # Always 0. Use to test the agent's ability to handle having a shaped reward signal but the signal is constant.
                 return 0
 
-            dist = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
-            dist_prev = abs(dest.cur_pos[0] - self._agent_pos_prev[0]) + abs(dest.cur_pos[1] - self._agent_pos_prev[1])
-            all_dists = [abs(obj.cur_pos[0] - self.agent_pos[0]) + abs(obj.cur_pos[1] - self.agent_pos[1]) for obj in all_dests]
-            all_dists_prev = [abs(obj.cur_pos[0] - self._agent_pos_prev[0]) + abs(obj.cur_pos[1] - self._agent_pos_prev[1]) for obj in all_dests]
+            elif reward_type == 'pbrs': # Same as inverse distance, but converted to a potential-based shaped reward
+                raise NotImplementedError('Potential-based shaped reward not implemented')
 
-            if dist == 1:
-                if dist_prev != 1:
-                    return 1
+            elif reward_type == 'adjacent to subtask':
+                dest = self._get_dest()
+
+                assert self.agent_pos is not None
+                if self._agent_pos_prev is None:
+                    return 0
+
+                dist = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
+                dist_prev = abs(dest.cur_pos[0] - self._agent_pos_prev[0]) + abs(dest.cur_pos[1] - self._agent_pos_prev[1])
+                all_dists = [abs(obj.cur_pos[0] - self.agent_pos[0]) + abs(obj.cur_pos[1] - self.agent_pos[1]) for obj in all_dests]
+                all_dists_prev = [abs(obj.cur_pos[0] - self._agent_pos_prev[0]) + abs(obj.cur_pos[1] - self._agent_pos_prev[1]) for obj in all_dests]
+
+                if dist == 1:
+                    if dist_prev != 1:
+                        return 1
+                    else:
+                        return 0
+                elif min(all_dists) == 1 and min(all_dists_prev) != 1:
+                    return -1
                 else:
                     return 0
-            elif min(all_dists) == 1 and min(all_dists_prev) != 1:
-                return -1
-            else:
-                return 0
 
-        raise ValueError(f'Unknown reward type: {reward_type}')
+            raise ValueError(f'Unknown reward type: {reward_type}')
+
+        def add_noise(reward):
+            if noise_config is None:
+                return reward
+            
+            noise_type = noise_config[0].lower()
+
+            if noise_type == 'zero':
+                if self.np_random.uniform() < noise_config[1]:
+                    return 0
+                else:
+                    return reward
+            elif noise_type == 'gaussian':
+                std = noise_config[1]
+                return reward + self.np_random.normal(scale=std)
+            elif noise_type == 'stop':
+                if self._stop_shaped_reward:
+                    return 0
+                if noise_config[1] > 1:
+                    if self.step_count >= noise_config[1]:
+                        self._stop_shaped_reward = True
+                        return 0
+                elif self.np_random.uniform() < noise_config[1]:
+                    self._stop_shaped_reward = True
+                return reward
+
+        reward = compute_reward()
+        reward = add_noise(reward)
+        return reward
 
     def _potential(self):
         """ Potential function used for potential-based shaped reward. """

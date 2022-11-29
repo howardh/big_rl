@@ -19,6 +19,7 @@ def init_parser_trainer(parser: ArgumentParser):
     parser.add_argument('--target-kl', type=float, default=None, help='Target KL divergence.')
     parser.add_argument('--num-epochs', type=int, default=5, help='Number of minibatches.')
     parser.add_argument('--max-grad-norm', type=float, default=None, help='Maximum gradient norm.')
+    parser.add_argument('--warmup-steps', type=int, default=0, help='Number of warmup steps on the environment before we start training on the generated samples.')
 
 
 def init_parser_model(parser: ArgumentParser):

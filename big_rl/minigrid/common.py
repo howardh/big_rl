@@ -273,12 +273,37 @@ def env_config_presets():
             }
         })
         # Skipping 003 to match up with the delayed task numbering
-        config.add('fetch-002-pbrs', {
+        config.add('fetch-004', {
+            'config': {
+                'min_room_size': 4,
+                'max_room_size': 6,
+                'reward_type': 'standard',
+            }
+        }, inherit='fetch-002')
+        config.add_change('fetch-004-pbrs', {
             'config': {
                 'reward_type': 'pbrs',
                 'pbrs_scale': 0.1,
+                'pbrs_discount': 0.99,
             }
-        }, inherit='fetch-002')
+        })
+        config.add('fetch-004-shaped', {
+            'config': {
+                'shaped_reward_config': {
+                    'type': 'inverse distance',
+                },
+            }
+        }, inherit='fetch-004')
+
+        # Noisy shaped rewards
+        config.add('fetch-004-shaped-noisy-debug', {
+            'config': {
+                'shaped_reward_config': {
+                    'type': 'inverse distance',
+                    'noise': ('gaussian', 0.1),
+                },
+            }
+        }, inherit='fetch-004')
 
     def init_delayed():
         config.add('delayed-001', {

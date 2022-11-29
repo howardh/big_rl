@@ -1,3 +1,4 @@
+from collections import defaultdict
 import os
 import itertools
 from typing import Optional, Generator, Dict, List, Any, Callable
@@ -167,6 +168,7 @@ def train_single_env(
         num_epochs: int = 4,
         target_kl: Optional[float] = None,
         norm_adv: bool = True,
+        warmup_steps: int = 0,
         ) -> Generator[Dict[str, Any], None, None]:
     """
     Train a model with PPO on an Atari game.
@@ -200,8 +202,77 @@ def train_single_env(
             {k:v for k,v in obs.items() if k not in obs_ignore},
             misc = {'hidden': hidden},
     )
-    episode_reward = np.zeros(num_envs)
+    episode_true_reward = np.zeros(num_envs) # Actual reward we want to optimize before any modifications (e.g. clipping)
+    episode_reward = np.zeros(num_envs) # Reward presented to the learning algorithm
     episode_steps = np.zeros(num_envs)
+
+    ##################################################
+    # Warmup
+    # The state of all environments are similar at the start of an episode. By warming up, we increase the diversity of states to something that is closer to iid.
+
+    start_time = time.time()
+    warmup_episode_rewards = defaultdict(lambda: [])
+    warmup_episode_steps = defaultdict(lambda: [])
+    for _ in range(warmup_steps):
+        # Select action
+        with torch.no_grad():
+            model_output = model({
+                k: torch.tensor(v, dtype=torch.float, device=device)*obs_scale.get(k,1)
+                for k,v in obs.items()
+                if k not in obs_ignore
+            }, hidden)
+            hidden = model_output['hidden']
+
+            action_probs = model_output['action'].softmax(1)
+            action_dist = torch.distributions.Categorical(action_probs)
+            action = action_dist.sample().cpu().numpy()
+
+        # Step environment
+        obs, reward, terminated, truncated, info = env.step(action)
+        done = terminated | truncated
+
+        episode_reward += reward
+        episode_true_reward += info.get('reward', reward)
+        episode_steps += 1
+
+        if done.any():
+            # Reset hidden state for finished episodes
+            hidden = tuple(
+                    torch.where(torch.tensor(done, device=device).unsqueeze(1), h0, h)
+                    for h0,h in zip(model.init_hidden(num_envs), hidden) # type: ignore (???)
+            )
+            # Print stats
+            for env_label, env_id in env_label_to_id.items():
+                done2 = done & (env_ids == env_id)
+                if not done2.any():
+                    continue
+                for x in episode_reward[done2]:
+                    warmup_episode_rewards[env_label].append(x.item())
+                for x in episode_steps[done2]:
+                    warmup_episode_steps[env_label].append(x.item())
+                print(f'Warmup\t reward: {episode_reward[done2].mean():.2f}\t len: {episode_steps[done2].mean()} \t env: {env_label} ({done2.sum().item()})')
+            # Reset episode stats
+            episode_reward[done] = 0
+            episode_true_reward[done] = 0
+            episode_steps[done] = 0
+
+    if warmup_steps > 0:
+        print(f'Warmup time: {time.time() - start_time:.2f} s')
+        for env_label, env_id in env_label_to_id.items():
+            reward_mean = np.mean(warmup_episode_rewards[env_label])
+            reward_std = np.std(warmup_episode_rewards[env_label])
+            steps_mean = np.mean(warmup_episode_steps[env_label])
+            # TODO: handle case where there are no completed episodes during warmup?
+            if wandb.run is not None:
+                wandb.log({
+                    f'reward/{env_label}': reward_mean,
+                    f'episode_length/{env_label}': steps_mean,
+                    'step': global_step_counter[0],
+                }, step = global_step_counter[0])
+            print(f'\t{env_label}\treward: {reward_mean:.2f} +/- {reward_std:.2f}\t len: {steps_mean:.2f}')
+
+    ##################################################
+    # Start training
     for step in itertools.count():
         # Gather data
         state_values = [] # For logging purposes
@@ -231,6 +302,7 @@ def train_single_env(
 
             history.append_action(action)
             episode_reward += reward
+            episode_true_reward += info.get('reward', reward)
             episode_steps += 1
 
             reward *= reward_scale
@@ -243,9 +315,6 @@ def train_single_env(
             )
 
             if done.any():
-                if 'lives' in info:
-                    done = done & (info['lives'] == 0)
-            if done.any():
                 print(f'Episode finished ({step * num_envs * rollout_length:,})')
                 for env_label, env_id in env_label_to_id.items():
                     done2 = done & (env_ids == env_id)
@@ -254,6 +323,7 @@ def train_single_env(
                     if wandb.run is not None:
                         wandb.log({
                                 f'reward/{env_label}': episode_reward[done2].mean().item(),
+                                f'true_reward/{env_label}': episode_true_reward[done2].mean().item(),
                                 f'episode_length/{env_label}': episode_steps[done2].mean().item(),
                                 'step': global_step_counter[0],
                         }, step = global_step_counter[0])
@@ -265,6 +335,7 @@ def train_single_env(
                 )
                 # Reset episode stats
                 episode_reward[done] = 0
+                episode_true_reward[done] = 0
                 episode_steps[done] = 0
 
         assert isinstance(model.last_attention, list)
@@ -333,6 +404,7 @@ def train(
         num_epochs: int = 4,
         target_kl: Optional[float] = None,
         norm_adv: bool = True,
+        warmup_steps: int = 0,
         ):
     global_step_counter = [0]
     trainers = [
@@ -353,6 +425,7 @@ def train(
             num_epochs = num_epochs,
             target_kl = target_kl,
             norm_adv = norm_adv,
+            warmup_steps = warmup_steps,
         )
         for env,labels in zip(envs, env_labels)
     ]
@@ -515,6 +588,7 @@ if __name__ == '__main__':
             target_kl = args.target_kl,
             num_epochs = args.num_epochs,
             max_grad_norm = args.max_grad_norm,
+            warmup_steps = args.warmup_steps,
     )
     if args.model_checkpoint is not None:
         os.makedirs(os.path.dirname(args.model_checkpoint), exist_ok=True)
