@@ -1,6 +1,6 @@
 import os
 from typing_extensions import Literal
-#from typing import Literal
+from typing import Union, Tuple
 import threading
 import time
 
@@ -435,7 +435,6 @@ class ActionShuffle(gym.Wrapper):
 ##################################################
 
 
-
 def init_rng(seed=None):
     if seed is None:
         seed = os.getpid() + int(time.time())
@@ -477,6 +476,210 @@ class PotentialBasedReward:
             return 0
         else:
             return (self._discount * self.potential - self.prev_potential) * self._scale
+
+
+class RewardNoise:
+    def __init__(self,
+                 noise_type: Literal[None, 'zero', 'gaussian', 'stop'],
+                 *args
+        ):
+        self.noise_type = noise_type
+        self.args = args
+
+        self.reset()
+
+    def reset(self):
+        self._stop_reward: bool = False
+        self._step_count: int = 0
+
+    def add_noise(self, reward):
+        self._step_count += 1
+
+        noise_type = self.noise_type
+
+        if noise_type is None:
+            return reward
+
+        if noise_type == 'zero':
+            return self._zero_noise(reward, *self.args)
+        elif noise_type == 'gaussian':
+            return self._gaussian_noise(reward, *self.args)
+        elif noise_type == 'stop':
+            return self._stop_noise(reward, *self.args)
+        else:
+            raise ValueError(f"Unknown noise type: {noise_type}")
+
+    def __call__(self, reward):
+        return self.add_noise(reward)
+
+    def _zero_noise(self, reward: float, zero_prob) -> float:
+        """ Set the reward to zero with probability `zero_prob`. 
+
+        Parameters: (zero_prob: float)
+        """
+        if self.np_random.uniform() < zero_prob:
+            return 0
+        else:
+            return reward
+
+    def _gaussian_noise(self, reward: float, std: float) -> float:
+        """ Add N(0,std) Gaussian noise to the reward """
+        return reward + self.np_random.normal(scale=std)
+
+    def _stop_noise(self, reward: float, stop_when: Union[int,float]) -> float:
+        """ If `stop_when` is an integer, then stop the reward (i.e. set to 0) after `stop_when` steps. If `stop_when` is a float, then at each step with probability `stop_when`, stop the reward for the rest of the episode. Each time this function is called counts as a step and the step count is reset when `reset()` is called. """
+
+        if self._stop_reward:
+            return 0
+
+        if stop_when > 1: # stop after a certain number of steps
+            if self.step_count >= stop_when:
+                self._stop_reward = True
+                return 0
+        elif self.np_random.uniform() < stop_when: # stop with a certain probability
+            self._stop_reward = True
+            return 0
+
+        return reward
+
+
+class RewardDelay:
+    def __init__(self,
+            delay_type: Literal[None, 'fixed', 'random', 'interval'],
+            steps: Union[int, Tuple[int,int]] = 0,
+            overlap: Literal[None, 'replace', 'sum', 'sum_clipped'] = None,
+            rng: np.random.RandomState = None
+        ):
+        """ Applies a delay to the reward
+
+        Args:
+            delay_type: None, 'fixed', 'random', 'interval'
+                None: No delay is applied. The reward is returned as is immdiately.
+                'fixed': The reward is delayed by a fixed number of steps.
+                'random': The reward is delayed by a random number of steps.
+                'interval': The reward is given at regular intervals.
+            steps:
+                If `delay_type` is 'fixed', then this is the number of steps to delay the reward.
+                If `delay_type` is 'random', then this is a tuple of the form (min_steps, max_steps) specifying the range of steps to delay the reward. The delay is chosen uniformly at random within this range.
+                If `delay_type` is 'interval', then this can be either an integer or a tuple of the form (min_steps, max_steps). If it is an integer, then a reward is given on every `steps` step. If it is a tuple, then the time between each reward is chosen uniformly at random from the range (min_steps, max_steps), and is sampled after each reward.
+            overlap: How to handle rewards whose delays overlap, causing them to show up out of order.
+                'replace': The most recent reward replaces the previous reward.
+                'sum': The rewards are summed.
+                'sum_clipped': The rewards are summed, then clipped between -1 and 1.
+        """
+        self.delay_type = delay_type
+        self.steps = steps
+        self.overlap = overlap
+
+        if rng is None:
+            self.np_random = np.random.RandomState()
+        else:
+            self.np_random = rng
+
+        self.reset()
+
+    def reset(self):
+        if self.delay_type == 'fixed':
+            assert type(self.steps) is int
+            if self.steps >= 0:
+                self._buffer = [0] * (self.steps + 1)
+            else:
+                self._buffer = [] 
+            self._buffer_idx = 0
+
+        if self.delay_type == 'random':
+            assert type(self.steps) is tuple
+            _, max_steps = self.steps
+            self._buffer = [0] * (max_steps + 1)
+            self._buffer_idx = 0
+
+        if self.delay_type == 'interval':
+            self._buffer = [0]
+            self._buffer_idx = 1
+
+            if isinstance(self.steps, int):
+                assert self.steps > 0
+            elif isinstance(self.steps, tuple):
+                min_steps, max_steps = self.steps
+                assert min_steps > 0
+                assert max_steps > 0
+                assert min_steps <= max_steps
+
+    def delay(self, reward: float) -> float:
+        if self.delay_type is None:
+            return reward
+
+        if self.delay_type == 'fixed':
+            return self._fixed_delay(reward, self.steps)
+        elif self.delay_type == 'random':
+            return self._random_delay(reward, self.steps, self.overlap)
+        elif self.delay_type == 'interval':
+            return self._interval_delay(reward, self.steps, self.overlap)
+
+    def __call__(self, reward: float) -> float:
+        return self.delay(reward)
+
+    def _fixed_delay(self, reward: float, steps: int) -> float:
+        """ Delay the reward by `steps` steps. If `steps` is negative, then the reward is delayed indefinitely (i.e. will always be 0). """
+        if steps < 0:
+            return 0
+
+        self._buffer_idx = (self._buffer_idx + 1) % len(self._buffer)
+
+        delayed_idx = (self._buffer_idx + steps) % len(self._buffer)
+        self._buffer[delayed_idx] = reward
+        return self._buffer[self._buffer_idx]
+
+    def _random_delay(self, reward: float, steps: Tuple[int,int], overlap: str) -> float:
+        """ Delay the reward by a random number of steps in the range `steps`. """
+        self._buffer[self._buffer_idx] = 0
+        self._buffer_idx = (self._buffer_idx + 1) % len(self._buffer)
+
+        min_steps, max_steps = steps
+        delay = self.np_random.randint(min_steps, max_steps + 1)
+        delayed_idx = (self._buffer_idx + delay) % len(self._buffer)
+
+        if overlap == 'replace':
+            self._buffer[delayed_idx] = reward
+        elif overlap == 'sum' or overlap == 'sum_clipped':
+            self._buffer[delayed_idx] += reward
+
+        if overlap == 'replace' or overlap == 'sum':
+            return self._buffer[self._buffer_idx]
+        elif overlap == 'sum_clipped':
+            return np.clip(self._buffer[self._buffer_idx], -1, 1)
+        else:
+            raise ValueError(f'Unknown overlap type: {overlap}')
+
+    def _interval_delay(self, reward: float, steps: Union[int,Tuple[int,int]], overlap: str) -> float:
+        """ Give a reward every `steps` steps. If `steps` is a tuple, then the time between each reward is chosen uniformly at random from the range `steps`. """
+        self._buffer_idx -= 1
+
+        if type(steps) is int:
+            min_steps = steps
+            max_steps = steps
+        else:
+            min_steps, max_steps = steps
+
+        if self._buffer_idx <= 0:
+            self._buffer_idx = self.np_random.randint(min_steps, max_steps + 1)
+            self._buffer[0] = 0
+
+        if overlap == 'replace':
+            self._buffer[0] = reward
+        elif overlap == 'sum' or overlap == 'sum_clipped':
+            self._buffer[0] += reward
+
+        if self._buffer_idx <= 1:
+            if overlap == 'replace' or overlap == 'sum':
+                return self._buffer[0]
+            elif overlap == 'sum_clipped':
+                return np.clip(self._buffer[0], -1, 1)
+            else:
+                raise ValueError(f'Unknown overlap type: {overlap}')
+        else:
+            return 0
+
 
 
 ##################################################
@@ -608,6 +811,11 @@ class MultiRoomEnv_v1(MiniGridEnv):
         self.task_randomization_prob = task_randomization_prob
         self.max_steps_multiplier = max_steps_multiplier
         self.shaped_reward_config = shaped_reward_config
+        if shaped_reward_config is not None:
+            self.shaped_reward_noise = RewardNoise(
+                    *shaped_reward_config.get('noise', (None,)))
+            self.shaped_reward_delay = RewardDelay(
+                    *shaped_reward_config.get('delay', (None,)))
         self.reward_type = reward_type
 
         self.pbrs = PotentialBasedReward(
@@ -976,7 +1184,6 @@ class MultiRoomEnv_v1(MiniGridEnv):
                     - ('stop', n): If n>1, the shaped reward is set to 0 after n steps. If 0<n<1, the shaped reward will be set to 0 for the rest of the episode with probability n at each time step.
         """
         reward_type = config['type'].lower()
-        noise_config = config.get('noise', None)
 
         def compute_reward():
             all_dests = self.objects # List of all possible destinations
@@ -1019,33 +1226,8 @@ class MultiRoomEnv_v1(MiniGridEnv):
 
             raise ValueError(f'Unknown reward type: {reward_type}')
 
-        def add_noise(reward):
-            if noise_config is None:
-                return reward
-            
-            noise_type = noise_config[0].lower()
-
-            if noise_type == 'zero':
-                if self.np_random.uniform() < noise_config[1]:
-                    return 0
-                else:
-                    return reward
-            elif noise_type == 'gaussian':
-                std = noise_config[1]
-                return reward + self.np_random.normal(scale=std)
-            elif noise_type == 'stop':
-                if self._stop_shaped_reward:
-                    return 0
-                if noise_config[1] > 1:
-                    if self.step_count >= noise_config[1]:
-                        self._stop_shaped_reward = True
-                        return 0
-                elif self.np_random.uniform() < noise_config[1]:
-                    self._stop_shaped_reward = True
-                return reward
-
         reward = compute_reward()
-        reward = add_noise(reward)
+        reward = self.shaped_reward_noise.add_noise(reward)
         return reward
 
     def _potential(self):
@@ -1069,6 +1251,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
             self._init_bandits(**self.bandits_config)
         if self.shaped_reward_config is not None:
             obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_config)], dtype=np.float32)
+            self.shaped_reward_noise.reset()
         self.pbrs.reset()
         info['reward'] = 0
         return obs, info

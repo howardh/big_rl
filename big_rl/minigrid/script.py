@@ -21,7 +21,7 @@ from frankenstein.loss.policy_gradient import clipped_advantage_policy_gradient_
 
 from big_rl.minigrid.envs import make_env
 from big_rl.utils import torch_save
-from big_rl.minigrid.common import zip2, init_model, merge_space, env_config_presets
+from big_rl.minigrid.common import zip2, init_model, merge_space, env_config_presets, generate_id, create_unique_file
 
 
 def compute_ppo_losses(
@@ -405,8 +405,10 @@ def train(
         target_kl: Optional[float] = None,
         norm_adv: bool = True,
         warmup_steps: int = 0,
+
+        start_step: int = 0,
         ):
-    global_step_counter = [0]
+    global_step_counter = [start_step]
     trainers = [
         train_single_env(
             global_step_counter = global_step_counter,
@@ -466,7 +468,9 @@ def train(
                         data[f'attention max/{k}'] = v
                 wandb.log(data, step = global_step_counter[0])
 
-        yield
+        yield {
+            'step': global_step_counter[0],
+        }
 
         # Update learning rate
         if lr_scheduler is not None:
@@ -517,8 +521,23 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    # Initialize Checkpoint
+    # If `args.model_checkpoint` is a directory rather than a filename, then generate a unique identifier for this run to use as a checkpoint filename.
+    run_id = generate_id()
+    if args.model_checkpoint is not None and os.path.isdir(args.model_checkpoint):
+        new_checkpoint_filename = create_unique_file(
+                directory=args.model_checkpoint,
+                name=run_id, extension='.pt')
+        args.model_checkpoint = os.path.abspath(new_checkpoint_filename)
+        print(f'Checkpoint will be saved to {args.model_checkpoint}')
+
+    # Initialize W&B
     if args.wandb:
-        wandb.init(project='ppo-multitask-minigrid')
+        if args.model_checkpoint is not None:
+            wandb_id = os.path.basename(args.model_checkpoint).split('.')[0]
+            wandb.init(project='ppo-multitask-minigrid', id=wandb_id, resume='allow')
+        else:
+            wandb.init(project='ppo-multitask-minigrid')
         wandb.config.update(args)
 
     ENV_CONFIG_PRESETS = env_config_presets()
@@ -536,6 +555,7 @@ if __name__ == '__main__':
     else:
         device = torch.device('cpu')
 
+    # Initialize model
     model = init_model(
             observation_space = merge_space(*[env.single_observation_space for env in envs]),
             action_space = envs[0].single_action_space, # Assume the same action space for all environments
@@ -546,6 +566,7 @@ if __name__ == '__main__':
     )
     model.to(device)
 
+    # Initialize optimizer
     if args.optimizer == 'Adam':
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     elif args.optimizer == 'RMSprop':
@@ -553,18 +574,29 @@ if __name__ == '__main__':
     else:
         raise ValueError(f'Unknown optimizer: {args.optimizer}')
 
+    # Initialize learning rate scheduler
     lr_scheduler = None # TODO
 
     # Load checkpoint
-    if args.starting_model is not None:
+    start_step = 0
+    checkpoint = None
+
+    if args.model_checkpoint is not None and os.path.exists(args.model_checkpoint):
+        # The checkpoint exists, which means the experiment already started. Resume the experiment instead of restarting it.
+        checkpoint = torch.load(args.model_checkpoint, map_location=device)
+    elif args.starting_model is not None:
         checkpoint = torch.load(args.starting_model, map_location=device)
+
+    if checkpoint is not None:
         model.load_state_dict(checkpoint['model'], strict=False)
         if 'optimizer' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
         if lr_scheduler is not None and 'lr_scheduler' in checkpoint:
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        start_step = checkpoint.get('step', 0)
         print(f'Loaded checkpoint from {args.starting_model}')
 
+    # Initialize trainer
     trainer = train(
             model = model,
             envs = envs, # type: ignore (??? AsyncVectorEnv is not a subtype of VectorEnv ???)
@@ -589,18 +621,23 @@ if __name__ == '__main__':
             num_epochs = args.num_epochs,
             max_grad_norm = args.max_grad_norm,
             warmup_steps = args.warmup_steps,
+            start_step = start_step,
     )
+
+    # Run training loop
     if args.model_checkpoint is not None:
         os.makedirs(os.path.dirname(args.model_checkpoint), exist_ok=True)
         if not args.model_checkpoint.endswith('.pt'):
             # If the path is a directory, generate a unique filename
             raise NotImplementedError()
         while True:
-            for _ in zip(range(args.checkpoint_interval), trainer):
+            x = {}
+            for _,x in zip(range(args.checkpoint_interval), trainer):
                 pass
             torch_save({
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
+                'step': x['step'],
             }, args.model_checkpoint)
             print(f'Saved checkpoint to {os.path.abspath(args.model_checkpoint)}')
     else:

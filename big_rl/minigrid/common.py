@@ -1,4 +1,6 @@
 import copy
+import os
+import time
 from typing import Sequence, Iterable, Union, Tuple, Mapping
 
 import gymnasium
@@ -134,6 +136,112 @@ def zip2(*args) -> Iterable[Union[Tuple,Mapping]]:
             return (dict(zip(keys, vals)) for vals in zip(*(args[0][k] for k in keys)))
     return zip(*[zip2(a) for a in args])
 
+##################################################
+# File IO
+##################################################
+
+
+def get_results_root_directory(temp=False):
+    """ Get the directory where results are to be stored. """
+    host_name = os.uname()[1]
+    # Mila (Check available resources with `sinfo`)
+    mila_hostnames = ['rtx', 'leto', 'eos', 'bart', 'mila', 'kepler', 'power', 'apollor', 'apollov', 'cn-', 'login-1', 'login-2', 'login-3', 'login-4']
+    if host_name.endswith('server.mila.quebec') or any((host_name.startswith(n) for n in mila_hostnames)):
+        if temp:
+            return "/miniscratch/huanghow"
+        else:
+            return "/network/projects/h/huanghow"
+    # RL Lab
+    if host_name == "agent-server-1" or host_name == "agent-server-2":
+        return "/home/ml/users/hhuang63/results"
+        #return "/NOBACKUP/hhuang63/results"
+    if host_name == "garden-path" or host_name == "ppl-3":
+        return "/home/ml/hhuang63/results"
+    # Compute Canada
+    if host_name.find('gra') == 0 or host_name.find('cdr') == 0:
+        return "/home/hhuang63/scratch/results"
+    # Local
+    if host_name.find('howard-pc') == 0:
+        return "/home/howard/tmp/results"
+    # Travis
+    if host_name.startswith('travis-'):
+        return './tmp'
+    raise NotImplementedError("No default path defined for %s" % host_name)
+
+
+def generate_id(slurm_split: bool = False) -> str:
+    """ Generate an identifier that is unique to the current run. If the script is run as a Slurm job, the job ID is used. Otherwise, the current date and time are used.
+
+    Args:
+        slurm_split (bool): Set to True if the Slurm job is a single job split into multiple parts as an array job. This will give the same identifier to all jobs of the array.
+    """
+    slurm_job_id = os.environ.get('SLURM_JOB_ID') # Unique per job
+    slurm_array_job_id = os.environ.get('SLURM_ARRAY_JOB_ID') # Same for every job in an array
+    slurm_array_task_id = os.environ.get('SLURM_ARRAY_TASK_ID') # Unique per job in the array
+
+    if slurm_job_id is not None: # If it's a slurm job, use the job ID in the directory name
+        if slurm_array_job_id is not None:
+            # `slurm_array_job_id` is None if it is not an array job
+            if slurm_split:
+                # If `slurm_split` is True, that means we want to run one experiment split over multiple jobs in an array, so every job in the array should have the same `trial_id`.
+                return f'{slurm_array_job_id}'
+            else:
+                return f'{slurm_array_job_id}_{slurm_array_task_id}'
+        else:
+            return f'{slurm_job_id}'
+    else: # If it is not a slurm job, use the data/time to name the directory
+        return time.strftime("%Y_%m_%d-%H_%M_%S")
+
+
+def create_unique_file(directory, name, extension):
+    """ Create a unique file in the given directory with the given name and extension. If the file already exists, a number is appended to the name.
+
+    Returns the full path to the file.
+    """
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    if extension.startswith('.'):
+        extension = extension[1:]
+    filename = os.path.join(directory, f'{name}.{extension}')
+    index = 0
+    while True:
+        try: 
+            # Create the file if it doesn't exist
+            # This is atomic on POSIX systems (https://linux.die.net/man/3/open says "The check for the existence of the file and the creation of the file if it does not exist shall be atomic with respect to other threads executing open() naming the same filename in the same directory with O_EXCL and O_CREAT set")
+            # XXX: Not sure if this is atomic on a non-POSIX filesystem
+            os.open(filename,  os.O_CREAT | os.O_EXCL)
+        except FileExistsError:
+            index += 1
+            filename = os.path.join(directory, f'{name}-{index}.{extension}')
+            continue
+        return filename
+
+
+def create_unique_directory(directory, name):
+    """ Create a unique subdirectory in the given directory with the given name. If the directory already exists, a number is appended to the name.
+
+    Returns the full path to the new subdirectory.
+    """
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    filename = os.path.join(directory, f'{name}')
+    index = 0
+    while True:
+        try: 
+            # Create the directory if it doesn't exist
+            # XXX: Not sure about atomicity of this operation
+            os.mkdir(filename)
+        except FileExistsError:
+            index += 1
+            filename = os.path.join(directory, f'{name}-{index}')
+            continue
+        return filename
+
+
+##################################################
+# Experiment Configs
+##################################################
+
 
 def merge(source, destination):
     """
@@ -147,6 +255,8 @@ def merge(source, destination):
     True
     """
     destination = copy.deepcopy(destination)
+    if not isinstance(source, type(destination)):
+        return source
     if isinstance(source, Mapping):
         for key, value in source.items():
             if isinstance(value, dict):
@@ -154,10 +264,14 @@ def merge(source, destination):
                 node = destination.setdefault(key, {})
                 destination[key] = merge(value, node)
             elif isinstance(value, list):
-                if isinstance(destination[key],list):
+                if isinstance(destination[key],list) and len(destination[key]) == len(value):
                     destination[key] = [merge(s,d) for s,d in zip(source[key],destination[key])]
                 else:
                     destination[key] = value
+            elif isinstance(value, ConfigReplace):
+                destination[key] = value.value
+            elif isinstance(value, ConfigDelete):
+                del destination[key]
             else:
                 destination[key] = value
 
@@ -167,6 +281,10 @@ def merge(source, destination):
 
 
 class ExperimentConfigs(dict):
+    """ A dictionary of experiment configurations. The main purpose of this class is to allow configs to be written in a way where it is easier to see the differences from one set of configs to another, and to avoid bugs arising from copy-pasting configurations and forgetting to change their names.
+
+    New configurations can be added as complete dictionaries, or as partial dictionaries that are merged with the existing configurations. By default, dicts and lists of dicts (if both are the same length) are merged recursively. All other types are completely replaced with the new value. This behaviour can be overridden by wrapping the object with `ConfigMerge` or `ConfigReplace`. Keys can also be deleted with `ConfigDelete`.
+    """
     def __init__(self):
         self._last_key = None
     def add(self, key, config, inherit=None):
@@ -188,7 +306,12 @@ class ConfigReplace:
 
 class ConfigMerge:
     def __init__(self, value):
+        assert isinstance(value,dict)
         self.value = value
+
+
+class ConfigDelete:
+    ...
 
 
 def env_config_presets():
@@ -304,6 +427,26 @@ def env_config_presets():
                 },
             }
         }, inherit='fetch-004')
+
+        # Increase map size from 4-6 to 5-8
+        config.add('fetch-004-bigger', {
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+            }
+        }, inherit='fetch-004')
+        config.add('fetch-004-bigger-pbrs', {
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+            }
+        }, inherit='fetch-004-pbrs')
+        config.add('fetch-004-bigger-shaped', {
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+            }
+        }, inherit='fetch-004-shaped')
 
     def init_delayed():
         config.add('delayed-001', {
