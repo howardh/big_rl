@@ -405,10 +405,8 @@ def train(
         target_kl: Optional[float] = None,
         norm_adv: bool = True,
         warmup_steps: int = 0,
-
-        start_step: int = 0,
         ):
-    global_step_counter = [start_step]
+    global_step_counter = [0]
     trainers = [
         train_single_env(
             global_step_counter = global_step_counter,
@@ -634,7 +632,6 @@ if __name__ == '__main__':
             num_epochs = args.num_epochs,
             max_grad_norm = args.max_grad_norm,
             warmup_steps = args.warmup_steps,
-            start_step = start_step,
     )
 
     # Run training loop
@@ -650,7 +647,7 @@ if __name__ == '__main__':
             torch_save({
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
-                'step': x['step'],
+                'step': start_step+x['step'],
             }, args.model_checkpoint)
             print(f'Saved checkpoint to {os.path.abspath(args.model_checkpoint)}')
     else:
