@@ -21,7 +21,7 @@ from frankenstein.loss.policy_gradient import clipped_advantage_policy_gradient_
 
 from big_rl.minigrid.envs import make_env
 from big_rl.utils import torch_save
-from big_rl.minigrid.common import zip2, init_model, merge_space, env_config_presets, generate_id, create_unique_file
+from big_rl.minigrid.common import zip2, init_model, merge_space, env_config_presets, generate_id, create_unique_file, is_slurm
 
 
 def compute_ppo_losses(
@@ -493,6 +493,10 @@ def train(
                 elapsed_seconds = (elapsed_time % 3600) % 60
                 print(f"Step {env_steps:,} \t {int(steps_per_sec):,} SPS \t Elapsed: {elapsed_hours:02d}:{elapsed_minutes:02d}:{elapsed_seconds:02d}")
 
+        if max_steps > 0 and env_steps >= max_steps:
+            print('Reached max steps')
+            break
+
 
 if __name__ == '__main__':
     import argparse
@@ -516,6 +520,7 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint-interval', type=int, default=1000,
                         help='Number of training steps between checkpoints.')
 
+    parser.add_argument('--slurm-split', action='store_true', help='Set this flag to let the script know it is running on a SLURM cluster with one job split across an array job. This ensures that the same checkpoint is used for each of these jobs.')
     parser.add_argument('--cuda', action='store_true', help='Use CUDA.')
     parser.add_argument('--wandb', action='store_true', help='Save results to W&B.')
 
@@ -523,12 +528,19 @@ if __name__ == '__main__':
 
     # Initialize Checkpoint
     # If `args.model_checkpoint` is a directory rather than a filename, then generate a unique identifier for this run to use as a checkpoint filename.
-    run_id = generate_id()
+    run_id = generate_id(slurm_split = args.slurm_split)
     if args.model_checkpoint is not None and os.path.isdir(args.model_checkpoint):
-        new_checkpoint_filename = create_unique_file(
-                directory=args.model_checkpoint,
-                name=run_id, extension='.pt')
-        args.model_checkpoint = os.path.abspath(new_checkpoint_filename)
+        if is_slurm() and args.slurm_split: # If we are running on a SLURM cluster with the job split across an array job, then we need to use the same checkpoint for all jobs in the array
+            filename = os.path.join(args.model_checkpoint, f'{run_id}.pt')
+            if not os.path.exists(filename):
+                f = os.open(filename,  os.O_CREAT | os.O_EXCL)
+                os.close(f)
+            args.model_checkpoint = filename
+        else:
+            new_checkpoint_filename = create_unique_file(
+                    directory=args.model_checkpoint,
+                    name=run_id, extension='.pt')
+            args.model_checkpoint = os.path.abspath(new_checkpoint_filename)
         print(f'Checkpoint will be saved to {args.model_checkpoint}')
 
     # Initialize W&B
@@ -581,8 +593,9 @@ if __name__ == '__main__':
     start_step = 0
     checkpoint = None
 
-    if args.model_checkpoint is not None and os.path.exists(args.model_checkpoint):
+    if args.model_checkpoint is not None and os.path.exists(args.model_checkpoint) and os.stat(args.model_checkpoint).st_size > 0:
         # The checkpoint exists, which means the experiment already started. Resume the experiment instead of restarting it.
+        # If the checkpoint file is empty, it means we just created the file and the experiment hasn't started yet.
         checkpoint = torch.load(args.model_checkpoint, map_location=device)
     elif args.starting_model is not None:
         checkpoint = torch.load(args.starting_model, map_location=device)

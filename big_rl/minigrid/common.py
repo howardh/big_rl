@@ -169,6 +169,10 @@ def get_results_root_directory(temp=False):
     raise NotImplementedError("No default path defined for %s" % host_name)
 
 
+def is_slurm():
+    return 'SLURM_JOB_ID' in os.environ
+
+
 def generate_id(slurm_split: bool = False) -> str:
     """ Generate an identifier that is unique to the current run. If the script is run as a Slurm job, the job ID is used. Otherwise, the current date and time are used.
 
@@ -209,7 +213,8 @@ def create_unique_file(directory, name, extension):
             # Create the file if it doesn't exist
             # This is atomic on POSIX systems (https://linux.die.net/man/3/open says "The check for the existence of the file and the creation of the file if it does not exist shall be atomic with respect to other threads executing open() naming the same filename in the same directory with O_EXCL and O_CREAT set")
             # XXX: Not sure if this is atomic on a non-POSIX filesystem
-            os.open(filename,  os.O_CREAT | os.O_EXCL)
+            f = os.open(filename,  os.O_CREAT | os.O_EXCL)
+            os.close(f)
         except FileExistsError:
             index += 1
             filename = os.path.join(directory, f'{name}-{index}.{extension}')
@@ -395,6 +400,17 @@ def env_config_presets():
                 },
             }
         })
+
+        # Noisy shaped rewards
+        config.add('fetch-002-shaped-noisy-debug', {
+            'config': {
+                'shaped_reward_config': {
+                    'type': 'adjacent to subtask',
+                    'noise': ('stop', 500),
+                },
+            }
+        }, inherit='fetch-002')
+
         # Skipping 003 to match up with the delayed task numbering
         config.add('fetch-004', {
             'config': {
@@ -414,16 +430,6 @@ def env_config_presets():
             'config': {
                 'shaped_reward_config': {
                     'type': 'inverse distance',
-                },
-            }
-        }, inherit='fetch-004')
-
-        # Noisy shaped rewards
-        config.add('fetch-004-shaped-noisy-debug', {
-            'config': {
-                'shaped_reward_config': {
-                    'type': 'inverse distance',
-                    'noise': ('gaussian', 0.1),
                 },
             }
         }, inherit='fetch-004')
@@ -471,9 +477,11 @@ def env_config_presets():
                 },
             }
         })
+
         config.add_change('delayed-002', {
             # Looks like I forgot to make changes?
         })
+
         config.add_change('delayed-003', {
             'config': {
                 'min_room_size': 8,
@@ -494,6 +502,16 @@ def env_config_presets():
                 },
             }
         })
+
+        # Noisy shaped rewards
+        config.add('delayed-003-shaped_adjacent-stop_noise_500', {
+            'config': {
+                'shaped_reward_config': {
+                    'type': 'adjacent to subtask',
+                    'noise': ('stop', 500),
+                },
+            }
+        }, inherit='delayed-003')
 
     init_fetch()
     init_delayed()
