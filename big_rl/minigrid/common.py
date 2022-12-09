@@ -504,14 +504,15 @@ def env_config_presets():
         })
 
         # Noisy shaped rewards
-        config.add('delayed-003-shaped_adjacent-stop_noise_500', {
-            'config': {
-                'shaped_reward_config': {
-                    'type': 'adjacent to subtask',
-                    'noise': ('stop', 500),
-                },
-            }
-        }, inherit='delayed-003')
+        for cutoff in [500, 200, 100, 1, 0]:
+            config.add(f'delayed-003-shaped_adjacent-stop_noise_{cutoff}', {
+                'config': {
+                    'shaped_reward_config': {
+                        'type': 'adjacent to subtask',
+                        'noise': ('stop', cutoff),
+                    },
+                }
+            }, inherit='delayed-003')
 
     init_fetch()
     init_delayed()

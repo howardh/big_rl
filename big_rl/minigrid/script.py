@@ -405,8 +405,9 @@ def train(
         target_kl: Optional[float] = None,
         norm_adv: bool = True,
         warmup_steps: int = 0,
+        start_step: int = 0,
         ):
-    global_step_counter = [0]
+    global_step_counter = [start_step]
     trainers = [
         train_single_env(
             global_step_counter = global_step_counter,
@@ -483,15 +484,15 @@ def train(
                 remaining_hours = remaining_time // 3600
                 remaining_minutes = (remaining_time % 3600) // 60
                 remaining_seconds = (remaining_time % 3600) % 60
-                print(f"Step {env_steps:,}/{max_steps:,} \t {int(steps_per_sec):,} SPS \t Remaining: {remaining_hours:02d}:{remaining_minutes:02d}:{remaining_seconds:02d}")
+                print(f"Step {env_steps-start_step:,}/{max_steps:,} \t {int(steps_per_sec):,} SPS \t Remaining: {remaining_hours:02d}:{remaining_minutes:02d}:{remaining_seconds:02d}")
             else:
                 elapsed_time = int(elapsed_time)
                 elapsed_hours = elapsed_time // 3600
                 elapsed_minutes = (elapsed_time % 3600) // 60
                 elapsed_seconds = (elapsed_time % 3600) % 60
-                print(f"Step {env_steps:,} \t {int(steps_per_sec):,} SPS \t Elapsed: {elapsed_hours:02d}:{elapsed_minutes:02d}:{elapsed_seconds:02d}")
+                print(f"Step {env_steps-start_step:,} \t {int(steps_per_sec):,} SPS \t Elapsed: {elapsed_hours:02d}:{elapsed_minutes:02d}:{elapsed_seconds:02d}")
 
-        if max_steps > 0 and env_steps >= max_steps:
+        if max_steps > 0 and env_steps-start_step >= max_steps:
             print('Reached max steps')
             break
 
@@ -632,6 +633,7 @@ if __name__ == '__main__':
             num_epochs = args.num_epochs,
             max_grad_norm = args.max_grad_norm,
             warmup_steps = args.warmup_steps,
+            start_step = start_step,
     )
 
     # Run training loop
@@ -647,7 +649,7 @@ if __name__ == '__main__':
             torch_save({
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
-                'step': start_step+x['step'],
+                'step': x['step'],
             }, args.model_checkpoint)
             print(f'Saved checkpoint to {os.path.abspath(args.model_checkpoint)}')
     else:

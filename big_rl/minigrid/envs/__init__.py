@@ -481,16 +481,24 @@ class PotentialBasedReward:
 class RewardNoise:
     def __init__(self,
                  noise_type: Literal[None, 'zero', 'gaussian', 'stop'],
-                 *args
+                 *args,
+                 rng: np.random.RandomState = None
         ):
         self.noise_type = noise_type
         self.args = args
 
+        self.set_rng(rng)
         self.reset()
 
     def reset(self):
         self._stop_reward: bool = False
         self._step_count: int = 0
+
+    def set_rng(self, rng):
+        if rng is None:
+            self.np_random = np.random
+        else:
+            self.np_random = rng
 
     def add_noise(self, reward):
         self._step_count += 1
@@ -533,7 +541,7 @@ class RewardNoise:
             return 0
 
         if stop_when > 1: # stop after a certain number of steps
-            if self.step_count >= stop_when:
+            if self._step_count > stop_when:
                 self._stop_reward = True
                 return 0
         elif self.np_random.uniform() < stop_when: # stop with a certain probability
@@ -679,7 +687,6 @@ class RewardDelay:
                 raise ValueError(f'Unknown overlap type: {overlap}')
         else:
             return 0
-
 
 
 ##################################################
@@ -1227,7 +1234,8 @@ class MultiRoomEnv_v1(MiniGridEnv):
             raise ValueError(f'Unknown reward type: {reward_type}')
 
         reward = compute_reward()
-        reward = self.shaped_reward_noise.add_noise(reward)
+        reward = self.shaped_reward_delay(reward)
+        reward = self.shaped_reward_noise(reward)
         return reward
 
     def _potential(self):
@@ -1565,65 +1573,71 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
             assert self.target_object.cur_pos is not None
             return self.target_object
 
-        all_dests = [self.goal, *self.objects]
+        def compute_reward():
+            all_dests = [self.goal, *self.objects]
 
-        if reward_type == 'subtask': # Reward for subtasks
-            obj = self.carrying
-            if obj is not None:
-                if obj.type == self.target_type and obj.color == self.target_color:
-                    return 1.0
-                else:
-                    return -1.0
-            curr_cell = self.grid.get(*self.agent_pos) # type: ignore
-            if curr_cell == self.goal and len(self.removed_objects) > 0:
-                removed_objects_value = self._removed_objects_value()
-                if removed_objects_value['target_object_picked_up']:
-                    return 1.0
-                else:
-                    return -1.0
-            return 0.0
-
-        elif reward_type == 'inverse distance': # Distance-based reward
-            # If the agent has picked up the target object, then the destination is the goal state. Otherwise, the destination is the target object.
-            dest = self.target_object
-            for obj in self.removed_objects:
-                if obj.color != self.target_color:
-                    continue
-                if obj.type != self.target_type:
-                    continue
-                dest = self.goal
-                break
-            # Compute the distance to the goal
-            assert dest.cur_pos is not None
-            distance = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
-            # Compute a reward based on the distance
-            reward = 1/(distance + 1)
-
-            return reward
-
-        elif reward_type == 'adjacent to subtask':
-            dest = get_dest()
-
-            assert dest.cur_pos is not None
-            assert self.agent_pos is not None
-            if self._agent_pos_prev is None:
+            if reward_type == 'subtask': # Reward for subtasks
+                obj = self.carrying
+                if obj is not None:
+                    if obj.type == self.target_type and obj.color == self.target_color:
+                        return 1.0
+                    else:
+                        return -1.0
+                curr_cell = self.grid.get(*self.agent_pos) # type: ignore
+                if curr_cell == self.goal and len(self.removed_objects) > 0:
+                    removed_objects_value = self._removed_objects_value()
+                    if removed_objects_value['target_object_picked_up']:
+                        return 1.0
+                    else:
+                        return -1.0
                 return 0.0
 
-            dist = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
-            dist_prev = abs(dest.cur_pos[0] - self._agent_pos_prev[0]) + abs(dest.cur_pos[1] - self._agent_pos_prev[1])
-            all_dists = [abs(dest.cur_pos[0] - obj.cur_pos[0]) + abs(dest.cur_pos[1] - obj.cur_pos[1]) for obj in all_dests]
+            elif reward_type == 'inverse distance': # Distance-based reward
+                # If the agent has picked up the target object, then the destination is the goal state. Otherwise, the destination is the target object.
+                dest = self.target_object
+                for obj in self.removed_objects:
+                    if obj.color != self.target_color:
+                        continue
+                    if obj.type != self.target_type:
+                        continue
+                    dest = self.goal
+                    break
+                # Compute the distance to the goal
+                assert dest.cur_pos is not None
+                distance = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
+                # Compute a reward based on the distance
+                reward = 1/(distance + 1)
 
-            if dist == 1:
-                if dist_prev != 1:
-                    return 1
+                return reward
+
+            elif reward_type == 'adjacent to subtask':
+                dest = get_dest()
+
+                assert dest.cur_pos is not None
+                assert self.agent_pos is not None
+                if self._agent_pos_prev is None:
+                    return 0.0
+
+                dist = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
+                dist_prev = abs(dest.cur_pos[0] - self._agent_pos_prev[0]) + abs(dest.cur_pos[1] - self._agent_pos_prev[1])
+                all_dists = [abs(dest.cur_pos[0] - obj.cur_pos[0]) + abs(dest.cur_pos[1] - obj.cur_pos[1]) for obj in all_dests]
+
+                if dist == 1:
+                    if dist_prev != 1:
+                        return 1
+                    else:
+                        return 0
+                elif min(all_dists) == 1:
+                    return -1
                 else:
                     return 0
-            elif min(all_dists) == 1:
-                return -1
-            else:
-                return 0
 
-        raise ValueError(f'Unknown reward type: {reward_type}')
+            raise ValueError(f'Unknown reward type: {reward_type}')
+
+        reward = compute_reward()
+        reward = self.shaped_reward_delay(reward)
+        reward = self.shaped_reward_noise(reward)
+        return reward
 
     def reset(self, seed=None, options=None):
         obs, info = MiniGridEnv.reset(self, seed=seed, options=options)
