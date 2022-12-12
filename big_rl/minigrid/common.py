@@ -406,7 +406,7 @@ def env_config_presets():
             'config': {
                 'shaped_reward_config': {
                     'type': 'adjacent to subtask',
-                    'noise': ('stop', 500),
+                    'noise': ('stop', 500, 'steps'),
                 },
             }
         }, inherit='fetch-002')
@@ -453,6 +453,80 @@ def env_config_presets():
                 'max_room_size': 12,
             }
         }, inherit='fetch-004-shaped')
+
+        # Remove reward signal, keep shaped reward, but cut off shaped reward after some number of steps
+        for cutoff in [500, 200, 100, 50, 20, 1]:
+            config.add(f'fetch-005-stop_{cutoff}', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'shaped_reward_config': {
+                        'type': 'subtask',
+                        'noise': ('stop', cutoff, 'steps'),
+                    },
+                }
+            }, inherit='fetch-004')
+            for delay in [1]:
+                config.add(f'fetch-005-stop_{cutoff}-delay_{delay}', {
+                    'meta_config': {
+                        'include_reward': False,
+                    },
+                    'config': {
+                        'min_room_size': 5,
+                        'max_room_size': 12,
+                        'shaped_reward_config': {
+                            'type': 'subtask',
+                            'noise': ('stop', cutoff, 'steps'),
+                            'delay': ('fixed', delay)
+                        },
+                    }
+                }, inherit='fetch-004')
+            for delay in [(1,2)]:
+                config.add(f'fetch-005-stop_{cutoff}-delay_{delay[0]}_{delay[1]}', {
+                    'meta_config': {
+                        'include_reward': False,
+                    },
+                    'config': {
+                        'min_room_size': 5,
+                        'max_room_size': 12,
+                        'shaped_reward_config': {
+                            'type': 'subtask',
+                            'noise': ('stop', cutoff, 'steps'),
+                            'delay': ('random', delay[0], delay[1])
+                        },
+                    }
+                }, inherit='fetch-004')
+        for cutoff in [100, 50, 0]:
+            config.add(f'fetch-005-stop_{cutoff}_trials', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'shaped_reward_config': {
+                        'type': 'subtask',
+                        'noise': ('stop', cutoff, 'trials'),
+                    },
+                }
+            }, inherit='fetch-004')
+        config.add(f'fetch-005-zero_1_1_trials', {
+            'meta_config': {
+                'include_reward': False,
+            },
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+                'shaped_reward_config': {
+                    'type': 'subtask',
+                    'noise': ('zero', (1,1), 'cycle_trials'),
+                },
+            }
+        }, inherit='fetch-004')
+
 
     def init_delayed():
         config.add('delayed-001', {
@@ -509,7 +583,7 @@ def env_config_presets():
                 'config': {
                     'shaped_reward_config': {
                         'type': 'adjacent to subtask',
-                        'noise': ('stop', cutoff),
+                        'noise': ('stop', cutoff, 'steps'),
                     },
                 }
             }, inherit='delayed-003')

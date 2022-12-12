@@ -29,15 +29,9 @@ def make_env(env_name: str,
         config={},
         minigrid_config={},
         meta_config=None,
-        episode_stack=None,
-        dict_obs=False,
         action_shuffle=False) -> gym.Env:
     env = gym.make(env_name, render_mode='rgb_array', **config)
     env = MinigridPreprocessing(env, **minigrid_config)
-    if episode_stack is not None:
-        env = EpisodeStack(env, episode_stack, dict_obs=dict_obs)
-    elif dict_obs:
-        raise Exception('dict_obs requires episode_stack')
     if meta_config is not None:
         env = MetaWrapper(env, **meta_config)
     if action_shuffle:
@@ -105,9 +99,6 @@ class MinigridPreprocessing(gym.Wrapper):
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
         obs = self._resize_obs(obs)
-        ## XXX: Check for reward permutation (until bug is mixed in minigrid)
-        #if self.env.unwrapped.include_reward_permutation:
-        #    obs['reward_permutation'] = self.env.unwrapped.reward_permutation
         if not self._with_mission:
             obs = {k:v for k,v in obs.items() if k != 'mission'}
         return obs, reward, terminated, truncated, info
@@ -116,88 +107,9 @@ class MinigridPreprocessing(gym.Wrapper):
         # NoopReset
         obs, info = self.env.reset(**kwargs)
         obs = self._resize_obs(obs)
-        ## XXX: Check for reward permutation (until bug is mixed in minigrid)
-        #if self.env.unwrapped.include_reward_permutation:
-        #    obs['reward_permutation'] = self.env.unwrapped.reward_permutation
         if not self._with_mission:
             obs = {k:v for k,v in obs.items() if k != 'mission'}
         return obs, info
-
-
-class EpisodeStack(gym.Wrapper):
-    def __init__(self, env, num_episodes : int, dict_obs: bool = False):
-        super().__init__(env)
-        self.num_episodes = num_episodes
-        self.episode_count = 0
-        self.dict_obs = dict_obs
-        self._done = True
-
-        if dict_obs:
-            obs_space = [('obs', self.env.observation_space)]
-            if isinstance(self.env.observation_space, gymnasium.spaces.Dict):
-                obs_space = [(f'obs ({k})',v) for k,v in self.env.observation_space.items()]
-            self.observation_space = gymnasium.spaces.Dict([
-                ('reward', gymnasium.spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32)),
-                ('done', gymnasium.spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32)),
-                #('obs', self.env.observation_space),
-                *obs_space,
-                ('action', self.env.action_space),
-            ])
-
-    def step(self, action):
-        if self._done:
-            self.episode_count += 1
-            self._done = False
-            (obs, info), reward, terminated, truncated = self.env.reset(), 0, False, False
-        else:
-            obs, reward, terminated, truncated, info = self.env.step(action)
-        done = terminated or truncated
-        self._done = done
-
-        if self.dict_obs:
-            if isinstance(self.env.observation_space, gymnasium.spaces.Dict):
-                obs = {
-                    'reward': np.array([reward], dtype=np.float32),
-                    'done': np.array([done], dtype=np.float32),
-                    **{f'obs ({k})': v for k,v in obs.items()},
-                    'action': action,
-                }
-            else:
-                obs = {
-                    'reward': np.array([reward], dtype=np.float32),
-                    'done': np.array([done], dtype=np.float32),
-                    'obs': obs,
-                    'action': action,
-                }
-
-        if done:
-            if self.episode_count >= self.num_episodes:
-                self.episode_count = 0
-                return obs, reward, terminated, truncated, info
-            else:
-                return obs, reward, False, False, info
-        return obs, reward, terminated, truncated, info
-
-    def reset(self, **kwargs):
-        self.episode_count = 0
-        obs, info = self.env.reset(**kwargs)
-        if self.dict_obs:
-            if isinstance(self.env.observation_space, gymnasium.spaces.Dict):
-                return {
-                    'reward': np.array([0], dtype=np.float32),
-                    'done': np.array([False], dtype=np.float32),
-                    **{f'obs ({k})': v for k,v in obs.items()},
-                    'action': self.env.action_space.sample(),
-                }, info
-            else:
-                return {
-                    'reward': np.array([0], dtype=np.float32),
-                    'done': np.array([False], dtype=np.float32),
-                    'obs': obs,
-                    'action': self.env.action_space.sample(),
-                }, info
-        else:
-            return obs, info
 
 
 class MetaWrapper(gym.Wrapper):
@@ -217,6 +129,7 @@ class MetaWrapper(gym.Wrapper):
             randomize: bool = True,
             action_shuffle: bool = False,
             include_action_map: bool = False,
+            include_reward: bool = True,
             image_transformation = None,
             task_id = None,
             task_label = None,
@@ -227,6 +140,7 @@ class MetaWrapper(gym.Wrapper):
         self.dict_obs = dict_obs
         self.action_shuffle = action_shuffle
         self.include_action_map = include_action_map
+        self.include_reward = include_reward
         self.task_id = task_id
         self.task_label = task_label
 
@@ -264,11 +178,14 @@ class MetaWrapper(gym.Wrapper):
             if isinstance(self.env.observation_space, gymnasium.spaces.Dict):
                 obs_space = [(f'obs ({k})',v) for k,v in self.env.observation_space.items()]
             obs_space = [
-                ('reward', gymnasium.spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32)),
                 ('done', gymnasium.spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32)),
                 *obs_space,
                 ('action', self.env.action_space),
             ]
+            if self.include_reward:
+                obs_space.append(
+                    ('reward', gymnasium.spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32))
+                )
             if self.include_action_map:
                 assert isinstance(self.env.action_space, gymnasium.spaces.Discrete)
                 obs_space.append((
@@ -323,18 +240,18 @@ class MetaWrapper(gym.Wrapper):
         if self.dict_obs:
             if isinstance(self.env.observation_space, gymnasium.spaces.Dict):
                 obs = {
-                    'reward': np.array([info.get('reward',reward)], dtype=np.float32),
                     'done': np.array([done], dtype=np.float32),
                     **{f'obs ({k})': v for k,v in obs.items()},
                     'action': original_action,
                 }
             else:
                 obs = {
-                    'reward': np.array([info.get('reward',reward)], dtype=np.float32),
                     'done': np.array([done], dtype=np.float32),
                     'obs': obs,
                     'action': original_action,
                 }
+            if self.include_reward:
+                obs['reward'] = np.array([info.get('reward',reward)], dtype=np.float32)
             if self.include_action_map:
                 obs['action_map'] = self.action_map_obs
 
@@ -366,18 +283,18 @@ class MetaWrapper(gym.Wrapper):
         if self.dict_obs:
             if isinstance(self.env.observation_space, gymnasium.spaces.Dict):
                 obs = {
-                    'reward': np.array([0], dtype=np.float32),
                     'done': np.array([False], dtype=np.float32),
                     **{f'obs ({k})': v for k,v in obs.items()},
                     'action': self.env.action_space.sample(),
                 }
             else:
                 obs = {
-                    'reward': np.array([0], dtype=np.float32),
                     'done': np.array([False], dtype=np.float32),
                     'obs': obs,
                     'action': self.env.action_space.sample(),
                 }
+            if self.include_reward:
+                obs['reward'] = np.array([0], dtype=np.float32)
             if self.include_action_map:
                 obs['action_map'] = self.action_map_obs
 
@@ -493,12 +410,16 @@ class RewardNoise:
     def reset(self):
         self._stop_reward: bool = False
         self._step_count: int = 0
+        self._trial_count: int = 0
 
     def set_rng(self, rng):
         if rng is None:
             self.np_random = np.random
         else:
             self.np_random = rng
+
+    def trial_finished(self):
+        self._trial_count += 1
 
     def add_noise(self, reward):
         self._step_count += 1
@@ -520,33 +441,57 @@ class RewardNoise:
     def __call__(self, reward):
         return self.add_noise(reward)
 
-    def _zero_noise(self, reward: float, zero_prob) -> float:
+    def _zero_noise(self, reward: float, zero_when: Union[float, Tuple[int, int]], units: Literal['probability', 'cycle_steps', 'cycle_trials'] = 'probability') -> float:
         """ Set the reward to zero with probability `zero_prob`. 
 
         Parameters: (zero_prob: float)
         """
-        if self.np_random.uniform() < zero_prob:
-            return 0
-        else:
-            return reward
+        if units == 'probability':
+            if self.np_random.uniform() < zero_when:
+                return 0
+            else:
+                return reward
+        elif units == 'cycle_steps':
+            assert len(zero_when) == 2
+            period = sum(zero_when)
+            assert period > 0
+
+            if (self._step_count-1) % period < zero_when[0]:
+                return reward
+            else:
+                return 0
+        elif units == 'cycle_trials':
+            assert len(zero_when) == 2
+            period = sum(zero_when)
+            assert period > 0
+
+            if self._trial_count % period < zero_when[0]:
+                return reward
+            else:
+                return 0
 
     def _gaussian_noise(self, reward: float, std: float) -> float:
         """ Add N(0,std) Gaussian noise to the reward """
         return reward + self.np_random.normal(scale=std)
 
-    def _stop_noise(self, reward: float, stop_when: Union[int,float]) -> float:
+    def _stop_noise(self, reward: float, stop_when: Union[int,float], units: Literal['probability','steps','trials']) -> float:
         """ If `stop_when` is an integer, then stop the reward (i.e. set to 0) after `stop_when` steps. If `stop_when` is a float, then at each step with probability `stop_when`, stop the reward for the rest of the episode. Each time this function is called counts as a step and the step count is reset when `reset()` is called. """
 
         if self._stop_reward:
             return 0
 
-        if stop_when > 1: # stop after a certain number of steps
+        if units == 'probability':
+            if self.np_random.uniform() < stop_when: # stop with a certain probability
+                self._stop_reward = True
+                return 0
+        elif units == 'steps':
             if self._step_count > stop_when:
                 self._stop_reward = True
                 return 0
-        elif self.np_random.uniform() < stop_when: # stop with a certain probability
-            self._stop_reward = True
-            return 0
+        elif units == 'trials':
+            if self._trial_count >= stop_when:
+                self._stop_reward = True
+                return 0
 
         return reward
 
@@ -1195,7 +1140,16 @@ class MultiRoomEnv_v1(MiniGridEnv):
         def compute_reward():
             all_dests = self.objects # List of all possible destinations
 
-            if reward_type == 'inverse distance': # Distance-based reward bounded by 1
+            if reward_type == 'subtask': # Reward for subtasks. There is only one task here, so this is just the regular reward signal.
+                obj = self.carrying
+                if obj is not None:
+                    if obj.type == self.target_type and obj.color == self.target_color:
+                        return 1.0
+                    else:
+                        return -1.0
+                return 0.0
+
+            elif reward_type == 'inverse distance': # Distance-based reward bounded by 1
                 dest = self._get_dest()
                 distance = abs(dest.cur_pos[0] - self.agent_pos[0]) + abs(dest.cur_pos[1] - self.agent_pos[1])
                 
@@ -1294,6 +1248,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
                 self.carrying = None
                 # End current trial
                 self.trial_count += 1
+                self.shaped_reward_noise.trial_finished()
                 # Randomize task if needed
                 if self.np_random.uniform() < self.task_randomization_prob:
                     self._randomize_task()
@@ -1305,6 +1260,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
                 reward = self.np_random.choice(curr_cell.rewards, p=curr_cell.probs)
                 terminated = False
                 self.trial_count += 1
+                self.shaped_reward_noise.trial_finished()
                 # Teleport the agent to a random location
                 self._init_agent()
                 # Randomize task if needed
@@ -1729,6 +1685,7 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
             self.removed_objects = []
             # End current trial
             self.trial_count += 1
+            self.shaped_reward_noise.trial_finished()
             # Randomize task if needed
             if self.np_random.uniform() < self.task_randomization_prob:
                 self._randomize_task()
