@@ -989,6 +989,7 @@ class DiscreteInput(torch.nn.Module):
     def forward(self, x: TensorType['batch_size',int]):
         batch_size = int(torch.tensor(x.shape).prod().item())
         batch_shape = x.shape
+        assert len(batch_shape) == 1, 'Input to DiscreteInput has to be a 1D tensor.'
         x = x.long().flatten()
         return {
             'key': self.key.expand(batch_size, -1).view(*batch_shape, -1) if self._shared_key else self.key[x,:].view(*batch_shape, -1),
@@ -1180,6 +1181,8 @@ class LinearOutput(torch.nn.Module):
             key: TensorType['num_blocks','batch_size','hidden_size',float],
             value: TensorType['num_blocks','batch_size','hidden_size',float],
             ) -> Dict[str,TensorType]:
+        assert len(key.shape) == 3, f'Key shape must be [num_blocks,batch_size,hidden_size]. Got {key.shape}'
+        assert len(value.shape) == 3, f'Value shape must be [num_blocks,batch_size,hidden_size]. Got {value.shape}'
         attn_output, attn_output_weights = self.attention(
                 self.query.expand(1, key.shape[1], -1),
                 key,
@@ -2035,6 +2038,147 @@ class ModularPolicy5(torch.nn.Module):
                 torch.zeros([self._architecture[-1], batch_size, self._key_size], device=device), # Key
                 torch.zeros([self._architecture[-1], batch_size, self._key_size], device=device), # Value
                 *[x.view(-1, 1, self._input_size).expand(-1, batch_size, self._input_size) for x in self.initial_hidden_state], # Internal State
+        )
+
+
+class ModularPolicy5LSTM(torch.nn.Module):
+    """
+    Same as ModularPolicy5, but with LSTM instead of attention
+    """
+    def __init__(self, inputs, outputs, value_size, hidden_size):
+        super().__init__()
+        self._value_size = value_size
+        self._hidden_size = hidden_size
+        self._input_modules_config = inputs
+
+        self.input_modules = self._init_input_modules(inputs,
+                key_size=1, value_size=value_size)
+        self.output_modules = self._init_output_modules(outputs,
+                key_size=hidden_size, num_heads=1)
+
+        self.lstm = torch.nn.LSTMCell(
+                sum(m.get('config',{}).get('value_size', value_size) for m in inputs.values()), # m['config']['value_size'] is the size of the outputs of each input module. Sum them up to get the total size of the concatenated input to the LSTM.
+                hidden_size,
+        )
+        self.initial_hidden_state = torch.nn.ParameterList([
+            torch.nn.Parameter(torch.zeros([hidden_size])),
+            torch.nn.Parameter(torch.zeros([hidden_size])),
+        ])
+
+    def _init_input_modules(self, input_configs: Dict[str,Dict], key_size, value_size):
+        valid_modules = {
+                cls.__name__: cls
+                for cls in [
+                    GreyscaleImageInput,
+                    ImageInput56,
+                    ScalarInput,
+                    DiscreteInput,
+                    LinearInput,
+                    MatrixInput,
+                ]
+        }
+        input_modules: Dict[str,torch.nn.Module] = {}
+        for k,v in input_configs.items():
+            if v['type'] is None:
+                input_modules[k] = v['module']
+            else:
+                if v['type'] not in valid_modules:
+                    raise NotImplementedError(f'Unknown output module type: {v["type"]}')
+                input_modules[k] = valid_modules[v['type']](**{
+                        'key_size': key_size,
+                        'value_size': value_size,
+                        **v.get('config', {}),
+                })
+        return torch.nn.ModuleDict(input_modules)
+
+    def _init_output_modules(self, output_configs: Dict[str,Dict], key_size, num_heads):
+        valid_modules = {
+                cls.__name__: cls
+                for cls in [
+                    LinearOutput,
+                ]
+        }
+        output_modules: Dict[str,torch.nn.Module] = {}
+        for k,v in output_configs.items():
+            if v['type'] not in valid_modules:
+                raise NotImplementedError(f'Unknown output module type: {v["type"]}')
+            if k == 'hidden':
+                raise Exception('Cannot use "hidden" as an output module name')
+            output_modules[k] = valid_modules[v['type']](
+                    **v.get('config', {}),
+                    key_size = key_size,
+                    num_heads = num_heads)
+        return torch.nn.ModuleDict(output_modules)
+
+    def forward(self,
+            inputs: Dict[str,TensorType['batch_size','observation_shape']],
+            hidden: List[TensorType['batch_size','hidden_size']]):
+        batch_size = next(iter(inputs.values())).shape[0]
+        device = next(self.parameters()).device
+
+        # Compute input to core module
+        input_labels = []
+        input_vals = []
+        for k,module in sorted(self.input_modules.items()):
+            module_config = self._input_modules_config[k]
+            if 'inputs' in module_config:
+                input_mapping = module_config['inputs']
+                module_inputs = {}
+                for dest_key, src_key in input_mapping.items():
+                    if src_key not in inputs:
+                        module_inputs = None
+                        break
+                    module_inputs[dest_key] = inputs[src_key]
+                if module_inputs is not None:
+                    y = module(**module_inputs)
+                    input_labels.append(k)
+                    input_vals.append(y['value'])
+            else:
+                if k not in inputs:
+                    # No data is provided, so fill with 0
+                    y = torch.zeros([batch_size, self._input_modules_config[k].get('config',{}).get('value_size',self._value_size)], device=device) # XXX: not tested.
+                else:
+                    module_inputs = inputs[k]
+                    y = module(module_inputs)
+                input_labels.append(k)
+                input_vals.append(y['value'])
+        self.last_input_labels = input_labels
+
+        values = torch.cat([
+            *input_vals,
+        ], dim=1)
+
+        self.last_values = values
+
+        # Core module computation
+        h_1, c_1 = self.lstm(values, hidden)
+
+        # Compute output
+        output = {}
+
+        value = h_1.view(1, batch_size, -1)
+        key = torch.zeros_like(value, device=device)
+
+        for k,v in self.output_modules.items():
+            y = v(key, value)
+            output[k] = y['output']
+
+        self.last_hidden = (h_1, c_1)
+
+        return {
+            **output,
+            'hidden': self.last_hidden,
+            'misc': {
+                #'core_output': layer_output,
+                #'input_labels': input_labels,
+            }
+        }
+
+    def init_hidden(self, batch_size: int = 1):
+        #device = next(self.parameters()).device
+        return (
+                self.initial_hidden_state[0].view(1, self._hidden_size).expand(batch_size, -1),
+                self.initial_hidden_state[1].view(1, self._hidden_size).expand(batch_size, -1)
         )
 
 

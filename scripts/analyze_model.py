@@ -94,7 +94,7 @@ if __name__ == '__main__':
 
     print('-' * 80)
 
-    print('LSTM')
+    print('LSTM (with full input)')
     lstm = equivalent_LSTM(
             num_parameters = count_parameters(model.attention.parameters()),
             input_size = 512 * len(model.input_modules)
@@ -103,7 +103,16 @@ if __name__ == '__main__':
     print(f'\tInput size: {lstm.input_size}')
     print(f'\tHidden size: {lstm.hidden_size}')
 
-    print('GRU')
+    print('LSTM (with simplified input)')
+    lstm = equivalent_LSTM(
+            num_parameters = count_parameters(model.attention.parameters()),
+            input_size = sum(1 if k in ['reward', 'obs (shaped_reward)'] else 512 for k in model.input_modules.keys())
+    )
+    print(f'\tSize of an equivalent LSTM: {count_parameters(lstm.parameters()):,}')
+    print(f'\tInput size: {lstm.input_size}')
+    print(f'\tHidden size: {lstm.hidden_size}')
+
+    print('GRU (with full input)')
     gru = equivalent_GRU(
             num_parameters = count_parameters(model.attention.parameters()),
             input_size = 512 * len(model.input_modules)

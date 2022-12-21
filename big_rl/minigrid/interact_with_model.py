@@ -21,14 +21,6 @@ def test(model, env_config, preprocess_obs_fn):
     pygame.init()
     screen = pygame.display.set_mode(frame.shape[:2])
 
-    #while True:
-    #    for event in pygame.event.get():
-    #        if event.type == pygame.QUIT:
-    #            sys.exit()
-
-    #    screen.blit(pygame.surfarray.make_surface(frame), (0, 0))
-    #    pygame.display.flip()
-
     episode_reward = 0 # total reward for the current episode
     episode_length = 0 # Number of transitions in the episode
     results = {

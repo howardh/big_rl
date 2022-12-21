@@ -7,7 +7,7 @@ import gymnasium
 import gymnasium.spaces
 import torch
 
-from big_rl.model.model import ModularPolicy2, ModularPolicy4, ModularPolicy5
+from big_rl.model.model import ModularPolicy2, ModularPolicy4, ModularPolicy5, ModularPolicy5LSTM
 
 
 def init_model(observation_space, action_space,
@@ -15,6 +15,7 @@ def init_model(observation_space, action_space,
         recurrence_type,
         num_recurrence_blocks=3,
         architecture=[3,3],
+        hidden_size=None, # For LSTM model only
         device=torch.device('cpu')):
     observation_space = observation_space # Unused variable
     inputs = {
@@ -94,6 +95,21 @@ def init_model(observation_space, action_space,
         return ModularPolicy5(
                 **common_model_params,
                 architecture=architecture,
+        ).to(device)
+    elif model_type == 'ModularPolicy5LSTM':
+        assert architecture is not None
+        for k in ['reward', 'obs (shaped_reward)']:
+            if k not in inputs:
+                continue
+            inputs[k]['config'] = {
+                    **inputs[k].get('config', {}),
+                    'value_size': 1,
+            }
+        return ModularPolicy5LSTM(
+                inputs=inputs,
+                outputs=outputs,
+                value_size=common_model_params['value_size'],
+                hidden_size=hidden_size,
         ).to(device)
     raise NotImplementedError()
 
@@ -513,19 +529,34 @@ def env_config_presets():
                     },
                 }
             }, inherit='fetch-004')
-        config.add(f'fetch-005-zero_1_1_trials', {
-            'meta_config': {
-                'include_reward': False,
-            },
-            'config': {
-                'min_room_size': 5,
-                'max_room_size': 12,
-                'shaped_reward_config': {
-                    'type': 'subtask',
-                    'noise': ('zero', (1,1), 'cycle_trials'),
+        for x in range(1,10):
+            config.add(f'fetch-005-zero_1_{x}_trials', {
+                'meta_config': {
+                    'include_reward': False,
                 },
-            }
-        }, inherit='fetch-004')
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'shaped_reward_config': {
+                        'type': 'subtask',
+                        'noise': ('zero', (1,x), 'cycle_trials'),
+                    },
+                }
+            }, inherit='fetch-004')
+        for x in range(2,51):
+            config.add(f'fetch-005-zero_{x}_{x}_trials', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'shaped_reward_config': {
+                        'type': 'subtask',
+                        'noise': ('zero', (x,x), 'cycle_trials'),
+                    },
+                }
+            }, inherit='fetch-004')
 
 
     def init_delayed():

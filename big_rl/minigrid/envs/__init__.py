@@ -442,9 +442,16 @@ class RewardNoise:
         return self.add_noise(reward)
 
     def _zero_noise(self, reward: float, zero_when: Union[float, Tuple[int, int]], units: Literal['probability', 'cycle_steps', 'cycle_trials'] = 'probability') -> float:
-        """ Set the reward to zero with probability `zero_prob`. 
+        """ Set the reward to zero.
 
-        Parameters: (zero_prob: float)
+        If `units` is 'proability', then `zero_when` is the probability of setting the reward to 0.
+        If `units` is 'cycle_steps', then `zero_when` is a tuple `(on_steps, off_steps)`. The reward is unchanged for `on_steps` steps, set to 0 for the next `off_steps` steps, and repeat.
+        If `units` is 'cycle_trials', then `zero_when` is a tuple `(on_trials, off_trials)`. The reward is unchanged for `on_trials` trials, set to 0 for the next `off_trials` trials, and repeat.
+
+        Args:
+            reward: float, the reward to add noise to
+            zero_when: float or tuple of ints, the probability of setting the reward to 0, or the number of steps/trials to set the reward to 0
+            units: str, the units of `zero_when`. Can be 'probability', 'cycle_steps', or 'cycle_trials'
         """
         if units == 'probability':
             if self.np_random.uniform() < zero_when:
@@ -1248,7 +1255,8 @@ class MultiRoomEnv_v1(MiniGridEnv):
                 self.carrying = None
                 # End current trial
                 self.trial_count += 1
-                self.shaped_reward_noise.trial_finished()
+                if self.shaped_reward_config is not None:
+                    self.shaped_reward_noise.trial_finished()
                 # Randomize task if needed
                 if self.np_random.uniform() < self.task_randomization_prob:
                     self._randomize_task()
@@ -1260,7 +1268,8 @@ class MultiRoomEnv_v1(MiniGridEnv):
                 reward = self.np_random.choice(curr_cell.rewards, p=curr_cell.probs)
                 terminated = False
                 self.trial_count += 1
-                self.shaped_reward_noise.trial_finished()
+                if self.shaped_reward_config is not None:
+                    self.shaped_reward_noise.trial_finished()
                 # Teleport the agent to a random location
                 self._init_agent()
                 # Randomize task if needed
@@ -1685,7 +1694,8 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
             self.removed_objects = []
             # End current trial
             self.trial_count += 1
-            self.shaped_reward_noise.trial_finished()
+            if self.shaped_reward_config is not None:
+                self.shaped_reward_noise.trial_finished()
             # Randomize task if needed
             if self.np_random.uniform() < self.task_randomization_prob:
                 self._randomize_task()

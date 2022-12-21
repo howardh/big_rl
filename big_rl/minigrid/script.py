@@ -338,20 +338,21 @@ def train_single_env(
                 episode_true_reward[done] = 0
                 episode_steps[done] = 0
 
-        assert isinstance(model.last_attention, list)
-        assert isinstance(model.last_input_labels, list)
-        assert isinstance(model.last_output_attention, dict)
-        log['attention max'] = {
-            label: max([a.max().item() for a in attn])
-            for label, attn in
-            zip(model.last_input_labels,
-                zip(
-                    model.last_attention[0].split(1,dim=2),
-                    model.last_output_attention['action'].split(1,dim=1), # type: ignore (???)
-                    model.last_output_attention['value'].split(1,dim=1), # type: ignore (???)
+        if type(model).__name__ == 'ModularPolicy5':
+            assert isinstance(model.last_attention, list)
+            assert isinstance(model.last_input_labels, list)
+            assert isinstance(model.last_output_attention, dict)
+            log['attention max'] = {
+                label: max([a.max().item() for a in attn])
+                for label, attn in
+                zip(model.last_input_labels,
+                    zip(
+                        model.last_attention[0].split(1,dim=2),
+                        model.last_output_attention['action'].split(1,dim=1), # type: ignore (???)
+                        model.last_output_attention['value'].split(1,dim=1), # type: ignore (???)
+                    )
                 )
-            )
-        }
+            }
 
         # Train
         losses = compute_ppo_losses(
@@ -573,6 +574,7 @@ if __name__ == '__main__':
             model_type = args.model_type,
             recurrence_type = args.recurrence_type,
             architecture = args.architecture,
+            hidden_size = args.hidden_size,
             device = device,
     )
     model.to(device)
