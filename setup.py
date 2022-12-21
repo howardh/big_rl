@@ -19,6 +19,10 @@ setup(name='big_rl',
         'font-roboto==0.0.1',
         'fonts==0.0.3',
 
+        # Mujoco
+        'beautifulsoup4', # Needed for manipulating MJCF files
+        'lxml',
+
         # Atari (Not yet compatible with Gymnasium)
         #'gym[atari,accept-rom-license]',
 
@@ -26,5 +30,11 @@ setup(name='big_rl',
         'pytest',
         'flake8',
     ],
-    packages=find_packages()
+    packages=find_packages(),
+    package_dir={'': '.'},
+    package_data={
+        #'big_rl': ['big_rl/mujoco/envs/assets/*.xml']
+        'big_rl.mujoco.envs.assets': ['*.xml']
+        #'big_rl': ['*.xml']
+    }
 )

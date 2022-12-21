@@ -2,3 +2,5 @@ pyrightconfig.json
 __pycache__
 wandb
 *.egg-info
+MUJOCO_LOG.TXT
+Session.vim
