@@ -2,7 +2,7 @@ import os
 
 from multiprocessing import Pool
 
-from big_rl.minigrid.common import create_unique_file, create_unique_directory
+from big_rl.utils import create_unique_file, create_unique_directory
 
 
 ##################################################

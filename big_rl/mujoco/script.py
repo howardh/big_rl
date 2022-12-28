@@ -20,8 +20,7 @@ from frankenstein.advantage.gae import generalized_advantage_estimate
 from frankenstein.loss.policy_gradient import clipped_advantage_policy_gradient_loss
 
 from big_rl.mujoco.envs import make_env
-from big_rl.utils import torch_save
-from big_rl.minigrid.common import zip2, merge_space, generate_id, create_unique_file, is_slurm
+from big_rl.utils import torch_save, zip2, merge_space, generate_id, create_unique_file, is_slurm
 from big_rl.mujoco.common import init_model, env_config_presets
 
 

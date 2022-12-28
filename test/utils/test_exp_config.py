@@ -1,6 +1,6 @@
 import pytest
 
-from big_rl.minigrid.common import ExperimentConfigs, ConfigReplace, ConfigDelete
+from big_rl.utils import ExperimentConfigs, ConfigReplace, ConfigDelete
 
 def test_add():
     config = ExperimentConfigs()

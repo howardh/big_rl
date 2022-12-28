@@ -12,7 +12,8 @@ from fonts.ttf import Roboto # type: ignore
 
 from big_rl.minigrid.envs import make_env
 from big_rl.minigrid.arguments import init_parser_model
-from big_rl.minigrid.common import env_config_presets, init_model, merge_space
+from big_rl.minigrid.common import env_config_presets, init_model
+from big_rl.utils import merge_space
 
 
 def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=False):
@@ -421,6 +422,8 @@ if __name__ == '__main__':
     checkpoint = torch.load(args.model, map_location=device)
     model.load_state_dict(checkpoint['model'], strict=False)
     print(f'Loaded checkpoint from {args.model}')
+    if 'step' in checkpoint:
+        print(f'Checkpoint step: {checkpoint["step"]:,}')
 
     # Test model
     video_filename = os.path.abspath(args.video)
@@ -437,6 +440,8 @@ if __name__ == '__main__':
     reward_mean = rewards.mean()
     reward_std = rewards.std()
 
+    if 'step' in checkpoint:
+        print(f'Checkpoint step: {checkpoint["step"]:,}')
     print(f'Rewards: {rewards.tolist()}')
     print('')
 
