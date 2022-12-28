@@ -1,17 +1,301 @@
+import os
+import threading
+import time
+
 from bs4 import BeautifulSoup
+import gymnasium
 import gymnasium as gym
+from gymnasium.envs.registration import register
+from gymnasium.wrappers import RecordEpisodeStatistics, ClipAction, NormalizeObservation, TransformObservation, NormalizeReward, TransformReward # pyright: ignore[reportPrivateImportUsage]
+from gymnasium.wrappers.normalize import RunningMeanStd
 import numpy as np
+import scipy.ndimage
 
 
 def make_env(env_name: str,
         config={},
         #mujoco_config={},
-        meta_config=None) -> gym.Env:
+        meta_config=None,
+        discount=0.99, reward_scale=1.0, reward_clip=10) -> gym.Env:
     env = gym.make(env_name, render_mode='rgb_array', **config)
+    env = RecordEpisodeStatistics(env)
+
+    env = ClipAction(env)
+
+    env = NormalizeDictObservation(env)
+    env = TransformObservation(env, lambda obs: {k: np.clip(v, -10, 10) for k,v in obs.items()})
+
+    env = NormalizeReward(env, gamma=discount)
+    env = TransformReward(env, lambda reward: np.clip(reward * reward_scale, -reward_clip, reward_clip))
+
     if meta_config is not None:
-        #env = MetaWrapper(env, **meta_config)
-        raise NotImplementedError()
+        env = MetaWrapper(env, **meta_config)
     return env
+
+
+class NormalizeDictObservation(gym.Wrapper):
+    """This wrapper will normalize observations s.t. each coordinate is centered with unit variance.
+    Note:
+        The normalization depends on past trajectories and observations will not be normalized correctly if the wrapper was
+        newly instantiated or the policy was changed recently.
+    """
+
+    def __init__(self, env: gym.Env, epsilon: float = 1e-8):
+        """This wrapper will normalize observations s.t. each coordinate is centered with unit variance.
+        Args:
+            env (Env): The environment to apply the wrapper
+            epsilon: A stability parameter that is used when scaling the observations.
+        """
+        super().__init__(env)
+        self.num_envs = getattr(env, "num_envs", 1)
+        self.is_vector_env = getattr(env, "is_vector_env", False)
+        if self.is_vector_env:
+            self.obs_rms = {
+                    k: RunningMeanStd(shape=obs_space.shape)
+                    for k,obs_space in self.single_observation_space.items()
+            }
+            self.single_observation_space = gymnasium.spaces.Dict({
+                    k: gymnasium.spaces.Box(-np.inf, np.inf, v.shape, dtype=np.float32) if isinstance(v, gymnasium.spaces.Box) else v
+                    for k,v in self.single_observation_space.items()
+            })
+        else:
+            self.obs_rms = {
+                    k: RunningMeanStd(shape=obs_space.shape)
+                    for k,obs_space in self.observation_space.items()
+            }
+            self.observation_space = gymnasium.spaces.Dict({
+                    k: gymnasium.spaces.Box(-np.inf, np.inf, v.shape, dtype=np.float32) if isinstance(v, gymnasium.spaces.Box) else v
+                    for k,v in self.observation_space.items()
+            })
+        self.epsilon = epsilon
+
+    def step(self, action):
+        """Steps through the environment and normalizes the observation."""
+        obs, rews, terminateds, truncateds, infos = self.env.step(action)
+        if self.is_vector_env:
+            obs = self.normalize(obs)
+        else:
+            obs = {
+                    k: v[0]
+                    for k,v in self.normalize({k: np.array([v]) for k,v in obs.items()}).items()
+            }
+        return obs, rews, terminateds, truncateds, infos
+
+    def reset(self, **kwargs):
+        """Resets the environment and normalizes the observation."""
+        obs, info = self.env.reset(**kwargs)
+
+        if self.is_vector_env:
+            return self.normalize(obs), info
+        else:
+            return {
+                    k: v[0]
+                    for k,v in self.normalize({k: np.array([v]) for k,v in obs.items()}).items()
+            }, info
+
+    def normalize(self, obs):
+        """Normalises the observation using the running mean and variance of the observations."""
+        for k,v in obs.items():
+            self.obs_rms[k].update(v)
+        return {
+            k: (v - self.obs_rms[k].mean) / np.sqrt(self.obs_rms[k].var + self.epsilon)
+            for k,v in obs.items()
+        }
+
+
+class MetaWrapper(gym.Wrapper):
+    """
+    Wrapper for meta-RL.
+
+    Features:
+    - Converting observations to dict
+    - Adding reward, termination signal, and previous action to observations
+    - Stacking episodes
+    - Randomizing the environment between trials (requires the environment to have a `randomize()` method)
+    """
+    def __init__(self,
+            env,
+            episode_stack: int,
+            dict_obs: bool = False,
+            randomize: bool = True,
+            #action_shuffle: bool = False,
+            #include_action_map: bool = False,
+            include_reward: bool = True,
+            image_transformation = None,
+            task_id = None,
+            task_label = None,
+            seed: int = None):
+        super().__init__(env)
+        self.episode_stack = episode_stack
+        self.randomize = randomize
+        self.dict_obs = dict_obs
+        #self.action_shuffle = action_shuffle
+        #self.include_action_map = include_action_map
+        self.include_reward = include_reward
+        self.task_id = task_id
+        self.task_label = task_label
+
+        self.episode_count = 0
+        self._done = True
+
+        if seed is None:
+            seed = os.getpid() + int(time.time())
+            thread_id = threading.current_thread().ident
+            if thread_id is not None:
+                seed += thread_id
+            seed = seed % (2**32 - 1)
+        self.rand = np.random.RandomState(seed)
+
+        #if action_shuffle:
+        #    self._randomize_actions()
+        #if self.include_action_map:
+        #    assert self.action_shuffle, '`action_shuffle` must be enabled along with `include_action_map`.'
+        #    assert self.dict_obs, '`dict_obs` must be enabled along with `include_action_map`.'
+
+        self._transform = lambda x: x
+        if image_transformation is not None:
+            if self.rand.rand() < image_transformation.get('vflip', 0):
+                self._transform = lambda img, f=self._transform: f(img[:,::-1,:])
+            if self.rand.rand() < image_transformation.get('hflip', 0):
+                self._transform = lambda img, f=self._transform: f(img[:,:,::-1])
+            if self.rand.rand() < image_transformation.get('rotate', 0):
+                angle = (self.rand.rand() - 0.5) * (3.141592653 * 2) * (4 / 360)
+                self._transform = lambda img, f=self._transform: f(
+                        scipy.ndimage.rotate(img, angle, reshape=False))
+            self._transform = lambda obs, f=self._transform: {'image': f(obs['image']), **obs}
+
+        if dict_obs:
+            obs_space = [('obs', self.env.observation_space)]
+            if isinstance(self.env.observation_space, gymnasium.spaces.Dict):
+                obs_space = [(f'obs ({k})',v) for k,v in self.env.observation_space.items()]
+            obs_space = [
+                ('done', gymnasium.spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32)),
+                *obs_space,
+                ('action', self.env.action_space),
+            ]
+            if self.include_reward:
+                obs_space.append(
+                    ('reward', gymnasium.spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32))
+                )
+            #if self.include_action_map:
+            #    assert isinstance(self.env.action_space, gymnasium.spaces.Discrete)
+            #    obs_space.append((
+            #        'action_map',
+            #        gymnasium.spaces.Box(
+            #            low=0, high=1,
+            #            shape=(self.env.action_space.n, self.env.action_space.n),
+            #            dtype=np.float32
+            #        )
+            #    ))
+            self.observation_space = gymnasium.spaces.Dict(obs_space)
+
+    def _randomize_actions(self):
+        env = self.env
+        n = env.action_space.n
+        assert isinstance(env.action_space, gymnasium.spaces.Discrete), 'Action shuffle only works with discrete actions'
+        self.action_map = np.arange(n)
+        self.rand.shuffle(self.action_map)
+
+        self.action_map_obs = np.zeros([n,n])
+        for i,a in enumerate(self.action_map):
+            self.action_map_obs[i,a] = 1
+
+    def step(self, action):
+        # Map action to the shuffled action space
+        original_action = action
+        #if self.action_shuffle:
+        #    action = self.action_map[action]
+
+        # Take a step
+        if self._done:
+            if self.episode_count == 0 and self.randomize:
+                self.env.randomize()
+            self.episode_count += 1
+            self._done = False
+            (obs, info), reward, terminated, truncated = self.env.reset(), 0, False, False
+        else:
+            obs, reward, terminated, truncated, info = self.env.step(action)
+        done = terminated or truncated
+        self._done = done
+
+        # Add task ID
+        if self.task_id is not None:
+            info['task_id'] = self.task_id
+        if self.task_label is not None:
+            info['task_label'] = self.task_label
+
+        # Apply transformations
+        obs = self._transform(obs)
+
+        # Convert observation to dict
+        if self.dict_obs:
+            if isinstance(self.env.observation_space, gymnasium.spaces.Dict):
+                obs = {
+                    'done': np.array([done], dtype=np.float32),
+                    **{f'obs ({k})': v for k,v in obs.items()},
+                    'action': original_action,
+                }
+            else:
+                obs = {
+                    'done': np.array([done], dtype=np.float32),
+                    'obs': obs,
+                    'action': original_action,
+                }
+            if self.include_reward:
+                obs['reward'] = np.array([info.get('reward',reward)], dtype=np.float32)
+            #if self.include_action_map:
+            #    obs['action_map'] = self.action_map_obs
+
+        if done:
+            if 'expected_return' in info and 'max_return' in info:
+                regret = info['max_return'] - info['expected_return']
+                self._regret.append(regret)
+                info['regret'] = self._regret
+
+            if self.episode_count >= self.episode_stack: # Episode count starts at 1
+                self.episode_count = 0
+                return obs, reward, terminated, truncated, info
+            else:
+                return obs, reward, False, False, info
+        return obs, reward, terminated, truncated, info
+
+    def reset(self, seed=None, options=None):
+        self.episode_count = 0
+        if self.randomize:
+            self.env.randomize()
+        #if self.action_shuffle:
+        #    self._randomize_actions()
+
+        self._regret = []
+
+        obs, info = self.env.reset(seed=seed, options=options)
+
+        obs = self._transform(obs)
+        if self.dict_obs:
+            if isinstance(self.env.observation_space, gymnasium.spaces.Dict):
+                obs = {
+                    'done': np.array([False], dtype=np.float32),
+                    **{f'obs ({k})': v for k,v in obs.items()},
+                    'action': self.env.action_space.sample(),
+                }
+            else:
+                obs = {
+                    'done': np.array([False], dtype=np.float32),
+                    'obs': obs,
+                    'action': self.env.action_space.sample(),
+                }
+            if self.include_reward:
+                obs['reward'] = np.array([0], dtype=np.float32)
+            #if self.include_action_map:
+            #    obs['action_map'] = self.action_map_obs
+
+        # Add task id
+        if self.task_id is not None:
+            info['task_id'] = self.task_id
+        if self.task_label is not None:
+            info['task_label'] = self.task_label
+
+        return obs, info
 
 
 DEFAULT_CAMERA_CONFIG = {
@@ -449,6 +733,21 @@ def list_bodies_with_ancestor(env, body_id, depth=0):
         if parent_id == body_id:
             body_ids.update(list_bodies_with_ancestor(env, child_id, depth+1))
     return body_ids
+
+
+register(
+    id="AntBaseline-v0",
+    entry_point="big_rl.mujoco.envs.ant_baseline:AntBaselineEnv",
+    max_episode_steps=1000,
+    reward_threshold=6000.0,
+)
+
+register(
+    id="AntFetch-v0",
+    entry_point="big_rl.mujoco.envs.ant_baseline:AntFetchEnv",
+    max_episode_steps=1000,
+    reward_threshold=6000.0,
+)
 
 
 if __name__ == '__main__':

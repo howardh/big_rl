@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(name='big_rl',
     version='0.0.1',
     install_requires=[
-        'gymnasium',
+        'gymnasium>=0.27.0',
         'torch>=1.11.0',
         'torchtyping',
         'matplotlib',

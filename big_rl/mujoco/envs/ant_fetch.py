@@ -1,7 +1,6 @@
 from typing import List
 
 import cv2
-from gymnasium.envs.registration import register
 from gymnasium import utils
 from gymnasium.envs.mujoco import MujocoEnv
 from gymnasium.spaces import Box, Dict
@@ -339,11 +338,3 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         adr = self.model.joint(f'{object_name}_joint').qposadr.item()
         self.data.qpos[adr:adr+3] = position
         self.data.qpos[adr+3:adr+7] = orientation
-
-
-register(
-    id="AntFetchEnv-v0",
-    entry_point="big_rl.mujoco.envs:AntFetchEnv",
-    max_episode_steps=1000,
-    reward_threshold=6000.0,
-)

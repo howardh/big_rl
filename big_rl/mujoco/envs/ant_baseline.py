@@ -1,7 +1,6 @@
 from typing import List
 
 import cv2
-from gymnasium.envs.registration import register
 from gymnasium import utils
 from gymnasium.envs.mujoco import MujocoEnv
 from gymnasium.spaces import Box, Dict
@@ -286,9 +285,3 @@ class AntBaselineEnv(MujocoEnv, utils.EzPickle):
         return observation
 
 
-register(
-    id="AntBaselineEnv-v0",
-    entry_point="big_rl.mujoco.envs:AntBaselineEnv",
-    max_episode_steps=1000,
-    reward_threshold=6000.0,
-)

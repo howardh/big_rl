@@ -1195,6 +1195,30 @@ class LinearOutput(torch.nn.Module):
         }
 
 
+class StateIndependentOutput(torch.nn.Module):
+    def __init__(self, output_size: int, key_size: int, num_heads: int):
+        super().__init__()
+        key_size = key_size # Unused
+        num_heads = num_heads # Unused
+
+        self.output_size = output_size
+        self.output = torch.nn.Parameter(torch.zeros([output_size]))
+
+    def forward(self,
+            key: TensorType['num_blocks','batch_size','hidden_size',float],
+            value: TensorType['num_blocks','batch_size','hidden_size',float],
+            ) -> Dict[str,TensorType]:
+        assert len(key.shape) == 3, f'Key shape must be [num_blocks,batch_size,hidden_size]. Got {key.shape}'
+        assert len(value.shape) == 3, f'Value shape must be [num_blocks,batch_size,hidden_size]. Got {value.shape}'
+        device = next(self.parameters()).device
+        num_blocks = key.shape[0]
+        batch_size = key.shape[1]
+        return {
+            'output': self.output.expand(batch_size, -1),
+            'attn_output_weights': torch.zeros([num_blocks, batch_size, num_blocks], device=device),
+        }
+
+
 class ModularPolicy2(torch.nn.Module):
     def __init__(self, inputs, outputs, input_size, key_size, value_size, num_heads, ff_size, num_blocks=1, recurrence_type='RecurrentAttention'):
         super().__init__()
@@ -1884,6 +1908,7 @@ class ModularPolicy5(torch.nn.Module):
                 cls.__name__: cls
                 for cls in [
                     LinearOutput,
+                    StateIndependentOutput,
                 ]
         }
         output_modules: Dict[str,torch.nn.Module] = {}

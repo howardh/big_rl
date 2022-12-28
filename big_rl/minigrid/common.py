@@ -557,6 +557,20 @@ def env_config_presets():
                     },
                 }
             }, inherit='fetch-004')
+        for x in [30,50,70]:
+            config.add(f'fetch-005-zero_30_{x}_trials', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'shaped_reward_config': {
+                        'type': 'subtask',
+                        'noise': ('zero', (30,x), 'cycle_trials'),
+                    },
+                }
+            }, inherit='fetch-004')
 
 
     def init_delayed():
