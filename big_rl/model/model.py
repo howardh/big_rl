@@ -1,4 +1,5 @@
-from typing import List, Dict, Sequence
+import itertools
+from typing import List, Dict, Sequence, Tuple
 import math
 
 import torch
@@ -521,6 +522,192 @@ class RecurrentAttention14(RecurrentAttention11):
         }
 
 
+class RecurrentAttention15(RecurrentAttention11):
+    """ Same as RecurrentAttention14, but added gating to the output keys and values. 
+    
+    API changes:
+    - `forward()` takes three inputs: state, key, value. It also outputs a dictionary with the same three keys.
+        - Debugging values: `attn_output`, `attn_output_weights`, `gates`
+    - `init_hidden(batch_size)` returns a tuple which is used to initialize the state.
+
+    Previously, `forward()` had a `initial_x` input which was used as a default query. This doesn't change between batches, so it makes more sense for this to be a parameter of the model than an input. Unclear why I made it a parameter of the parent module rather than of the recurrence module.
+    """
+    def __init__(self, input_size, key_size, value_size, num_heads, ff_size, num_modules, batch_type: str = 'einsum'):
+        super(RecurrentAttention11, self).__init__()
+
+        # Save parameters
+        self._input_size = input_size
+        self._num_modules = num_modules
+
+        # Initialize fully-connected modules
+        self.fc_query = self._make_mlp([input_size*2, ff_size, key_size])
+        self.fc_key = self._make_mlp([input_size*2, ff_size, key_size])
+        self.fc_value = self._make_mlp([input_size*2, ff_size, value_size])
+        self.fc_state = self._make_mlp([input_size*2, ff_size, input_size])
+
+        self.fc_query_gate = self._make_mlp(
+                [input_size*2, ff_size, 1],
+                torch.nn.Sigmoid()
+        )
+        self.fc_key_gate = self._make_mlp(
+                [input_size*2, ff_size, 1],
+                torch.nn.Sigmoid()
+        )
+        self.fc_value_gate = self._make_mlp(
+                [input_size*2, ff_size, 1],
+                torch.nn.Sigmoid()
+        )
+        self.fc_state_gate = self._make_mlp(
+                [input_size*2, ff_size, 1],
+                torch.nn.Sigmoid()
+        )
+
+        # Initialize attention module
+        batch_type_mapping = {
+            'einsum': BatchMultiHeadAttentionEinsum,
+            'none': NonBatchMultiHeadAttention,
+            'broadcast': BatchMultiHeadAttentionBroadcast,
+        }
+        if batch_type not in batch_type_mapping:
+            raise ValueError(f"Unknown batch_type {batch_type}. Valid values are: {', '.join(batch_type_mapping.keys())}.")
+        MhaClass = batch_type_mapping[batch_type]
+        self.attention = MhaClass([
+            torch.nn.MultiheadAttention(key_size, num_heads=num_heads, batch_first=False)
+            for _ in range(num_modules)
+        ], key_size=key_size, num_heads=num_heads, default_batch=True)
+
+        # Initialize default state
+        self.default_state = torch.nn.ParameterList([
+                torch.nn.Parameter(torch.zeros([num_modules, input_size])),
+                torch.nn.Parameter(torch.zeros([num_modules, key_size])),
+                torch.nn.Parameter(torch.zeros([num_modules, key_size])),
+                torch.nn.Parameter(torch.zeros([num_modules, value_size])),
+        ])
+
+    def forward(self,
+            state: Tuple[
+                TensorType['num_blocks','batch_size','input_size',float], # Internal state
+                TensorType['num_blocks','batch_size','key_size',float], # Previous query
+                TensorType['num_blocks','batch_size','key_size',float], # Previous key
+                TensorType['num_blocks','batch_size','value_size',float], # Previous value
+            ],
+            key: TensorType['seq_len','batch_size','key_size',float],
+            value: TensorType['seq_len','batch_size','value_size',float],
+        ):
+        num_modules = self._num_modules
+        assert num_modules == state[0].size(0)
+        assert len(state) == 4
+
+        prev_internal_state = state[0] # (num_blocks, batch_size, input_size)
+        prev_query = state[1] # (num_blocks, batch_size, input_size)
+        prev_key = state[2] # (num_blocks, batch_size, key_size)
+        prev_value = state[3] # (num_blocks, batch_size, value_size)
+
+        # attn_output: (num_blocks, 1, batch_size, value_size)
+        # attn_output_weights: (num_blocks, batch_size, 1, seq_len)
+        # The extra size 1 dimension is the number of queries. We only provide 1 query per module, so it's size 1.
+        attn_output, attn_output_weights = self.attention(
+                prev_query, 
+                key.expand([num_modules, *key.shape]),
+                value.expand([num_modules, *value.shape])
+        )
+
+        # Remove the extra query dimension
+        attn_output = attn_output.squeeze(1) # (num_blocks, batch_size, value_size)
+        attn_output_weights = attn_output_weights.squeeze(2) # (num_blocks, batch_size, seq_len)
+
+        fc_input = torch.cat([attn_output, prev_internal_state], dim=2)
+
+        output_queries = self.fc_query(fc_input).tanh() # (num_blocks, batch_size, key_size)
+        output_keys = self.fc_key(fc_input).tanh() # (num_blocks, batch_size, key_size)
+        output_values = self.fc_value(fc_input).tanh() # (num_blocks, batch_size, value_size)
+        output_state = self.fc_state(fc_input).tanh() # (num_blocks, batch_size, input_size)
+
+        output_query_gate = self.fc_query_gate(fc_input) # (num_blocks, batch_size)
+        output_key_gate = self.fc_key_gate(fc_input) # (num_blocks, batch_size)
+        output_value_gate = self.fc_value_gate(fc_input) # (num_blocks, batch_size)
+        output_state_gate = self.fc_state_gate(fc_input) # (num_blocks, batch_size)
+
+        gated_output_queries = output_query_gate * output_queries + (1 - output_query_gate) * prev_query
+        gated_output_keys = output_key_gate * output_keys + (1 - output_key_gate) * prev_key
+        gated_output_values = output_value_gate * output_values + (1 - output_value_gate) * prev_value
+        gated_output_state = output_state_gate * output_state + (1 - output_state_gate) * prev_internal_state
+
+        return { # seq_len = number of inputs receives
+            'attn_output': attn_output, # (num_blocks, batch_size, value_size)
+            'attn_output_weights': attn_output_weights, # (num_blocks, batch_size, seq_len)
+            'gates': {
+                'query': output_query_gate, # (num_blocks, batch_size)
+                'key': output_key_gate, # (num_blocks, batch_size)
+                'value': output_value_gate, # (num_blocks, batch_size)
+                'state': output_state_gate, # (num_blocks, batch_size)
+            },
+            'key': gated_output_keys, # (num_blocks, batch_size, key_size)
+            'value': gated_output_values, # (num_blocks, batch_size, value_size)
+            'state': (
+                gated_output_state, # (num_blocks, batch_size, input_size)
+                gated_output_queries, # (num_blocks, batch_size, key_size)
+                gated_output_keys, # (num_blocks, batch_size, key_size)
+                gated_output_values, # (num_blocks, batch_size, value_size)
+            )
+        }
+
+    def _make_mlp(self, sizes, last_activation=torch.nn.ReLU()):
+        layers = []
+        for in_size, out_size in zip(sizes[:-1], sizes[1:]):
+            layers.append(torch.nn.ReLU())
+            layers.append(
+                BatchLinear([
+                    torch.nn.Linear(in_size, out_size) for _ in range(self._num_modules)
+                ], default_batch=True),
+            )
+        return torch.nn.Sequential(*layers, last_activation)
+
+    def init_hidden(self, batch_size) -> Tuple[torch.Tensor, ...]:
+        return tuple(
+            x.unsqueeze(1).expand([self._num_modules, batch_size, x.shape[1]])
+            for x in self.default_state
+        )
+
+
+class LSTM(torch.nn.Module): # TODO
+    """ LSTM recurrence following the same API as RecurrentAttention15. """
+    def __init__(self, input_size, hidden_size):
+        super().__init__()
+
+        self.lstm = torch.nn.LSTMCell(input_size, hidden_size)
+
+        self.default_state = torch.nn.ParameterList([
+            torch.nn.Parameter(torch.zeros([hidden_size])),
+            torch.nn.Parameter(torch.zeros([hidden_size])),
+        ])
+
+        raise NotImplementedError()
+
+    def forward(self,
+            state: Tuple,
+            key: TensorType['seq_len','batch_size','key_size',float],
+            value: TensorType['seq_len','batch_size','value_size',float],
+        ):
+
+        # I don't think this works
+
+        state = state
+        key = key
+        value = value
+        return {
+            'key': ...,
+            'value': ...,
+            'state': ()
+        }
+
+    def init_hidden(self, batch_size) -> Tuple[torch.Tensor, ...]:
+        return tuple(
+            x.unsqueeze(1).expand([self._num_modules, batch_size, x.shape[1]])
+            for x in self.default_state
+        )
+
+
 # Batched stuff
 
 class NonBatchMultiHeadAttention(torch.nn.Module):
@@ -588,9 +775,9 @@ class NonBatchMultiHeadAttention(torch.nn.Module):
         )
 
 
-class BatchMultiHeadAttention(torch.nn.Module):
+class BatchMultiHeadAttentionBroadcast(torch.nn.Module):
     def __init__(self, modules: List[torch.nn.MultiheadAttention], key_size, num_heads, default_batch=False):
-        super(BatchMultiHeadAttention, self).__init__()
+        super(BatchMultiHeadAttentionBroadcast, self).__init__()
 
         self.num_heads = num_heads
         self.key_size = key_size
@@ -938,6 +1125,7 @@ class ScalarInput(torch.nn.Module):
     def forward(self, value: TensorType['batch_size',float]):
         batch_size = int(torch.tensor(value.shape).prod().item())
         batch_shape = value.shape
+        assert len(batch_shape) == 2
         assert batch_shape[-1] == 1, 'Last dimension of input to ScalarInput has to be size 1.'
         return {
             'key': self.key.view(1,-1).expand(batch_size, -1).view(*batch_shape[:-1],-1),
@@ -2164,9 +2352,9 @@ class ModularPolicy5LSTM(torch.nn.Module):
                     y = torch.zeros([batch_size, self._input_modules_config[k].get('config',{}).get('value_size',self._value_size)], device=device) # XXX: not tested.
                 else:
                     module_inputs = inputs[k]
-                    y = module(module_inputs)
+                    y = module(module_inputs)['value']
                 input_labels.append(k)
-                input_vals.append(y['value'])
+                input_vals.append(y)
         self.last_input_labels = input_labels
 
         values = torch.cat([
@@ -2215,6 +2403,225 @@ class ModularPolicy6(ModularPolicy5):
                 torch.zeros([self._architecture[-1], batch_size, self._key_size], device=device), # Key
                 torch.zeros([self._architecture[-1], batch_size, self._key_size], device=device), # Query
                 *[x.view(-1, 1, self._input_size).tanh().expand(-1, batch_size, self._input_size) for x in self.initial_hidden_state], # Internal State
+        )
+
+
+class ModularPolicy7(torch.nn.Module):
+    """
+    Copied ModularPolicy5 and made modifications to work with the API changes in RecurrentAttention15.
+    """
+    def __init__(self, inputs, outputs, input_size, key_size, value_size, num_heads, ff_size, architecture, recurrence_type='RecurrentAttention15'):
+        super().__init__()
+        self._key_size = key_size
+        self._input_size = input_size
+        self._value_size = value_size
+        self._input_modules_config = inputs
+
+        self._architecture = architecture
+
+        self.input_modules = self._init_input_modules(inputs,
+                key_size=key_size, value_size=value_size)
+        self.output_modules = self._init_output_modules(outputs,
+                key_size=key_size, num_heads=num_heads)
+
+        self.attention = self._init_core_modules(
+                recurrence_type = recurrence_type,
+                input_size = input_size,
+                key_size = key_size,
+                value_size = value_size,
+                num_heads = num_heads,
+                ff_size = ff_size,
+                architecture = architecture,
+        )
+
+        ## Store the attention for analysis purposes
+        #self.last_attention = None # [num_layers, batch_size, num_heads, seq_len]
+        #self.last_ff_gating = None
+        #self.last_output_attention = None
+
+    def _init_input_modules(self, input_configs: Dict[str,Dict], key_size, value_size):
+        valid_modules = {
+                cls.__name__: cls
+                for cls in [
+                    GreyscaleImageInput,
+                    ImageInput56,
+                    ScalarInput,
+                    DiscreteInput,
+                    LinearInput,
+                    MatrixInput,
+                ]
+        }
+        input_modules: Dict[str,torch.nn.Module] = {}
+        for k,v in input_configs.items():
+            if v['type'] is None:
+                input_modules[k] = v['module']
+            else:
+                if v['type'] not in valid_modules:
+                    raise NotImplementedError(f'Unknown output module type: {v["type"]}')
+                input_modules[k] = valid_modules[v['type']](
+                        **v.get('config', {}),
+                        key_size = key_size,
+                        value_size = value_size)
+        return torch.nn.ModuleDict(input_modules)
+
+    def _init_output_modules(self, output_configs: Dict[str,Dict], key_size, num_heads):
+        valid_modules = {
+                cls.__name__: cls
+                for cls in [
+                    LinearOutput,
+                    StateIndependentOutput,
+                ]
+        }
+        output_modules: Dict[str,torch.nn.Module] = {}
+        for k,v in output_configs.items():
+            if v['type'] not in valid_modules:
+                raise NotImplementedError(f'Unknown output module type: {v["type"]}')
+            if k == 'hidden':
+                raise Exception('Cannot use "hidden" as an output module name')
+            output_modules[k] = valid_modules[v['type']](
+                    **v.get('config', {}),
+                    key_size = key_size,
+                    num_heads = num_heads)
+        return torch.nn.ModuleDict(output_modules)
+
+    def _init_core_modules(self, recurrence_type, input_size, key_size, value_size, num_heads, ff_size, architecture):
+        recurrence_classes = {
+                cls.__name__: cls
+                for cls in [
+                    RecurrentAttention15,
+                ]
+        }
+
+        cls = None
+        if recurrence_type in recurrence_classes:
+            cls = recurrence_classes[recurrence_type]
+        else:
+            raise ValueError('Unknown recurrence type: {}'.format(recurrence_type))
+
+        output = torch.nn.ModuleList([
+            cls(input_size, key_size, value_size, num_heads, ff_size, layer_size)
+            for layer_size in architecture
+        ])
+        return output
+
+    def forward(self,
+            inputs: Dict[str,TensorType['batch_size','observation_shape']],
+            hidden: List[TensorType['num_blocks','batch_size','hidden_size']]):
+        assert len(hidden) == 2+sum(self._state_sizes)
+
+        self.last_attention = []
+        self.last_ff_gating = []
+        self.last_output_attention = {}
+
+        # Compute input to core module
+        input_labels = []
+        input_keys = []
+        input_vals = []
+        for k,module in self.input_modules.items():
+            module_config = self._input_modules_config[k]
+            if 'inputs' in module_config:
+                input_mapping = module_config['inputs']
+                module_inputs = {}
+                for dest_key, src_key in input_mapping.items():
+                    if src_key not in inputs:
+                        module_inputs = None
+                        break
+                    module_inputs[dest_key] = inputs[src_key]
+                if module_inputs is not None:
+                    y = module(**module_inputs)
+                    input_labels.append(k)
+                    input_keys.append(y['key'].unsqueeze(0))
+                    input_vals.append(y['value'].unsqueeze(0))
+            else:
+                if k not in inputs:
+                    continue # Skip this input module if no data is provided
+                module_inputs = inputs[k]
+                y = module(module_inputs)
+                input_labels.append(k)
+                input_keys.append(y['key'].unsqueeze(0))
+                input_vals.append(y['value'].unsqueeze(0))
+        self.last_input_labels = input_labels
+
+        keys = torch.cat([
+            *input_keys,
+            hidden[0],
+        ], dim=0)
+        values = torch.cat([
+            *input_vals,
+            hidden[1],
+        ], dim=0)
+
+        self.last_keys = keys
+        self.last_values = values
+
+        internal_state : List[TensorType] = []
+        is_idx = 2
+        for size in self._state_sizes:
+            internal_state.append(hidden[is_idx:is_idx+size])
+            is_idx += size
+
+        # Core module computation
+        new_keys = hidden[0]
+        new_values = hidden[1]
+        new_state = []
+        layer_output = None
+        for attn_layer, state in zip(self.attention, internal_state):
+            layer_output = attn_layer(
+                    key = keys,
+                    value = values,
+                    state = state,
+            )
+            new_state += layer_output['state']
+            #if layer_output is not None: # Save output from last layer
+            new_keys = layer_output['key']
+            new_values = layer_output['value']
+            keys = new_keys
+            values = new_values
+            #self.last_attention.append(
+            #        layer_output['attn_output_weights'].cpu().detach())
+            #self.last_ff_gating.append(
+            #        layer_output['output_gate'].cpu().detach())
+
+        # Compute output
+        output = {}
+
+        keys = torch.cat([
+            *input_keys,
+            new_keys
+        ], dim=0)
+        values = torch.cat([
+            *input_vals,
+            new_values
+        ], dim=0)
+
+        for k,v in self.output_modules.items():
+            y = v(keys, values)
+            output[k] = y['output']
+            self.last_output_attention[k] = y['attn_output_weights'].cpu().detach().squeeze(1) # (batch_size, seq_len)
+
+        self.last_hidden = (new_keys, new_values, *new_state)
+
+        return {
+            **output,
+            'hidden': self.last_hidden,
+            'misc': {
+                'core_output': layer_output,
+                'input_labels': input_labels,
+            }
+        }
+
+    def init_hidden(self, batch_size: int = 1):
+        device = next(self.parameters()).device
+        state = [
+            attn.init_hidden(batch_size)
+            for attn in self.attention
+        ]
+        self._state_sizes = [len(s) for s in state]
+        return (
+                torch.zeros([self._architecture[-1], batch_size, self._key_size], device=device), # Key
+                torch.zeros([self._architecture[-1], batch_size, self._key_size], device=device), # Value
+                #*[x.view(-1, 1, self._input_size).expand(-1, batch_size, self._input_size) for x in self.initial_hidden_state], # Internal State
+                *itertools.chain.from_iterable(state),
         )
 
 
@@ -2269,6 +2676,64 @@ if __name__ == '__main__':
         rand_input = {
                 'obs (image)': torch.randn(1,3,56,56, device=device),
                 'reward': torch.randn(1, device=device),
+                'action': torch.randint(0, 5, (1,), device=device),
+        }
+
+        hidden = model.init_hidden()
+        output = model(rand_input, hidden)
+        breakpoint()
+        output = output
+
+    def test_mp7():
+        if torch.cuda.is_available():
+            device = torch.device('cuda')
+        else:
+            device = torch.device('cpu')
+
+        model = ModularPolicy7(
+                inputs = {
+                    'obs (image)': {
+                        'type': 'ImageInput56',
+                        'config': {
+                            'in_channels': 3,
+                        },
+                    },
+                    'reward': {
+                        'type': 'ScalarInput',
+                    },
+                    'action': {
+                        'type': 'DiscreteInput',
+                        'config': {
+                            'input_size': 5,
+                        },
+                    },
+                },
+                outputs = {
+                    'value': {
+                        'type': 'LinearOutput',
+                        'config': {
+                            'output_size': 1,
+                        }
+                    },
+                    'action': {
+                        'type': 'LinearOutput',
+                        'config': {
+                            'output_size': 5
+                        }
+                    },
+                },
+                input_size=512,
+                key_size=512,
+                value_size=512,
+                num_heads=8,
+                ff_size=1024,
+                recurrence_type='RecurrentAttention15',
+                architecture=[3,3]
+        ).to(device)
+
+        rand_input = {
+                'obs (image)': torch.randn(1,3,56,56, device=device),
+                'reward': torch.randn([1,1], device=device),
                 'action': torch.randint(0, 5, (1,), device=device),
         }
 
@@ -2491,7 +2956,7 @@ if __name__ == '__main__':
 
         #nbmha = NonBatchMultiHeadAttention(num_modules=num_modules, num_heads=num_heads, key_size=key_size)
         #nbmha(input_query, input_key, input_value)
-        #bmha = BatchMultiHeadAttention(num_modules=num_modules, num_heads=num_heads, key_size=key_size)
+        #bmha = BatchMultiHeadAttentionBroadcast(num_modules=num_modules, num_heads=num_heads, key_size=key_size)
         #bmha(input_query, input_key, input_value)
 
         ## Attention #2
@@ -2501,13 +2966,14 @@ if __name__ == '__main__':
         #bl_v = BatchLinear(in_features=in_features, out_features=key_size, num_modules=num_modules)
         ##nbmha = NonBatchMultiHeadAttention(num_modules=num_modules, num_heads=num_heads, key_size=key_size)
         ##nbmha.forward(input_query, input_key, input_value)
-        #bmha = BatchMultiHeadAttention(num_modules=num_modules, num_heads=num_heads, key_size=key_size)
+        #bmha = BatchMultiHeadAttentionBroadcast(num_modules=num_modules, num_heads=num_heads, key_size=key_size)
         #bmha.forward_batch(bl_q(x), bl_k(x), bl_v(x))
         pass
 
     #benchmark_mp4()
-    benchmark_mp5()
+    #benchmark_mp5()
     #test_batching()
     #benchmark_functorch()
     #benchmark_functorch_mha()
+    test_mp7()
 

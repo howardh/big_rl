@@ -1,6 +1,6 @@
 import torch
 
-from big_rl.model.model import ModularPolicy2, ModularPolicy4, ModularPolicy5, ModularPolicy5LSTM
+from big_rl.model.model import ModularPolicy2, ModularPolicy4, ModularPolicy5, ModularPolicy5LSTM, ModularPolicy7
 from big_rl.utils import ExperimentConfigs
 
 
@@ -104,6 +104,12 @@ def init_model(observation_space, action_space,
                 outputs=outputs,
                 value_size=common_model_params['value_size'],
                 hidden_size=hidden_size,
+        ).to(device)
+    elif model_type == 'ModularPolicy7':
+        assert architecture is not None
+        return ModularPolicy7(
+                **common_model_params,
+                architecture=architecture,
         ).to(device)
     raise NotImplementedError()
 

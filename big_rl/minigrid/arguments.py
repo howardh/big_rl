@@ -24,11 +24,11 @@ def init_parser_trainer(parser: ArgumentParser):
 
 def init_parser_model(parser: ArgumentParser):
     parser.add_argument('--model-type', type=str, default='ModularPolicy5',
-                        help='Model type', choices=['ModularPolicy5', 'ModularPolicy5LSTM'])
+                        help='Model type', choices=['ModularPolicy5', 'ModularPolicy5LSTM', 'ModularPolicy7'])
     parser.add_argument('--recurrence-type', type=str,
                         default='RecurrentAttention14',
                         help='Recurrence type',
-                        choices=[f'RecurrentAttention{i}' for i in [11,14]])
+                        choices=[f'RecurrentAttention{i}' for i in [11,14,15]])
     parser.add_argument('--architecture', type=int,
                         default=[3,3], nargs='*',
                         help='Size of each layer in the model\'s core')
