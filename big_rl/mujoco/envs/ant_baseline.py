@@ -100,6 +100,8 @@ class AntBaselineEnv(MujocoEnv, utils.EzPickle):
             )
         self.observation_space = Dict(observation_space_dict)
 
+        self.goal_str = 'Run as fast as possible'
+
 
     def _compute_indices(self, bodies):
         """

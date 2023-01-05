@@ -18,6 +18,8 @@ def make_env(env_name: str,
         meta_config=None,
         discount=0.99, reward_scale=1.0, reward_clip=10) -> gym.Env:
     env = gym.make(env_name, render_mode='rgb_array', **config)
+
+    env = RewardInfo(env)
     env = RecordEpisodeStatistics(env)
 
     env = ClipAction(env)
@@ -101,6 +103,23 @@ class NormalizeDictObservation(gym.Wrapper):
             k: (v - self.obs_rms[k].mean) / np.sqrt(self.obs_rms[k].var + self.epsilon)
             for k,v in obs.items()
         }
+
+
+class RewardInfo(gym.Wrapper):
+    """ Wrapper to add the reward to the wrapper. Used to save the true reward when the reward is manipulated down the line (e.g. via clipping, normalization, etc). """
+    def __init__(self, env: gym.Env, key='reward'):
+        super().__init__(env)
+        self.key = key
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        info[self.key] = reward
+        return obs, reward, terminated, truncated, info
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        info[self.key] = 0.0
+        return obs, info
 
 
 class MetaWrapper(gym.Wrapper):

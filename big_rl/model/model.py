@@ -1403,7 +1403,7 @@ class StateIndependentOutput(torch.nn.Module):
         batch_size = key.shape[1]
         return {
             'output': self.output.expand(batch_size, -1),
-            'attn_output_weights': torch.zeros([num_blocks, batch_size, num_blocks], device=device),
+            'attn_output_weights': torch.zeros([1, batch_size, num_blocks], device=device),
         }
 
 
