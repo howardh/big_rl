@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 import gymnasium
 import gymnasium as gym
 from gymnasium.envs.registration import register
-from gymnasium.wrappers import RecordEpisodeStatistics, ClipAction, NormalizeObservation, TransformObservation, NormalizeReward, TransformReward # pyright: ignore[reportPrivateImportUsage]
+from gymnasium.wrappers import RecordEpisodeStatistics, ClipAction, TransformObservation, NormalizeReward, TransformReward # pyright: ignore[reportPrivateImportUsage]
 from gymnasium.wrappers.normalize import RunningMeanStd
 import numpy as np
 import scipy.ndimage

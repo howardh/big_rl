@@ -20,7 +20,7 @@ from frankenstein.advantage.gae import generalized_advantage_estimate
 from frankenstein.loss.policy_gradient import clipped_advantage_policy_gradient_loss
 
 from big_rl.minigrid.envs import make_env
-from big_rl.utils import torch_save, zip2, merge_space, generate_id, create_unique_file, is_slurm
+from big_rl.utils import torch_save, zip2, merge_space, generate_id
 from big_rl.minigrid.common import init_model, env_config_presets
 
 
@@ -505,6 +505,9 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
 
+    parser.add_argument('--run-id', type=str, default=None,
+                        help='Identifier for the current experiment. This value is used for setting the "{RUN_ID}" variable. If not specified, then either a slurm job ID is used, or the current date and time, depending on what is available. Note that the time-based ID has a resolution of 1 second, so if two runs are started within less than a second of each other, they may end up with the same ID.')
+
     parser.add_argument('--envs', type=str, default=['fetch-001'], nargs='*', help='Environments to train on')
     parser.add_argument('--num-envs', type=int, default=[16], nargs='*',
             help='Number of environments to train on. If a single number is specified, it will be used for all environments. If a list of numbers is specified, it must have the same length as --env.')
@@ -523,25 +526,26 @@ if __name__ == '__main__':
     parser.add_argument('--slurm-split', action='store_true', help='Set this flag to let the script know it is running on a SLURM cluster with one job split across an array job. This ensures that the same checkpoint is used for each of these jobs.')
     parser.add_argument('--cuda', action='store_true', help='Use CUDA.')
     parser.add_argument('--wandb', action='store_true', help='Save results to W&B.')
+    parser.add_argument('--wandb-id', type=str, default='{RUN_ID}',
+                        help='W&B run ID. Defaults to the run ID.')
 
+    # Parse arguments
     args = parser.parse_args()
 
-    # Initialize Checkpoint
-    # If `args.model_checkpoint` is a directory rather than a filename, then generate a unique identifier for this run to use as a checkpoint filename.
-    run_id = generate_id(slurm_split = args.slurm_split)
-    if args.model_checkpoint is not None and os.path.isdir(args.model_checkpoint):
-        if is_slurm() and args.slurm_split: # If we are running on a SLURM cluster with the job split across an array job, then we need to use the same checkpoint for all jobs in the array
-            filename = os.path.join(args.model_checkpoint, f'{run_id}.pt')
-            if not os.path.exists(filename):
-                f = os.open(filename,  os.O_CREAT | os.O_EXCL)
-                os.close(f)
-            args.model_checkpoint = filename
-        else:
-            new_checkpoint_filename = create_unique_file(
-                    directory=args.model_checkpoint,
-                    name=run_id, extension='.pt')
-            args.model_checkpoint = os.path.abspath(new_checkpoint_filename)
-        print(f'Checkpoint will be saved to {args.model_checkpoint}')
+    # Post-process string arguments
+    # Note: Only non-string arguments and args.run_id can be used until the post-processing is done.
+    if args.run_id is None:
+        args.run_id = generate_id(slurm_split = args.slurm_split)
+    else:
+        assert '{' not in args.run_id and '}' not in args.run_id, 'Run ID cannot contain {} variables.'
+    print(f'Run ID: {args.run_id}')
+
+    for k,v in vars(args).items():
+        if type(v) is str:
+            v = v.format(
+                RUN_ID = args.run_id,
+            )
+            setattr(args, k, v)
 
     # Initialize W&B
     if args.wandb:
@@ -595,11 +599,14 @@ if __name__ == '__main__':
     checkpoint = None
 
     if args.model_checkpoint is not None and os.path.exists(args.model_checkpoint) and os.stat(args.model_checkpoint).st_size > 0:
+        assert not os.path.isdir(args.model_checkpoint), 'Model checkpoint must be a file, not a directory'
         # The checkpoint exists, which means the experiment already started. Resume the experiment instead of restarting it.
         # If the checkpoint file is empty, it means we just created the file and the experiment hasn't started yet.
         checkpoint = torch.load(args.model_checkpoint, map_location=device)
+        print(f'Experiment already started. Loading checkpoint from {args.model_checkpoint}')
     elif args.starting_model is not None:
         checkpoint = torch.load(args.starting_model, map_location=device)
+        print(f'Loading starting model from {args.starting_model}')
 
     if checkpoint is not None:
         model.load_state_dict(checkpoint['model'], strict=False)
@@ -655,5 +662,19 @@ if __name__ == '__main__':
             }, args.model_checkpoint)
             print(f'Saved checkpoint to {os.path.abspath(args.model_checkpoint)}')
     else:
-        for _ in trainer:
+        x = {}
+        try:
+            for x in trainer:
+                pass
+        except KeyboardInterrupt:
+            print('Interrupted')
             pass
+        # Sometimes, we run an experiment without intending to save the model, but then change our mind later.
+        print('Saving model')
+        tmp_checkpoint = f'./temp-checkpoint.pt'
+        torch_save({
+            'model': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'step': x['step'],
+        }, tmp_checkpoint)
+        print(f'Saved temporary checkpoint to {os.path.abspath(tmp_checkpoint)}')
