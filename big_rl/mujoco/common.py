@@ -121,6 +121,10 @@ def env_config_presets():
             },
         })
 
+        config.add_change('locomotion-002', {
+            'normalize_obs': False,
+        })
+
     init_locomotion()
 
     return config

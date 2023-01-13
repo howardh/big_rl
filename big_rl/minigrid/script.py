@@ -315,7 +315,7 @@ def train_single_env(
             )
 
             if done.any():
-                print(f'Episode finished ({step * num_envs * rollout_length:,})')
+                print(f'Episode finished ({step * num_envs * rollout_length:,} -- {global_step_counter[0]:,})')
                 for env_label, env_id in env_label_to_id.items():
                     done2 = done & (env_ids == env_id)
                     if not done2.any():
@@ -479,7 +479,7 @@ def train(
         # Timing
         if env_steps > 0:
             elapsed_time = time.time() - start_time
-            steps_per_sec = env_steps / elapsed_time
+            steps_per_sec = (env_steps - start_step) / elapsed_time
             if max_steps > 0:
                 remaining_time = int((max_steps - env_steps) / steps_per_sec)
                 remaining_hours = remaining_time // 3600

@@ -6,8 +6,9 @@ from gymnasium.envs.mujoco import MujocoEnv
 from gymnasium.spaces import Box, Dict
 import numpy as np
 import tempfile
+import mujoco
 
-from big_rl.mujoco.envs import MjcfModelFactory, list_joints_with_ancestor, list_bodies_with_ancestor, DEFAULT_CAMERA_CONFIG
+from big_rl.mujoco.envs import MjcfModelFactory, list_joints_with_ancestor, list_bodies_with_ancestor
 
 
 class AntFetchEnv(MujocoEnv, utils.EzPickle):
@@ -33,6 +34,8 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         contact_force_range=(-1.0, 1.0),
         reset_noise_scale=0.1,
         camera = 'first_person',
+        num_objs = 2,
+        num_target_objs = 1,
         **kwargs
     ):
         utils.EzPickle.__init__(
@@ -67,21 +70,35 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         self._camera = camera
         self._image_size = 56
 
+        self.num_objs = num_objs
+        self.num_target_objs = num_target_objs
+
         # Init MJCF file
         mjcf = MjcfModelFactory('ant')
         mjcf.add_ground()
-        mjcf.add_light()
+        mjcf.add_light(pos=[2.5,2.5,5])
         mjcf.add_wall([0,0], [5,0])
-        mjcf.add_wall([0,0], [0,5])
-        mjcf.add_wall([5,5], [0,5])
-        mjcf.add_wall([5,5], [5,0])
-        self._agent_body_name = mjcf.add_ant([1,1], num_legs=4)
-        self._objects = [
-            mjcf.add_ball([3,3]),
-            mjcf.add_ball([2,3]),
-            mjcf.add_ball([2,1]),
-            mjcf.add_box([1,2]),
-        ]
+        mjcf.add_wall([0,5], [5,5])
+        mjcf.add_wall([0,1], [0,4])
+        mjcf.add_wall([5,1], [5,4])
+        mjcf.set_boundary(x_min=0, x_max=5, y_min=0, y_max=5)
+        self._agent_body_name = mjcf.add_ant([2.5,2.5], num_legs=4)
+        self._objects = []
+        self._object_desc = {}
+        colours = {
+                'red': (1,0,0,1),
+                'green': (0,1,0,1),
+                'blue': (0,0,1,1),
+        }
+        for colour_name, rgba in colours.items():
+            obj_name = mjcf.add_box([0,0], rgba=rgba)
+            self._objects.append(obj_name)
+            self._object_desc[obj_name] = f'{colour_name} box'
+
+            obj_name = mjcf.add_ball([0,0], rgba=rgba)
+            self._objects.append(obj_name)
+            self._object_desc[obj_name] = f'{colour_name} ball'
+        self._cell_size = mjcf.cell_size
 
         with tempfile.NamedTemporaryFile(suffix='.xml') as f:
             f.write(mjcf.to_xml().encode('utf-8'))
@@ -92,7 +109,13 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
                 model_path=f.name,
                 frame_skip=5,
                 observation_space=None,
-                default_camera_config=DEFAULT_CAMERA_CONFIG,
+                default_camera_config={
+                    'distance': 20.0,
+                    #'lookat': [5, 5, 0], # TODO: Make this point to centre
+                    'elevation': -45.0,
+                    "trackbodyid": 1,
+                    'type': mujoco.mjtCamera.mjCAMERA_TRACKING,
+                },
                 **kwargs
             )
 
@@ -191,7 +214,23 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         terminated = not self.is_healthy if self._terminate_when_unhealthy else False
         return terminated
 
+    def reset(self):
+        obs, info = super().reset()
+
+        # Choose a number of objects to place to be accessible by the agent and hide the rest outside.
+        for i,obj in enumerate(self._objects):
+            self.place_object(obj, position=[i,-2], height=1)
+        self.target_objects = []
+        for i in np.random.choice(len(self._objects), size=self.num_objs, replace=False):
+            self.place_object(self._objects[i])
+            if len(self.target_objects) < self.num_target_objs:
+                self.target_objects.append(self._objects[i])
+        self.goal_str = f'Fetch the {" or ".join(self.target_objects)}'
+
+        return obs, info
+
     def step(self, action):
+        # Standard Mujoco rewards
         xy_position_before = self.get_body_com(self._agent_body_name)[:2].copy()
         self.do_simulation(action, self.frame_skip)
         xy_position_after = self.get_body_com(self._agent_body_name)[:2].copy()
@@ -202,16 +241,27 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         forward_reward = x_velocity
         healthy_reward = self.healthy_reward
 
-        rewards = forward_reward + healthy_reward
-
         costs = ctrl_cost = self.control_cost(action)
 
+        # Task-specific
+        # If the agent touches an object, it gets a reward and the object is dropped in a new random location.
+        collided_objects = self.get_collisions()
+        fetch_reward = 0
+        for obj in collided_objects:
+            self.place_object(obj)
+            if obj in self.target_objects:
+                fetch_reward += 1
+            else:
+                fetch_reward -= 1
+
+        # Build return values
         terminated = self.terminated
         observation = self._get_obs()
         info = {
             "reward_forward": forward_reward,
             "reward_ctrl": -ctrl_cost,
             "reward_survive": healthy_reward,
+            "reward_fetch": fetch_reward,
             "x_position": xy_position_after[0],
             "y_position": xy_position_after[1],
             "distance_from_origin": np.linalg.norm(xy_position_after, ord=2),
@@ -224,7 +274,7 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
             costs += contact_cost
             info["reward_ctrl"] = -contact_cost
 
-        reward = rewards - costs
+        reward = fetch_reward + healthy_reward - costs
 
         if self.render_mode == "human":
             self.render()
@@ -294,8 +344,8 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
 
         return observation
 
-    def get_collisions(self):
-        """  """
+    def get_collisions(self) -> List[str]:
+        """ Returns a list of objects (as object names) that the agent is currently touching. """
         torso_id = self.model.body(self._agent_body_name).id
         collided_objects = []
 
@@ -326,15 +376,17 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
             dist[obj_body_name] = sq_dist
         return dist
 
-    def place_object(self, object_name, position=None, orientation=None):
-        """  """
+    def place_object(self, object_name, position=None, orientation=None, height=None):
+        """ Places an object at a given position and orientation. If no position or orientation is given, the object is placed at a random location. """
         if position is None:
-            position = np.random.uniform(low=1, high=4, size=3)
-            position[2] = 3
+            position = np.random.uniform(low=1, high=4, size=2) * self._cell_size
+        if height is None:
+            height = np.random.uniform(low=3, high=10)
         if orientation is None:
             # Generate a random quaternion
             orientation = np.random.uniform(low=-1, high=1, size=4)
         # TODO: Look for the the joint associated with the body instead of guessing at the name
         adr = self.model.joint(f'{object_name}_joint').qposadr.item()
-        self.data.qpos[adr:adr+3] = position
+        self.data.qpos[adr:adr+2] = position
+        self.data.qpos[adr+2] = height
         self.data.qpos[adr+3:adr+7] = orientation

@@ -34,8 +34,8 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
     hidden = model.init_hidden(1) # type: ignore (???)
     steps_iterator = itertools.count()
     #steps_iterator = range(100+np.random.randint(50)); print('--- DEBUG MODE ---')
-    if verbose:
-        steps_iterator = tqdm(steps_iterator)
+    #if verbose:
+    steps_iterator = tqdm(steps_iterator)
 
     obs, info = env.reset()
     obs = preprocess_obs_fn(obs)
@@ -88,6 +88,8 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
     return {
         'episode_reward': episode_reward,
         'episode_length': episode_length,
+        #'episode_reward': info['episode']['r'],
+        #'episode_length': info['episode']['l'],
         'results': results,
     }
 
@@ -381,9 +383,12 @@ class VideoCallback:
 
 
 def preprocess_obs(obs):
+    obs_scale = { 'obs (image)': 1.0 / 255.0 }
+    obs_ignore = []
     return {
-        k: torch.tensor(v, dtype=torch.float, device=device).unsqueeze(0)
+        k: torch.tensor(v, dtype=torch.float, device=device).unsqueeze(0)*obs_scale.get(k,1)
         for k,v in obs.items()
+        if k not in obs_ignore
     }
 
 

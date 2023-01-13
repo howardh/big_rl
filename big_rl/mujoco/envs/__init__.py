@@ -16,6 +16,7 @@ def make_env(env_name: str,
         config={},
         #mujoco_config={},
         meta_config=None,
+        normalize_obs=True,
         discount=0.99, reward_scale=1.0, reward_clip=10) -> gym.Env:
     env = gym.make(env_name, render_mode='rgb_array', **config)
 
@@ -24,8 +25,12 @@ def make_env(env_name: str,
 
     env = ClipAction(env)
 
-    env = NormalizeDictObservation(env)
-    env = TransformObservation(env, lambda obs: {k: np.clip(v, -10, 10) for k,v in obs.items()})
+    if normalize_obs:
+        env = NormalizeDictObservation(env)
+    env = TransformObservation(env, lambda obs: {
+        k: np.clip(v, -10, 10) if np.issubdtype(v.dtype, float) else v
+        for k,v in obs.items()
+    })
 
     env = NormalizeReward(env, gamma=discount)
     env = TransformReward(env, lambda reward: np.clip(reward * reward_scale, -reward_clip, reward_clip))
@@ -317,8 +322,12 @@ class MetaWrapper(gym.Wrapper):
         return obs, info
 
 
-DEFAULT_CAMERA_CONFIG = {
+DEFAULT_CAMERA_CONFIG = { # See mjvCamera docs (https://mujoco.readthedocs.io/en/latest/APIreference.html#mjvcamera)
     "distance": 4.0,
+    #"fixedcamid": 1,
+    #"trackbodyid": 1,
+    #"lookat": [0.0, 0.0, 0.0],
+
 }
 
 
@@ -455,13 +464,13 @@ class MjcfModelFactory():
             'type': 'plane',
         }))
 
-    def add_light(self):
+    def add_light(self, pos=(0, 0, 5)):
         self.worldbody.append(self.soup.new_tag('light', attrs={
             'cutoff': '100',
             'diffuse': '1 1 1',
             'dir': '0 0 -1',
             'exponent': '1',
-            'pos': '0 0 3',
+            'pos': f'{pos[0]} {pos[1]} {pos[2]}',
             'specular': '1 1 1'
         }))
 
@@ -473,6 +482,7 @@ class MjcfModelFactory():
         })
         actuators = []
 
+        # Side camera
         camera_track = self.soup.new_tag(
             'camera',
             attrs={
@@ -484,9 +494,23 @@ class MjcfModelFactory():
         )
         body.append(camera_track)
 
+        # Top-down camera
+        camera_track = self.soup.new_tag(
+            'camera',
+            attrs={
+                'name': name_prefix+'topdown',
+                'mode': 'trackcom',
+                'pos': '0 0 10',
+                'xyaxes': '1 0 0 0 1 0'
+            }
+        )
+        body.append(camera_track)
+
+        # First person camera
         camera_first_person = self.soup.new_tag('camera', attrs={'name': name_prefix+'first_person', 'mode': 'fixed', 'pos': '0 0 0', 'axisangle': '1 0 0 90'})
         body.append(camera_first_person)
 
+        # Torso
         torso_geom = self.soup.new_tag('geom', attrs={'name': name_prefix+'torso_geom', 'pos': '0 0 0', 'size': '0.25', 'type': 'sphere'})
         body.append(torso_geom)
 
@@ -587,34 +611,27 @@ class MjcfModelFactory():
 
         return body_name
 
-    def add_wall(self, cell, cell2=None):
+    def add_wall(self, cell, cell2=None, rgba=(0.8, 0.8, 0.8, 1), height=None):
+        if height is None:
+            height = self.height
         if cell2 is None:
             pos = (
                 cell[0] * self.cell_size,
                 cell[1] * self.cell_size,
-                self.height / 2,
+                height / 2,
             )
-            size = (self.cell_size / 2, self.cell_size / 2, self.height / 2)
+            size = (self.cell_size / 2, self.cell_size / 2, height / 2)
         else:
             pos = (
                 (cell[0] + cell2[0]) * self.cell_size / 2,
                 (cell[1] + cell2[1]) * self.cell_size / 2,
-                self.height / 2,
+                height / 2,
             )
             size = (
                 (abs(cell[0] - cell2[0]) + 1) * self.cell_size / 2,
                 (abs(cell[1] - cell2[1]) + 1) * self.cell_size / 2,
-                self.height / 2,
+                height / 2,
             )
-        #print(cell, cell2, pos, size)
-        #self.worldbody.append(self.soup.new_tag('geom', attrs={
-        #    'conaffinity': '0',
-        #    'condim': '3',
-        #    'size': '0.08',
-        #    'fromto': f'{pos[0]} {pos[1]} 0 {pos[0]} {pos[1]} 5',
-        #    'type': 'capsule',
-        #    'rgba': '0 1 0 1',
-        #}))
         wall = self.soup.new_tag('geom', attrs={
             'conaffinity': '1',
             'condim': '3',
@@ -623,7 +640,7 @@ class MjcfModelFactory():
             'pos': ' '.join([str(p) for p in pos]),
             'size': ' '.join([str(s) for s in size]),
             'type': 'box',
-            'rgba': '0.8 0.8 0.8 0.5',
+            'rgba': ' '.join([str(c) for c in rgba]),
         })
         self.walls.append(wall)
         self.worldbody.append(wall)
@@ -685,10 +702,39 @@ class MjcfModelFactory():
             'rgba': ' '.join(map(str, rgba))
         }))
 
-        self.balls.append(body)
+        self.boxes.append(body)
         self.worldbody.append(body)
 
         return body_name
+
+    def set_boundary(self, x_min, x_max, y_min, y_max, height=10):
+        """
+        Set the boundary of the world. The provided coordinates are all in cell coordinates. A 1 cell thick invisible wall will be placed on the provided coordinates.
+        """
+        assert x_min < x_max
+        assert y_min < y_max
+
+        rgba = (0, 0, 0, 0)
+        self.add_wall(
+                (x_min, y_min), (x_min, y_max),
+                rgba = rgba,
+                height = height * self.cell_size
+        )
+        self.add_wall(
+                (x_min, y_max), (x_max, y_max),
+                rgba = rgba,
+                height = height * self.cell_size
+        )
+        self.add_wall(
+                (x_max, y_max), (x_max, y_min),
+                rgba = rgba,
+                height = height * self.cell_size
+        )
+        self.add_wall(
+                (x_max, y_min), (x_min, y_min),
+                rgba = rgba,
+                height = height * self.cell_size
+        )
 
 
 def strz(x):
@@ -700,6 +746,9 @@ def strz(x):
 
 
 def list_geoms_by_body(env, body_id=0, depth=0, covered_bodies=None):
+    if depth == 0:
+        print(f'Geoms by body:')
+
     if covered_bodies is None:
         covered_bodies = set()
     if body_id in covered_bodies:
@@ -708,17 +757,19 @@ def list_geoms_by_body(env, body_id=0, depth=0, covered_bodies=None):
 
     body_name_adr = env.model.name_bodyadr[body_id]
     body_name = strz(env.model.names[body_name_adr:])
-    print(f'{"  "*depth} {body_id} {body_name}')
+    print(f'{"  "*(depth+1)} {body_id} {body_name}')
     for geom_id,geom_name_adr in enumerate(env.model.name_geomadr):
         geom_name = strz(env.model.names[geom_name_adr:])
         if env.model.geom_bodyid[geom_id] == body_id:
-            print(f'{"  "*depth}   {geom_id} {geom_name}')
+            print(f'{"  "*(depth+1)}   {geom_id} {geom_name}')
     for child_id,parent_id in enumerate(env.model.body_parentid):
         if parent_id == body_id:
             list_geoms_by_body(child_id, depth+1, covered_bodies)
 
 
-def list_joints_with_ancestor(env, body_id, depth=0, covered_bodies=None):
+def list_joints_with_ancestor(env, body_id, depth=0, covered_bodies=None, verbose=False):
+    if depth == 0 and verbose:
+        print(f'Joints with {body_id} as an ancestor:')
     joint_ids = set()
 
     if covered_bodies is None:
@@ -729,11 +780,13 @@ def list_joints_with_ancestor(env, body_id, depth=0, covered_bodies=None):
 
     body_name_adr = env.model.name_bodyadr[body_id]
     body_name = strz(env.model.names[body_name_adr:])
-    print(f'{"  "*depth} {body_id} {body_name}')
+    if verbose:
+        print(f'{"  "*(depth+1)} {body_id} {body_name}')
     for joint_id,joint_name_adr in enumerate(env.model.name_jntadr):
         joint_name = strz(env.model.names[joint_name_adr:])
         if env.model.jnt_bodyid[joint_id] == body_id:
-            print(f'{"  "*depth}   {joint_id} {joint_name}')
+            if verbose:
+                print(f'{"  "*(depth+1)}   {joint_id} {joint_name}')
             joint_ids.add(joint_id)
     for child_id,parent_id in enumerate(env.model.body_parentid):
         if parent_id == body_id:
@@ -742,12 +795,15 @@ def list_joints_with_ancestor(env, body_id, depth=0, covered_bodies=None):
     return joint_ids
 
 
-def list_bodies_with_ancestor(env, body_id, depth=0):
+def list_bodies_with_ancestor(env, body_id, depth=0, verbose=False):
+    if depth == 0 and verbose:
+        print(f'Bodies with {body_id} as an ancestor:')
     body_ids = set([body_id])
 
     body_name_adr = env.model.name_bodyadr[body_id]
     body_name = strz(env.model.names[body_name_adr:])
-    print(f'{"  "*depth} {body_id} {body_name}')
+    if verbose:
+        print(f'{"  "*(depth+1)} {body_id} {body_name}')
     for child_id,parent_id in enumerate(env.model.body_parentid):
         if parent_id == body_id:
             body_ids.update(list_bodies_with_ancestor(env, child_id, depth+1))
@@ -763,20 +819,22 @@ register(
 
 register(
     id="AntFetch-v0",
-    entry_point="big_rl.mujoco.envs.ant_baseline:AntFetchEnv",
+    entry_point="big_rl.mujoco.envs.ant_fetch:AntFetchEnv",
     max_episode_steps=1000,
     reward_threshold=6000.0,
 )
 
 
 if __name__ == '__main__':
-    #env = gym.make('AntFetchEnv-v0', render_mode='human')
-    env = gym.make('AntBaselineEnv-v0', render_mode='human')
+    env = gym.make('AntFetch-v0', render_mode='human', num_objs=6)
+    #env = gym.make('AntBaseline-v0', render_mode='human')
     env.reset()
+    #breakpoint()
     print(env.action_space)
     total_reward = 0
     for i in range(1000):
-        env.render()
+        #breakpoint()
+        #env.render()
         obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
 
         total_reward += reward

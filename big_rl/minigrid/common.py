@@ -250,6 +250,32 @@ def env_config_presets():
         }, inherit='fetch-004-shaped')
 
         # Remove reward signal, keep shaped reward, but cut off shaped reward after some number of steps
+        for cutoff in [100, 50, 0]:
+            config.add(f'fetch-004-stop_{cutoff}_trials', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'shaped_reward_config': {
+                        'type': 'subtask',
+                        'noise': ('stop', cutoff, 'trials'),
+                    },
+                }
+            }, inherit='fetch-004')
+        for x in range(2,51):
+            config.add(f'fetch-004-zero_{x}_{x}_trials', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'shaped_reward_config': {
+                        'type': 'subtask',
+                        'noise': ('zero', (x,x), 'cycle_trials'),
+                    },
+                }
+            }, inherit='fetch-004')
+
+        # 005: Same as above, but with bigger rooms
         for cutoff in [500, 200, 100, 50, 20, 1]:
             config.add(f'fetch-005-stop_{cutoff}', {
                 'meta_config': {

@@ -194,7 +194,7 @@ def train_single_env(
 
     def preprocess_input(obs: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         return {
-            k: torch.tensor(v, device=device)*obs_scale.get(k,1)
+            k: torch.tensor(v, device=device, dtype=torch.float)*obs_scale.get(k,1)
             for k,v in obs.items() if k not in obs_ignore
         }
 
@@ -257,11 +257,14 @@ def train_single_env(
                 done2 = done & (env_ids == env_id)
                 if not done2.any():
                     continue
-                for x in episode_reward[done2]:
-                    warmup_episode_rewards[env_label].append(x.item())
+                #for x in episode_reward[done2]:
+                #    warmup_episode_rewards[env_label].append(x.item())
+                episode_true_reward = np.array([x['episode']['r'] for x,d in zip(info['final_info'],done2) if d and x is not None])
+                for r in episode_true_reward:
+                    warmup_episode_rewards[env_label].append(r)
                 for x in episode_steps[done2]:
                     warmup_episode_steps[env_label].append(x.item())
-                print(f'Warmup\t reward: {episode_reward[done2].mean():.2f}\t len: {episode_steps[done2].mean()} \t env: {env_label} ({done2.sum().item()})')
+                print(f'Warmup\t reward: {episode_reward[done2].mean():.2f}\t true reward: {episode_true_reward.mean():.2f} \t len: {episode_steps[done2].mean()} \t env: {env_label} ({done2.sum().item()})')
             # Reset episode stats
             episode_reward[done] = 0
             #episode_true_reward[done] = 0
@@ -326,7 +329,7 @@ def train_single_env(
             )
 
             if done.any():
-                print(f'Episode finished ({step * num_envs * rollout_length:,})')
+                print(f'Episode finished ({step * num_envs * rollout_length:,} -- {global_step_counter[0]:,})')
                 for env_label, env_id in env_label_to_id.items():
                     done2 = done & (env_ids == env_id)
                     if not done2.any():
@@ -488,7 +491,7 @@ def train(
         # Timing
         if env_steps > 0:
             elapsed_time = time.time() - start_time
-            steps_per_sec = env_steps / elapsed_time
+            steps_per_sec = (env_steps - start_step) / elapsed_time
             if max_steps > 0:
                 remaining_time = int((max_steps - env_steps) / steps_per_sec)
                 remaining_hours = remaining_time // 3600
@@ -642,7 +645,7 @@ if __name__ == '__main__':
             lr_scheduler = lr_scheduler,
             max_steps = args.max_steps,
             rollout_length = args.rollout_length,
-            obs_scale = {},
+            obs_scale = {'obs (image)': 1/255},
             discount = args.discount,
             gae_lambda = args.gae_lambda,
             norm_adv = args.norm_adv,
