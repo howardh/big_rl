@@ -274,6 +274,17 @@ def env_config_presets():
                     },
                 }
             }, inherit='fetch-004')
+        config.add(f'fetch-004-zero_dynamic', {
+            'meta_config': {
+                'include_reward': False,
+            },
+            'config': {
+                'shaped_reward_config': {
+                    'type': 'subtask',
+                    'noise': ('dynamic_zero', 10, (0.8, 0.1)),
+                },
+            }
+        }, inherit='fetch-004')
 
         # 005: Same as above, but with bigger rooms
         for cutoff in [500, 200, 100, 50, 20, 1]:

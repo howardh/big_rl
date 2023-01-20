@@ -1,6 +1,6 @@
 import os
 from typing_extensions import Literal
-from typing import Union, Tuple
+from typing import Union, Tuple, List
 import threading
 import time
 
@@ -411,6 +411,28 @@ class RewardNoise:
         self._stop_reward: bool = False
         self._step_count: int = 0
         self._trial_count: int = 0
+        self._trial_reward: list[float] = [0.]
+
+        self._supervised_steps_in_trial: List[int] = [0]
+        self._unsupervised_steps_in_trial: List[int] = [0]
+
+        self.supervised_reward: float = 0.
+        """ Total reward obtained while the reward signal is provided """
+
+        self.supervised_trials: int = 0
+        """ Total number of trials where the reward signal is provided """
+
+        self.supervised_steps: int = 0
+        """ Total number of steps where the reward signal is provided """
+
+        self.unsupervised_reward: float = 0.
+        """ Total reward obtained while the reward signal is not provided (e.g. when the signal is cut off due to 'stop' or 'dynamic_stop' noise.) """
+
+        self.unsupervised_trials: int = 0
+        """ Total number of trials where the reward signal is not provided (e.g. when the signal is cut off due to 'stop' or 'dynamic_stop' noise.) """
+
+        self.unsupervised_steps: int = 0
+        """ Total number of steps where the reward signal is not provided (e.g. when the signal is cut off due to 'stop' or 'dynamic_stop' noise.) """
 
     def set_rng(self, rng):
         if rng is None:
@@ -420,6 +442,20 @@ class RewardNoise:
 
     def trial_finished(self):
         self._trial_count += 1
+        self._trial_reward.append(0.)
+
+        n_supervised_steps = self._supervised_steps_in_trial[-1]
+        n_unsupervised_steps = self._unsupervised_steps_in_trial[-1]
+
+        if n_supervised_steps > 0 and n_unsupervised_steps == 0:
+            self.supervised_trials += 1
+        elif n_supervised_steps == 0 and n_unsupervised_steps > 0:
+            self.unsupervised_trials += 1
+        else:
+            pass
+
+        self._supervised_steps_in_trial.append(0)
+        self._unsupervised_steps_in_trial.append(0)
 
     def add_noise(self, reward):
         self._step_count += 1
@@ -435,10 +471,13 @@ class RewardNoise:
             return self._gaussian_noise(reward, *self.args)
         elif noise_type == 'stop':
             return self._stop_noise(reward, *self.args)
+        elif noise_type == 'dynamic_zero':
+            return self._dynamic_zero_noise(reward, *self.args)
         else:
             raise ValueError(f"Unknown noise type: {noise_type}")
 
     def __call__(self, reward):
+        self._trial_reward[-1] += reward
         return self.add_noise(reward)
 
     def _zero_noise(self, reward: float, zero_when: Union[float, Tuple[int, int]], units: Literal['probability', 'cycle_steps', 'cycle_trials'] = 'probability') -> float:
@@ -455,8 +494,12 @@ class RewardNoise:
         """
         if units == 'probability':
             if self.np_random.uniform() < zero_when:
+                self._unsupervised_steps_in_trial[-1] += 1
+                self.unsupervised_reward += reward
                 return 0
             else:
+                self._supervised_steps_in_trial[-1] += 1
+                self.supervised_reward += reward
                 return reward
         elif units == 'cycle_steps':
             assert len(zero_when) == 2
@@ -464,8 +507,12 @@ class RewardNoise:
             assert period > 0
 
             if (self._step_count-1) % period < zero_when[0]:
+                self._supervised_steps_in_trial[-1] += 1
+                self.supervised_reward += reward
                 return reward
             else:
+                self._unsupervised_steps_in_trial[-1] += 1
+                self.unsupervised_reward += reward
                 return 0
         elif units == 'cycle_trials':
             assert len(zero_when) == 2
@@ -473,8 +520,12 @@ class RewardNoise:
             assert period > 0
 
             if self._trial_count % period < zero_when[0]:
+                self._supervised_steps_in_trial[-1] += 1
+                self.supervised_reward += reward
                 return reward
             else:
+                self._unsupervised_steps_in_trial[-1] += 1
+                self.unsupervised_reward += reward
                 return 0
 
     def _gaussian_noise(self, reward: float, std: float) -> float:
@@ -484,23 +535,56 @@ class RewardNoise:
     def _stop_noise(self, reward: float, stop_when: Union[int,float], units: Literal['probability','steps','trials']) -> float:
         """ If `stop_when` is an integer, then stop the reward (i.e. set to 0) after `stop_when` steps. If `stop_when` is a float, then at each step with probability `stop_when`, stop the reward for the rest of the episode. Each time this function is called counts as a step and the step count is reset when `reset()` is called. """
 
-        if self._stop_reward:
-            return 0
-
         if units == 'probability':
             if self.np_random.uniform() < stop_when: # stop with a certain probability
                 self._stop_reward = True
-                return 0
         elif units == 'steps':
             if self._step_count > stop_when:
                 self._stop_reward = True
-                return 0
         elif units == 'trials':
             if self._trial_count >= stop_when:
                 self._stop_reward = True
-                return 0
 
-        return reward
+        if self._stop_reward:
+            self._unsupervised_steps_in_trial[-1] += 1
+            self.unsupervised_reward += reward
+            return 0
+        else:
+            self._supervised_steps_in_trial[-1] += 1
+            self.supervised_reward += reward
+            return reward
+
+    def _dynamic_zero_noise(self, reward: float, window_size: int, threshold: Tuple[float,float]) -> float:
+        """ Dynamically decide when to cut off the reward signal based on performance.
+
+        Args:
+            window_size: int, the number of trials to use to compute the average reward
+            threshold: tuple of floats, the threshold for stopping the reward. The reward signal is stopped if the average reward is above `max(threshold)`, and resumed if the average reward is below `min(threshold)`.
+                The order of the threshold values does not matter.
+        """
+
+        stop_threshold = max(threshold) # cut off the reward signal if the average reward is at or above this threshold
+        resume_threshold = min(threshold) # resume the reward signal if the average reward is below this threshold
+        if self._trial_count < window_size:
+            self._supervised_steps_in_trial[-1] += 1
+            self.supervised_reward += reward
+            return reward
+
+        mean_reward = np.mean(self._trial_reward[-window_size-1:-1])
+
+        if not self._stop_reward and mean_reward >= stop_threshold:
+            self._stop_reward = True
+        elif self._stop_reward and mean_reward <= resume_threshold:
+            self._stop_reward = False
+
+        if self._stop_reward:
+            self._unsupervised_steps_in_trial[-1] += 1
+            self.unsupervised_reward += reward
+            return 0
+        else:
+            self._supervised_steps_in_trial[-1] += 1
+            self.supervised_reward += reward
+            return reward
 
 
 class RewardDelay:
@@ -1221,6 +1305,10 @@ class MultiRoomEnv_v1(MiniGridEnv):
         if self.shaped_reward_config is not None:
             obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_config)], dtype=np.float32)
             self.shaped_reward_noise.reset()
+            info['supervised_reward'] = self.shaped_reward_noise.supervised_reward
+            info['unsupervised_reward'] = self.shaped_reward_noise.unsupervised_reward
+            info['supervised_trials'] = self.shaped_reward_noise.supervised_trials
+            info['unsupervised_trials'] = self.shaped_reward_noise.unsupervised_trials
         self.pbrs.reset()
         info['reward'] = 0
         return obs, info
@@ -1232,6 +1320,10 @@ class MultiRoomEnv_v1(MiniGridEnv):
 
         if self.shaped_reward_config is not None: # Must happen before `self.carrying` is cleared.
             obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_config)], dtype=np.float32)
+            info['supervised_reward'] = self.shaped_reward_noise.supervised_reward
+            info['unsupervised_reward'] = self.shaped_reward_noise.unsupervised_reward
+            info['supervised_trials'] = self.shaped_reward_noise.supervised_trials
+            info['unsupervised_trials'] = self.shaped_reward_noise.unsupervised_trials
 
         if self.fetch_config is not None:
             if self.carrying:
@@ -1611,6 +1703,10 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
         self._init_fetch(**self.fetch_config)
         if self.shaped_reward_config is not None:
             obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_config)], dtype=np.float32)
+            info['supervised_reward'] = self.shaped_reward_noise.supervised_reward
+            info['unsupervised_reward'] = self.shaped_reward_noise.unsupervised_reward
+            info['supervised_trials'] = self.shaped_reward_noise.supervised_trials
+            info['unsupervised_trials'] = self.shaped_reward_noise.unsupervised_trials
         return obs, info
 
     def _removed_objects_value(self):
@@ -1657,6 +1753,10 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
 
         if self.shaped_reward_config is not None: # Must happen before `self.carrying` is cleared.
             obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_config)], dtype=np.float32)
+            info['supervised_reward'] = self.shaped_reward_noise.supervised_reward
+            info['unsupervised_reward'] = self.shaped_reward_noise.unsupervised_reward
+            info['supervised_trials'] = self.shaped_reward_noise.supervised_trials
+            info['unsupervised_trials'] = self.shaped_reward_noise.unsupervised_trials
 
         if self.carrying:
             self.removed_objects.append(self.carrying)

@@ -320,13 +320,25 @@ def train_single_env(
                     done2 = done & (env_ids == env_id)
                     if not done2.any():
                         continue
+                    fi = info['_final_info']
+                    unsupervised_trials = np.array([x['unsupervised_trials'] for x in info['final_info'][fi]])
+                    supervised_trials = np.array([x['supervised_trials'] for x in info['final_info'][fi]])
+                    unsupervised_reward = np.array([x['unsupervised_reward'] for x in info['final_info'][fi]])
+                    supervised_reward = np.array([x['supervised_reward'] for x in info['final_info'][fi]])
                     if wandb.run is not None:
-                        wandb.log({
+                        data = {
                                 f'reward/{env_label}': episode_reward[done2].mean().item(),
                                 f'true_reward/{env_label}': episode_true_reward[done2].mean().item(),
                                 f'episode_length/{env_label}': episode_steps[done2].mean().item(),
                                 'step': global_step_counter[0],
-                        }, step = global_step_counter[0])
+                        }
+                        data[f'unsupervised_trials/{env_label}'] = unsupervised_trials[done2[fi]].sum().item()
+                        data[f'supervised_trials/{env_label}'] = supervised_trials[done2[fi]].sum().item()
+                        if unsupervised_trials[done2[fi]].sum() > 0:
+                            data[f'unsupervised_reward/{env_label}'] = unsupervised_reward[done2[fi]].mean().item()
+                        if supervised_trials[done2[fi]].sum() > 0:
+                            data[f'supervised_reward/{env_label}'] = supervised_reward[done2[fi]].mean().item()
+                        wandb.log(data, step = global_step_counter[0])
                     print(f'  reward: {episode_reward[done].mean():.2f}\t len: {episode_steps[done].mean()} \t env: {env_label} ({done2.sum().item()})')
                 # Reset hidden state for finished episodes
                 hidden = tuple(
