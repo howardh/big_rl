@@ -832,7 +832,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
             min_room_size (int): minimum size of a room. The size includes the walls, so a room of size 3 in one dimension has one occupiable square in that dimension.
             max_room_size (int): maximum size of a room
             door_prob (float): probability of a door being placed in the opening between two rooms.
-            num_trials (int): number of trials per episode. A trial ends upon reaching the goal state or picking up an object.
+            num_trials (int): number of trials per episode. A trial ends upon reaching the goal state or picking up an object. If set to -1, the environment will run indefinitely.
             fetch_config (dict): configuration for the fetch task. If None, no fetch task is used.
             bandits_config (dict): configuration for the bandits task. If None, no bandits task is used.
             task_randomization_prob (float): probability of switching tasks at the beginning of each trial.
@@ -988,6 +988,8 @@ class MultiRoomEnv_v1(MiniGridEnv):
         # Set max steps
         total_room_sizes = sum([room.height * room.width for room in room_list])
         self.max_steps = int(total_room_sizes * self.num_trials * self.max_steps_multiplier)
+        if self.max_steps < 0:
+            self.max_steps = float('inf')
 
     def _init_fetch(self, num_objs, num_obj_types=2, num_obj_colors=6, unique_objs=True, prob=1.0):
         """
@@ -1368,7 +1370,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
                 if self.np_random.uniform() < self.task_randomization_prob:
                     self._randomize_task()
 
-        if self.trial_count >= self.num_trials:
+        if self.num_trials > 0 and self.trial_count >= self.num_trials:
             terminated = True
             self.trial_count = 0
 
@@ -1800,7 +1802,7 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
             if self.np_random.uniform() < self.task_randomization_prob:
                 self._randomize_task()
 
-        if self.trial_count >= self.num_trials:
+        if self.num_trials > 0 and self.trial_count >= self.num_trials:
             terminated = True
             self.trial_count = 0
         elif self.step_count >= self.max_steps:

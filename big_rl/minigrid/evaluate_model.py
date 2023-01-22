@@ -56,17 +56,18 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
 
         results['reward'].append(reward)
         results['regret'].append(info.get('regret', None))
-        results['attention'].append((
-            [x.numpy() for x in model.last_attention],
-            [x.numpy() for x in model.last_ff_gating],
-            {k: v.numpy() for k,v in model.last_output_attention.items()},
-        ))
+        if model.has_attention:
+            results['attention'].append((
+                [x.numpy() for x in model.last_attention],
+                [x.numpy() for x in model.last_ff_gating],
+                {k: v.numpy() for k,v in model.last_output_attention.items()},
+            ))
+            results['shaped_reward'].append(compute_shaped_reward(model))
         results['hidden'].append([
             x.cpu().detach().numpy() for x in model.last_hidden
         ])
         results['input_labels'].append(model.last_input_labels)
         results['target'] = env.goal_str # type: ignore
-        results['shaped_reward'].append(compute_shaped_reward(model))
 
         episode_reward += reward
         episode_length += 1
@@ -80,6 +81,13 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
 
         if video_callback_fn is not None:
             video_callback_fn(model, env, obs, results)
+
+    if 'supervised_trials' in info:
+        results['supervision'] = {}
+        results['supervision']['supervised_trials'] = info['supervised_trials']
+        results['supervision']['unsupervised_trials'] = info['unsupervised_trials']
+        results['supervision']['supervised_reward'] = info['supervised_reward']
+        results['supervision']['unsupervised_reward'] = info['unsupervised_reward']
 
     return {
         'episode_reward': episode_reward,
@@ -323,12 +331,15 @@ class VideoCallback:
         frame = env.render()
 
         obs_image = draw_observations(obs)
-        attn_img = draw_attention(
-                core_attention = model.last_attention,
-                query_gating = model.last_ff_gating,
-                output_attention = model.last_output_attention,
-                input_labels = results['input_labels'][-1],
-        )
+        if model.has_attention:
+            attn_img = draw_attention(
+                    core_attention = model.last_attention,
+                    query_gating = model.last_ff_gating,
+                    output_attention = model.last_output_attention,
+                    input_labels = results['input_labels'][-1],
+            )
+        else:
+            attn_img = draw_text('No Attention')
         rewards_img = draw_rewards(
                 [
                     rew
@@ -415,6 +426,7 @@ if __name__ == '__main__':
             model_type = args.model_type,
             recurrence_type = args.recurrence_type,
             architecture = args.architecture,
+            hidden_size = args.hidden_size,
             device = device,
     )
     model.to(device)
@@ -447,9 +459,24 @@ if __name__ == '__main__':
 
     print(f"Reward mean: {reward_mean:.2f}")
     print(f"Reward std: {reward_std:.2f}")
+
+    if 'supervision' in test_results[0]['results']:
+        supervised_rewards = np.array([r['results']['supervision']['supervised_reward'] for r in test_results])
+        unsupervised_rewards = np.array([r['results']['supervision']['unsupervised_reward'] for r in test_results])
+        supervised_trials = np.array([r['results']['supervision']['supervised_trials'] for r in test_results])
+        unsupervised_trials = np.array([r['results']['supervision']['unsupervised_trials'] for r in test_results])
+
+        print(f"Supervised rewards: {supervised_rewards.tolist()}")
+        print(f"Unsupervised rewards: {unsupervised_rewards.tolist()}")
+
+        print(f"Supervised reward mean / std: {supervised_rewards.mean():.2f} / {supervised_rewards.std():.2f}")
+        print(f"Unsupervised reward mean / std: {unsupervised_rewards.mean():.2f} / {unsupervised_rewards.std():.2f}")
+
     print(f'Video saved to {video_filename}')
 
     if args.results is not None:
         results_filename = os.path.abspath(args.results)
         torch.save(test_results, results_filename)
         print(f'Results saved to {results_filename}')
+
+    breakpoint()

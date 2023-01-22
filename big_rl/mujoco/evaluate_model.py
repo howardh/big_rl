@@ -16,9 +16,24 @@ from big_rl.mujoco.common import env_config_presets, init_model
 from big_rl.utils import merge_space
 
 
-def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=False):
-    env = make_env(**env_config)
+def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=False, num_episodes=1, warmup_episodes=0):
+    if warmup_episodes > 0:
+        env = make_env(**env_config)
+        for _ in tqdm(range(warmup_episodes), desc='Warmup'):
+            test2(model, env, preprocess_obs_fn, video_callback_fn, verbose)
+        return [
+            test2(model, env, preprocess_obs_fn, video_callback_fn, verbose)
+            for _ in tqdm(range(num_episodes), desc='Test')
+        ]
+    else:
+        # If `warmup_episodes` is 0, we will recreate the environment for each episode to ensure they all start from the same state.
+        return [
+            test2(model, make_env(**env_config), preprocess_obs_fn, video_callback_fn, verbose)
+            for _ in tqdm(range(num_episodes), desc='Test')
+        ]
 
+
+def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False):
     episode_reward = 0 # total reward for the current episode
     episode_length = 0 # Number of transitions in the episode
     results = {
@@ -403,6 +418,8 @@ if __name__ == '__main__':
                         help='Environments whose observation spaces are used to initialize the model. If not specified, the "--env" environment will be used.')
     parser.add_argument('--num-episodes', type=int, default=1,
                         help='Number of episodes to test for.')
+    parser.add_argument('--warmup-episodes', type=int, default=0,
+                        help='')
     parser.add_argument('--verbose', action='store_true', default=False)
     parser.add_argument('--video', type=str, default='test.webm',
                         help='Path to a video file to save.')
@@ -450,10 +467,11 @@ if __name__ == '__main__':
     video_filename = os.path.abspath(args.video)
     video_callback = VideoCallback(video_filename)
 
-    test_results = [
-            test(model, env_config, preprocess_obs, video_callback_fn=video_callback, verbose=args.verbose)
-            for _ in tqdm(range(args.num_episodes))
-    ]
+    #test_results = [
+    #        test(model, env_config, preprocess_obs, video_callback_fn=video_callback, verbose=args.verbose)
+    #        for _ in tqdm(range(args.num_episodes))
+    #]
+    test_results = test(model, env_config, preprocess_obs, video_callback_fn=video_callback, verbose=args.verbose, num_episodes=args.num_episodes, warmup_episodes=args.warmup_episodes)
 
     video_callback.close()
 

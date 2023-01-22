@@ -285,6 +285,17 @@ def env_config_presets():
                 },
             }
         }, inherit='fetch-004')
+        config.add(f'fetch-004-stop_dynamic', {
+            'meta_config': {
+                'include_reward': False,
+            },
+            'config': {
+                'shaped_reward_config': {
+                    'type': 'subtask',
+                    'noise': ('dynamic_zero', 10, (0.8, -float('inf'))), # Never resume after the reward is stopped.
+                },
+            }
+        }, inherit='fetch-004')
 
         # 005: Same as above, but with bigger rooms
         for cutoff in [500, 200, 100, 50, 20, 1]:
@@ -387,6 +398,18 @@ def env_config_presets():
                     },
                 }
             }, inherit='fetch-004')
+        config.add(f'fetch-005-zero_dynamic', {
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+            }
+        }, inherit='fetch-004-zero_dynamic')
+        config.add(f'fetch-005-stop_dynamic', {
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+            }
+        }, inherit='fetch-004-stop_dynamic')
 
 
     def init_delayed():

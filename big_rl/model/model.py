@@ -2253,6 +2253,9 @@ class ModularPolicy5(torch.nn.Module):
                 *[x.view(-1, 1, self._input_size).expand(-1, batch_size, self._input_size) for x in self.initial_hidden_state], # Internal State
         )
 
+    @property
+    def has_attention(self):
+        return True
 
 class ModularPolicy5LSTM(torch.nn.Module):
     """
@@ -2394,6 +2397,9 @@ class ModularPolicy5LSTM(torch.nn.Module):
                 self.initial_hidden_state[1].view(1, self._hidden_size).expand(batch_size, -1)
         )
 
+    @property
+    def has_attention(self):
+        return False
 
 class ModularPolicy6(ModularPolicy5):
     # Added a tanh to the core module hidden states

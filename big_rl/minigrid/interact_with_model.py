@@ -8,7 +8,8 @@ import pygame
 
 from big_rl.minigrid.envs import make_env
 from big_rl.minigrid.arguments import init_parser_model
-from big_rl.minigrid.common import env_config_presets, init_model, merge_space
+from big_rl.minigrid.common import env_config_presets, init_model
+from big_rl.utils import merge_space
 
 
 def test(model, env_config, preprocess_obs_fn):
@@ -82,11 +83,12 @@ def test(model, env_config, preprocess_obs_fn):
         # Record results
         results['reward'].append(reward)
         results['regret'].append(info.get('regret', None))
-        results['attention'].append((
-            [x.numpy() for x in model.last_attention],
-            [x.numpy() for x in model.last_ff_gating],
-            {k: v.numpy() for k,v in model.last_output_attention.items()},
-        ))
+        if model.has_attention:
+            results['attention'].append((
+                [x.numpy() for x in model.last_attention],
+                [x.numpy() for x in model.last_ff_gating],
+                {k: v.numpy() for k,v in model.last_output_attention.items()},
+            ))
         results['hidden'].append([
             x.cpu().detach().numpy() for x in model.last_hidden
         ])
@@ -158,6 +160,7 @@ if __name__ == '__main__':
     # Create environment
     ENV_CONFIG_PRESETS = env_config_presets()
     env_config = ENV_CONFIG_PRESETS[args.env]
+    env_config['config']['num_trials'] = -1
 
     env = make_env(**env_config)
     if args.model_envs is not None:
@@ -175,6 +178,7 @@ if __name__ == '__main__':
             model_type = args.model_type,
             recurrence_type = args.recurrence_type,
             architecture = args.architecture,
+            hidden_size = args.hidden_size,
             device = device,
     )
     model.to(device)
