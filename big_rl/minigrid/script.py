@@ -332,11 +332,11 @@ def train_single_env(
                                 f'episode_length/{env_label}': episode_steps[done2].mean().item(),
                                 'step': global_step_counter[0],
                         }
-                        data[f'unsupervised_trials/{env_label}'] = unsupervised_trials[done2[fi]].sum().item()
-                        data[f'supervised_trials/{env_label}'] = supervised_trials[done2[fi]].sum().item()
-                        if unsupervised_trials[done2[fi]].sum() > 0:
+                        data[f'unsupervised_trials/{env_label}'] = unsupervised_trials[done2[fi]].mean().item()
+                        data[f'supervised_trials/{env_label}'] = supervised_trials[done2[fi]].mean().item()
+                        if unsupervised_trials[done2[fi]].mean() > 0:
                             data[f'unsupervised_reward/{env_label}'] = unsupervised_reward[done2[fi]].mean().item()
-                        if supervised_trials[done2[fi]].sum() > 0:
+                        if supervised_trials[done2[fi]].mean() > 0:
                             data[f'supervised_reward/{env_label}'] = supervised_reward[done2[fi]].mean().item()
                         wandb.log(data, step = global_step_counter[0])
                     print(f'  reward: {episode_reward[done].mean():.2f}\t len: {episode_steps[done].mean()} \t env: {env_label} ({done2.sum().item()})')
