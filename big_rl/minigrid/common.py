@@ -410,6 +410,27 @@ def env_config_presets():
                 'max_room_size': 12,
             }
         }, inherit='fetch-004-stop_dynamic')
+        for a,b in [(0,5), (1,5)]:
+            config.add(f'fetch-005-delay_{a}_{b}', {
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'shaped_reward_config': {
+                        'type': 'subtask',
+                        'delay': ('random', (a, b), 'replace')
+                    },
+                }
+            }, inherit='fetch-004')
+            config.add(f'fetch-005-stop_dynamic-delay_{a}_{b}', {
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'shaped_reward_config': {
+                        'type': 'subtask',
+                        'delay': ('random', (a, b), 'replace')
+                    },
+                }
+            }, inherit='fetch-004-stop_dynamic')
 
 
     def init_delayed():

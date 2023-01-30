@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import List
 
 import cv2
@@ -8,7 +9,7 @@ import numpy as np
 import tempfile
 import mujoco
 
-from big_rl.mujoco.envs import MjcfModelFactory, list_joints_with_ancestor, list_bodies_with_ancestor
+from big_rl.mujoco.envs import MjcfModelFactory, list_joints_with_ancestor, list_bodies_with_ancestor, is_upsidedown
 
 
 class AntFetchEnv(MujocoEnv, utils.EzPickle):
@@ -31,6 +32,7 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         healthy_reward=1.0,
         terminate_when_unhealthy=True,
         healthy_z_range=(0.2, 2.0),
+        healthy_if_flipped=True,
         contact_force_range=(-1.0, 1.0),
         reset_noise_scale=0.1,
         camera = 'first_person',
@@ -47,6 +49,7 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
             healthy_reward,
             terminate_when_unhealthy,
             healthy_z_range,
+            healthy_if_flipped,
             contact_force_range,
             reset_noise_scale,
             camera,
@@ -59,6 +62,7 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         self._healthy_reward = healthy_reward
         self._terminate_when_unhealthy = terminate_when_unhealthy
         self._healthy_z_range = healthy_z_range
+        self._healthy_if_flipped = healthy_if_flipped
 
         self._contact_force_range = contact_force_range
 
@@ -207,6 +211,15 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         state = self.get_body_com(self._agent_body_name)
         min_z, max_z = self._healthy_z_range
         is_healthy = np.isfinite(state).all() and min_z <= state[2] <= max_z
+
+        # Check rotation
+        if not self._healthy_if_flipped:
+            body_id = self.model.body(self._agent_body_name).id
+            body_jnt = self.model.jnt_bodyid == body_id
+            qpos_adr = self.model.jnt_qposadr[body_jnt].item()
+            quat = self.data.qpos[qpos_adr + 3 : qpos_adr + 7]
+            is_healthy = is_healthy and not is_upsidedown(quat, threshold=-0.9)
+
         return is_healthy
 
     @property
@@ -214,8 +227,8 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         terminated = not self.is_healthy if self._terminate_when_unhealthy else False
         return terminated
 
-    def reset(self):
-        obs, info = super().reset()
+    def reset(self, *args, **kwargs):
+        obs, info = super().reset(*args, **kwargs)
 
         # Choose a number of objects to place to be accessible by the agent and hide the rest outside.
         for i,obj in enumerate(self._objects):
@@ -225,7 +238,12 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
             self.place_object(self._objects[i])
             if len(self.target_objects) < self.num_target_objs:
                 self.target_objects.append(self._objects[i])
-        self.goal_str = f'Fetch the {" or ".join(self.target_objects)}'
+        target_obj_desc = [self._object_desc[obj] for obj in self.target_objects]
+        self.goal_str = f'Fetch the {" or ".join(target_obj_desc)}'
+
+        # Stats
+        self._fetch_reward_total = 0
+        self._objects_picked_up = {k:0 for k in self._objects}
 
         return obs, info
 
@@ -253,6 +271,8 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
                 fetch_reward += 1
             else:
                 fetch_reward -= 1
+            self._fetch_reward_total += fetch_reward
+            self._objects_picked_up[obj] += 1
 
         # Build return values
         terminated = self.terminated
@@ -268,6 +288,11 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
             "x_velocity": x_velocity,
             "y_velocity": y_velocity,
             "forward_reward": forward_reward,
+
+            "objects_picked_up": self._objects_picked_up,
+            "wandb_episode_end": {
+                "fetch_reward_total": self._fetch_reward_total,
+            }
         }
         if self._use_contact_forces:
             contact_cost = self.contact_cost

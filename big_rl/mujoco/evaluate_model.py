@@ -16,7 +16,7 @@ from big_rl.mujoco.common import env_config_presets, init_model
 from big_rl.utils import merge_space
 
 
-def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=False, num_episodes=1, warmup_episodes=0):
+def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=False, render=False, num_episodes=1, warmup_episodes=0):
     if warmup_episodes > 0:
         env = make_env(**env_config)
         for _ in tqdm(range(warmup_episodes), desc='Warmup'):
@@ -28,12 +28,12 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
     else:
         # If `warmup_episodes` is 0, we will recreate the environment for each episode to ensure they all start from the same state.
         return [
-            test2(model, make_env(**env_config), preprocess_obs_fn, video_callback_fn, verbose)
+            test2(model, make_env(**env_config), preprocess_obs_fn, video_callback_fn, verbose=verbose, render=render)
             for _ in tqdm(range(num_episodes), desc='Test')
         ]
 
 
-def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False):
+def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False, render=False):
     episode_reward = 0 # total reward for the current episode
     episode_length = 0 # Number of transitions in the episode
     results = {
@@ -71,6 +71,8 @@ def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False):
 
         obs, reward, terminated, truncated, info = env.step(action)
         obs = preprocess_obs_fn(obs)
+        if render:
+            env.render()
 
         results['reward'].append(reward)
         results['regret'].append(info.get('regret', None))
@@ -308,7 +310,8 @@ def draw_observations(observations: dict):
         elif k in ['action']:
             images.append(draw_text(f'{k}: {" ".join(f"{x:.2f}" for x in v.flatten())}'))
         elif k in ['obs (image)']:
-            unnormalized_image = (v+v.min())/(v.max()-v.min()) * 255
+            unnormalized_image = v * 255
+            #unnormalized_image = (v+v.min())/(v.max()-v.min()) * 255
             unnormalized_image = unnormalized_image.squeeze(0).permute(1,2,0).cpu().numpy().astype(np.uint8)
             images.append(
                 concat_images([
@@ -421,6 +424,8 @@ if __name__ == '__main__':
     parser.add_argument('--warmup-episodes', type=int, default=0,
                         help='')
     parser.add_argument('--verbose', action='store_true', default=False)
+    parser.add_argument('--render', action='store_true', default=False,
+                        help='Render the environment during testing. The episode cannot be saved to video if this is enabled.')
     parser.add_argument('--video', type=str, default='test.webm',
                         help='Path to a video file to save.')
     parser.add_argument('--results', type=str, default=None,
@@ -431,6 +436,10 @@ if __name__ == '__main__':
     # Create environment
     ENV_CONFIG_PRESETS = env_config_presets()
     env_config = ENV_CONFIG_PRESETS[args.env]
+    env_config['config']['camera_name'] = 'topdown'
+
+    if args.render:
+        env_config['config']['render_mode'] = 'human'
 
     env = make_env(**env_config)
     if args.model_envs is not None:
@@ -465,7 +474,10 @@ if __name__ == '__main__':
 
     # Test model
     video_filename = os.path.abspath(args.video)
-    video_callback = VideoCallback(video_filename)
+    if args.render:
+        video_callback = None
+    else:
+        video_callback = VideoCallback(video_filename)
 
     #test_results = [
     #        test(model, env_config, preprocess_obs, video_callback_fn=video_callback, verbose=args.verbose)
@@ -473,7 +485,8 @@ if __name__ == '__main__':
     #]
     test_results = test(model, env_config, preprocess_obs, video_callback_fn=video_callback, verbose=args.verbose, num_episodes=args.num_episodes, warmup_episodes=args.warmup_episodes)
 
-    video_callback.close()
+    if video_callback is not None:
+        video_callback.close()
 
     rewards = np.array([r['episode_reward'] for r in test_results])
     reward_mean = rewards.mean()
@@ -486,7 +499,8 @@ if __name__ == '__main__':
 
     print(f"Reward mean: {reward_mean:.2f}")
     print(f"Reward std: {reward_std:.2f}")
-    print(f'Video saved to {video_filename}')
+    if video_callback is not None:
+        print(f'Video saved to {video_filename}')
 
     if args.results is not None:
         results_filename = os.path.abspath(args.results)

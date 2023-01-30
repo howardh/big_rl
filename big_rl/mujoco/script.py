@@ -181,6 +181,11 @@ def train_single_env(
     """
     Train a model with PPO on an Atari game.
 
+    W&B logging: If the environment info contains a "wandb_episode_end" key, then the values contained within will be automatically logged to W&B. This is used for environment-specific data.
+
+        Example:
+            `info['wandb_episode_end'] = {'episode_reward': episode_reward, 'episode_length': episode_length}` for an environment config name of "fetch-001" will log `{'env/fetch-001/episode_reward': episode_reward, 'env/fetch-001/episode_length': episode_length}` to W&B.
+
     Args:
         model: ...
         env: `gym.vector.VectorEnv`
@@ -221,6 +226,7 @@ def train_single_env(
     start_time = time.time()
     warmup_episode_rewards = defaultdict(lambda: [])
     warmup_episode_steps = defaultdict(lambda: [])
+    warmup_episode_env_data = defaultdict(lambda: defaultdict(lambda: []))
     for _ in range(warmup_steps):
         # Select action
         with torch.no_grad():
@@ -257,8 +263,12 @@ def train_single_env(
                 done2 = done & (env_ids == env_id)
                 if not done2.any():
                     continue
-                #for x in episode_reward[done2]:
-                #    warmup_episode_rewards[env_label].append(x.item())
+                if 'wandb_episode_end' in info['final_info'][done2][0]:
+                    wandb_keys = info['final_info'][done2][0]['wandb_episode_end'].keys()
+                    for k in wandb_keys:
+                        for fi in info['final_info'][done2]:
+                            val = fi['wandb_episode_end'][k]
+                            warmup_episode_env_data[env_label][k].append(val)
                 episode_true_reward = np.array([x['episode']['r'] for x,d in zip(info['final_info'],done2) if d and x is not None])
                 for r in episode_true_reward:
                     warmup_episode_rewards[env_label].append(r)
@@ -278,11 +288,14 @@ def train_single_env(
             steps_mean = np.mean(warmup_episode_steps[env_label])
             # TODO: handle case where there are no completed episodes during warmup?
             if wandb.run is not None:
-                wandb.log({
+                data = {
                     f'reward/{env_label}': reward_mean,
                     f'episode_length/{env_label}': steps_mean,
                     'step': global_step_counter[0],
-                }, step = global_step_counter[0])
+                }
+                for k,v in warmup_episode_env_data[env_label].items():
+                    data[f'env/{env_label}/{k}'] = np.mean(v)
+                wandb.log(data, step = global_step_counter[0])
             print(f'\t{env_label}\treward: {reward_mean:.2f} +/- {reward_std:.2f}\t len: {steps_mean:.2f}')
 
     ##################################################
@@ -336,12 +349,17 @@ def train_single_env(
                         continue
                     episode_true_reward = np.array([x['episode']['r'] for x,d in zip(info['final_info'],done2) if d and x is not None])
                     if wandb.run is not None:
-                        wandb.log({
+                        data = {
                                 f'reward/{env_label}': episode_reward[done2].mean().item(),
                                 f'true_reward/{env_label}': episode_true_reward.mean().item(),
                                 f'episode_length/{env_label}': episode_steps[done2].mean().item(),
                                 'step': global_step_counter[0],
-                        }, step = global_step_counter[0])
+                        }
+                        if 'wandb_episode_end' in info['final_info'][done2][0]:
+                            wandb_keys = info['final_info'][done2][0]['wandb_episode_end'].keys()
+                            for k in wandb_keys:
+                                data[f'env/{env_label}/{k}'] = np.mean([fi['wandb_episode_end'][k] for fi in info['final_info'][done2]])
+                        wandb.log(data, step = global_step_counter[0])
                     print(f'  reward: {episode_reward[done].mean():.2f} \t True reward: {episode_true_reward.mean():.2f}\t len: {episode_steps[done].mean()} \t env: {env_label} ({done2.sum().item()})')
                 # Reset hidden state for finished episodes
                 hidden = tuple(

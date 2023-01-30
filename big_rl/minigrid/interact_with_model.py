@@ -37,11 +37,11 @@ def test(model, env_config, preprocess_obs_fn):
     hidden = model.init_hidden(1) # type: ignore (???)
 
     obs, info = env.reset()
-    obs = preprocess_obs_fn(obs)
 
     fps = 30
-    user_reward = 0
+    paused = False
     for _ in itertools.count():
+        user_reward = 0
         pygame.time.wait(int(1000/fps))
 
         # Pygame event handling
@@ -49,24 +49,39 @@ def test(model, env_config, preprocess_obs_fn):
             if event.type == pygame.QUIT:
                 sys.exit()
             if event.type == pygame.KEYDOWN:
+                # Quit
                 if event.key == pygame.K_ESCAPE or event.key == pygame.K_q:
                     sys.exit()
+                # Reset everything
                 if event.key == pygame.K_r:
                     hidden = model.init_hidden(1)
                     obs, info = env.reset()
-                    obs = preprocess_obs_fn(obs)
+                # Speed up
                 if event.key == pygame.K_GREATER:
                     fps += 1
+                # Slow down
                 if event.key == pygame.K_LESS:
                     fps = max(1, fps-1)
+                # Reward agent (+1)
                 if event.key == pygame.K_KP_PLUS:
                     user_reward = 1
                     print('Reward: ', user_reward)
+                # Reward agent (-1)
                 if event.key == pygame.K_KP_MINUS:
                     user_reward = -1
                     print('Reward: ', user_reward)
+                # Pause
+                if event.key == pygame.K_SPACE: # Pause
+                    paused = not paused
+        # End pygame event handling
+
+        if not paused:
+            pygame.time.wait(1000)
+            continue
 
         # Run a step in the environment
+        obs['obs (shaped_reward)'] = np.array([user_reward], dtype=np.float32)
+        obs = preprocess_obs_fn(obs)
         with torch.no_grad():
             model_output = model(obs, hidden)
 
@@ -77,8 +92,6 @@ def test(model, env_config, preprocess_obs_fn):
             action = action_dist.sample().cpu().numpy().squeeze()
 
         obs, reward, _, _, info = env.step(action)
-        obs['obs (shaped_reward)'] = np.array([user_reward], dtype=np.float32)
-        obs = preprocess_obs_fn(obs)
 
         # Record results
         results['reward'].append(reward)
@@ -113,9 +126,6 @@ def test(model, env_config, preprocess_obs_fn):
         screen.blit(font.render(f'FPS: {fps}', True, (255,255,255)), (0, 0))
         screen.blit(font.render(f'Reward: {user_reward}', True, (255,255,255)), (0, 20))
         pygame.display.flip()
-
-        # Reset user input
-        user_reward = 0
 
     return {
         'episode_reward': episode_reward,

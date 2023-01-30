@@ -125,6 +125,29 @@ def env_config_presets():
             'normalize_obs': False,
         })
 
+    def init_fetch():
+        config.add('fetch-001', {
+            'env_name': 'AntFetch-v0',
+            'normalize_obs': False,
+            'config': {
+                'num_objs': 1,
+                'num_target_objs': 1,
+            },
+            'meta_config': {
+                'episode_stack': 1,
+                'dict_obs': True,
+                'randomize': False,
+            },
+        })
+
+        config.add_change('fetch-002', {
+            'env_name': 'AntFetch-v0',
+            'config': {
+                'healthy_if_flipped': False,
+            },
+        })
+
     init_locomotion()
+    init_fetch()
 
     return config

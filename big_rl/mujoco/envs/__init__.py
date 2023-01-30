@@ -18,7 +18,10 @@ def make_env(env_name: str,
         meta_config=None,
         normalize_obs=True,
         discount=0.99, reward_scale=1.0, reward_clip=10) -> gym.Env:
-    env = gym.make(env_name, render_mode='rgb_array', **config)
+    env = gym.make(
+            env_name, 
+            **{'render_mode': 'rgb_array', **config},
+    )
 
     env = RewardInfo(env)
     env = RecordEpisodeStatistics(env)
@@ -327,7 +330,6 @@ DEFAULT_CAMERA_CONFIG = { # See mjvCamera docs (https://mujoco.readthedocs.io/en
     #"fixedcamid": 1,
     #"trackbodyid": 1,
     #"lookat": [0.0, 0.0, 0.0],
-
 }
 
 
@@ -808,6 +810,44 @@ def list_bodies_with_ancestor(env, body_id, depth=0, verbose=False):
         if parent_id == body_id:
             body_ids.update(list_bodies_with_ancestor(env, child_id, depth+1))
     return body_ids
+
+
+def quaternion_conjugate(q: np.ndarray) -> np.ndarray:
+    return np.array([q[0], -q[1], -q[2], -q[3]])
+
+
+def quaternion_multiply(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
+    return np.array([
+        q1[0] * q2[0] - q1[1] * q2[1] - q1[2] * q2[2] - q1[3] * q2[3],
+        q1[0] * q2[1] + q1[1] * q2[0] + q1[2] * q2[3] - q1[3] * q2[2],
+        q1[0] * q2[2] - q1[1] * q2[3] + q1[2] * q2[0] + q1[3] * q2[1],
+        q1[0] * q2[3] + q1[1] * q2[2] - q1[2] * q2[1] + q1[3] * q2[0]
+    ])
+
+
+def rotate_vector_by_quaternion(v: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """
+    Rotate a vector by a quaternion.
+
+    Args:
+        v: A 3D vector (vx,xy,xz).
+        q: A quaternion (qw,qx,qy,qz).
+    """
+    q_conj = quaternion_conjugate(q)
+    return quaternion_multiply(quaternion_multiply(q, np.array([0, *v])), q_conj)[1:]
+
+
+def is_upsidedown(q: np.ndarray, threshold=0) -> bool:
+    """
+    Check if a quaternion represents an upside-down orientation.
+    The positive z-axis is considered to be the "up" direction.
+
+    Args:
+        q: A quaternion (qw,qx,qy,qz).
+        threshold: The threshold for the dot product between the z-axis and the up direction.
+    """
+    v = rotate_vector_by_quaternion(np.array([0, 0, 1]), q)
+    return v[2] < threshold
 
 
 register(
