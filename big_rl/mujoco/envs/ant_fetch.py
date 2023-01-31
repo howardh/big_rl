@@ -1,4 +1,3 @@
-from collections import defaultdict
 from typing import List
 
 import cv2
@@ -29,6 +28,7 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         use_contact_forces=False,
         use_internal_forces=False,
         contact_cost_weight=5e-4,
+        control_cost_weight=1.,
         healthy_reward=1.0,
         terminate_when_unhealthy=True,
         healthy_z_range=(0.2, 2.0),

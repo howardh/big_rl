@@ -147,6 +147,15 @@ def env_config_presets():
             },
         })
 
+        config.add_change('fetch-003', {
+            'env_name': 'AntFetch-v0',
+            'config': {
+                'ctrl_cost_weight': 0.5/300,
+                'contact_cost_weight': 5e-4/300,
+                'healthy_reward': 1.0/300,
+            },
+        })
+
     init_locomotion()
     init_fetch()
 
