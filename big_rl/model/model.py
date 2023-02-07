@@ -774,6 +774,9 @@ class NonBatchMultiHeadAttention(torch.nn.Module):
             ])
         )
 
+    def to_multihead_attention_modules(self):
+        return self.attentions
+
 
 class BatchMultiHeadAttentionBroadcast(torch.nn.Module):
     def __init__(self, modules: List[torch.nn.MultiheadAttention], key_size, num_heads, default_batch=False):
@@ -885,6 +888,9 @@ class BatchMultiHeadAttentionBroadcast(torch.nn.Module):
 
         return attn_output.transpose(0,1), attn_output_weights.view(num_modules, batch_size, num_heads, 1, num_inputs).mean(2)
 
+    def to_multihead_attention_modules(self):
+        return self.attentions
+
 
 class BatchMultiHeadAttentionEinsum(torch.nn.Module):
     def __init__(self, modules: List[torch.nn.MultiheadAttention], key_size, num_heads, default_batch=False):
@@ -986,6 +992,31 @@ class BatchMultiHeadAttentionEinsum(torch.nn.Module):
 
         return attn_output, attn_output_weights.view(num_modules, batch_size, num_heads, 1, num_inputs).mean(2)
 
+    def to_multihead_attention_modules(self):
+        num_modules = self.num_modules
+        num_heads = self.num_heads
+        embed_dim = self.key_size
+
+        modules = [
+                torch.nn.MultiheadAttention(embed_dim, num_heads)
+                for _ in range(num_modules)
+        ]
+        for i, m in enumerate(modules):
+            m.in_proj_weight = torch.nn.Parameter(
+                torch.cat([ self.in_weight[0][i], self.in_weight[1][i], self.in_weight[2][i] ])
+            )
+            m.in_proj_bias = torch.nn.Parameter(
+                torch.cat([ self.in_bias[0][i], self.in_bias[1][i], self.in_bias[2][i] ])
+            )
+            m.out_proj.weight = torch.nn.Parameter(
+                self.out_weight[i].detach()
+            )
+            m.out_proj.bias = torch.nn.Parameter(
+                self.out_bias[i].squeeze(0).detach()
+            )
+
+        return modules
+
 
 class NonBatchLinear(torch.nn.Module):
     def __init__(self, modules, default_batch=False):
@@ -1025,6 +1056,9 @@ class NonBatchLinear(torch.nn.Module):
             for x,module in zip(batched_x,self.linear)
         ])
 
+    def to_linear_modules(self):
+        return self.linear
+
 
 class BatchLinear(torch.nn.Module):
     def __init__(self, modules: List[torch.nn.Linear], default_batch=False):
@@ -1057,6 +1091,13 @@ class BatchLinear(torch.nn.Module):
 
         return output
 
+    def to_linear_modules(self) -> List[torch.nn.Linear]:
+        num_modules, input_size, output_size= self.weight.shape
+        modules = [torch.nn.Linear(input_size, output_size) for _ in range(num_modules)]
+        for module, w, b in zip(modules, self.weight.permute(0,2,1), self.bias):
+            module.weight = torch.nn.Parameter(w)
+            module.bias = torch.nn.Parameter(b.squeeze(0))
+        return modules
 
 # Everything else
 
@@ -2038,6 +2079,8 @@ class ModularPolicy5(torch.nn.Module):
         self._key_size = key_size
         self._input_size = input_size
         self._value_size = value_size
+        self._num_heads = num_heads
+        self._ff_size = ff_size
         self._input_modules_config = inputs
 
         self._architecture = architecture
@@ -2257,6 +2300,7 @@ class ModularPolicy5(torch.nn.Module):
     def has_attention(self):
         return True
 
+
 class ModularPolicy5LSTM(torch.nn.Module):
     """
     Same as ModularPolicy5, but with LSTM instead of attention
@@ -2400,6 +2444,7 @@ class ModularPolicy5LSTM(torch.nn.Module):
     @property
     def has_attention(self):
         return False
+
 
 class ModularPolicy6(ModularPolicy5):
     # Added a tanh to the core module hidden states

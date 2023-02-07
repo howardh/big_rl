@@ -860,8 +860,8 @@ register(
 register(
     id="AntFetch-v0",
     entry_point="big_rl.mujoco.envs.ant_fetch:AntFetchEnv",
-    max_episode_steps=1000,
-    reward_threshold=6000.0,
+    #max_episode_steps=1000,
+    #reward_threshold=6000.0,
 )
 
 

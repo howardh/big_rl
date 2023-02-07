@@ -267,7 +267,8 @@ def train_single_env(
                 wandb.log({
                     f'reward/{env_label}': reward_mean,
                     f'episode_length/{env_label}': steps_mean,
-                    'step': global_step_counter[0],
+                    'step': global_step_counter[0]-global_step_counter[1],
+                    'step_total': global_step_counter[0],
                 }, step = global_step_counter[0])
             print(f'\t{env_label}\treward: {reward_mean:.2f} +/- {reward_std:.2f}\t len: {steps_mean:.2f}')
 
@@ -330,7 +331,8 @@ def train_single_env(
                                 f'reward/{env_label}': episode_reward[done2].mean().item(),
                                 f'true_reward/{env_label}': episode_true_reward[done2].mean().item(),
                                 f'episode_length/{env_label}': episode_steps[done2].mean().item(),
-                                'step': global_step_counter[0],
+                                'step': global_step_counter[0]-global_step_counter[1],
+                                'step_total': global_step_counter[0],
                         }
                         data[f'unsupervised_trials/{env_label}'] = unsupervised_trials[done2[fi]].mean().item()
                         data[f'supervised_trials/{env_label}'] = supervised_trials[done2[fi]].mean().item()
@@ -420,7 +422,7 @@ def train(
         warmup_steps: int = 0,
         start_step: int = 0,
         ):
-    global_step_counter = [start_step]
+    global_step_counter = [start_step, start_step]
     trainers = [
         train_single_env(
             global_step_counter = global_step_counter,
@@ -473,7 +475,8 @@ def train(
                     f'entropy/{label}': x['log']['entropy'].mean().item(),
                     #last_approx_kl=approx_kl.item(),
                     #'learning_rate': lr_scheduler.get_lr()[0],
-                    'step': global_step_counter[0],
+                    'step': global_step_counter[0]-global_step_counter[1],
+                    'step_total': global_step_counter[0],
                 }
                 if 'attention max' in x['log']:
                     for k,v in x['log']['attention max'].items():

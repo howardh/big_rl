@@ -15,6 +15,74 @@ from big_rl.utils import merge_space
 from big_rl.model.model import LinearOutput
 
 
+def resize_ModularPolicy5(model, architecture) -> torch.nn.Module:
+    model = copy.deepcopy(model)
+
+    recurrence_type = model.attention[0].__class__.__name__
+    if recurrence_type not in ['RecurrentAttention14']:
+        raise NotImplementedError(f'Recurrence type {recurrence_type} not supported')
+
+    attention = model._init_core_modules(
+            recurrence_type = recurrence_type,
+            input_size = model._input_size,
+            key_size = model._key_size,
+            value_size = model._value_size,
+            num_heads = model._num_heads,
+            ff_size = model._ff_size,
+            architecture = architecture,
+    )
+
+    for i, (new_size, old_size) in enumerate(zip(architecture, model._architecture)):
+        # Replace linear modules
+        for seq_name in ['fc_key', 'fc_value', 'fc_output', 'fc_gate']:
+            seq = getattr(model.attention[i], seq_name)
+            if old_size < new_size:
+                for j in [1,3]:
+                    old_linear_modules = seq[j].to_linear_modules()
+                    cls = type(seq[j])
+                    in_size = old_linear_modules[0].in_features
+                    out_size = old_linear_modules[0].out_features
+                    new_linear_modules = old_linear_modules + [
+                            torch.nn.Linear(in_size, out_size)
+                            for _ in range(new_size - old_size)
+                    ]
+                    seq[j] = cls(new_linear_modules)
+            else:
+                for j in [1,3]:
+                    old_linear_modules = seq[j].to_linear_modules()
+                    cls = type(seq[j])
+                    new_linear_modules = old_linear_modules[:new_size]
+                    seq[j] = cls(new_linear_modules)
+
+        # Replace attention modules
+        cls = type(model.attention[i].attention)
+
+        old_attn_modules = model.attention[i].attention.to_multihead_attention_modules()
+        new_attn_modules = attention[i].attention.to_multihead_attention_modules()
+
+        assert old_size == len(old_attn_modules)
+        if old_size < new_size:
+            new_attn_modules = old_attn_modules + new_attn_modules[old_size:]
+        else:
+            new_attn_modules = old_attn_modules[:new_size]
+        model.attention[i].attention = cls(new_attn_modules, key_size=model._key_size, num_heads=model._num_heads)
+
+    # Initial hidden state
+    old_initial_hidden_state = model.initial_hidden_state
+    new_initial_hidden_state = []
+    for old_h,new_size in zip(old_initial_hidden_state, architecture):
+        old_size = old_h.shape[0]
+        if old_size < new_size:
+            new_h = torch.zeros([new_size, model._input_size])
+            new_h[:old_size] = old_h
+            new_initial_hidden_state.append(new_h)
+        else:
+            new_initial_hidden_state.append(old_h[:new_size])
+    model.initial_hidden_state = torch.nn.ParameterList([torch.nn.Parameter(h.clone()) for h in new_initial_hidden_state])
+
+    return model
+
+
 def resize_ModularPolicy5LSTM(model, hidden_size) -> torch.nn.Module:
     model = copy.deepcopy(model)
 

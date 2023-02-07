@@ -28,7 +28,6 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         use_contact_forces=False,
         use_internal_forces=False,
         contact_cost_weight=5e-4,
-        control_cost_weight=1.,
         healthy_reward=1.0,
         terminate_when_unhealthy=True,
         healthy_z_range=(0.2, 2.0),
@@ -36,10 +35,30 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         contact_force_range=(-1.0, 1.0),
         reset_noise_scale=0.1,
         camera = 'first_person',
+        max_steps_initial=1000,
+        extra_steps_per_pickup=0,
         num_objs = 2,
         num_target_objs = 1,
         **kwargs
     ):
+        """
+        Args:
+            ctrl_cost_weight (float): Weight of the cost of moving the joints to incentivise smaller movements.
+            use_contact_forces (bool): Whether to use contact forces as part of the observation.
+            use_internal_forces (bool): Whether to use internal forces as part of the observation.
+            contact_cost_weight (float): Weight of the cost of contact forces.
+            healthy_reward (float): Reward given when the agent is healthy.
+            terminate_when_unhealthy (bool): Whether to terminate the episode when the agent is unhealthy.
+            healthy_z_range (tuple): Range of z values that are considered healthy.
+            healthy_if_flipped (bool): Whether to consider the agent healthy if it is upside down.
+            contact_force_range (tuple): The contact force in the observation is clipped to this range.
+            reset_noise_scale (float): The amount of noise added to the initial state upon resetting.
+            camera (str): Which camera to use for the observation.
+            max_steps_initial (int): Maximum number of steps available for the initial pickup.
+            extra_steps_per_pickup (int): Number of steps to add to the time limit for each object picked up.
+            num_objs (int): Number of objects available in the environment.
+            num_target_objs (int): Number of objects that are targets. The target objects will give a +1 reward when picked up, and everything else will give a -1.
+        """
         utils.EzPickle.__init__(
             self,
             ctrl_cost_weight,
@@ -73,6 +92,9 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
 
         self._camera = camera
         self._image_size = 56
+
+        self._max_steps_initial = max_steps_initial
+        self._extra_steps_per_pickup = extra_steps_per_pickup
 
         self.num_objs = num_objs
         self.num_target_objs = num_target_objs
@@ -224,6 +246,9 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
 
     @property
     def terminated(self):
+        if self._step_count > self._max_steps:
+            # This is a termination and not a truncation because we want to encourage the agent to be efficient.
+            return True
         terminated = not self.is_healthy if self._terminate_when_unhealthy else False
         return terminated
 
@@ -242,12 +267,16 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         self.goal_str = f'Fetch the {" or ".join(target_obj_desc)}'
 
         # Stats
+        self._step_count = 0
+        self._max_steps = self._max_steps_initial
         self._fetch_reward_total = 0
         self._objects_picked_up = {k:0 for k in self._objects}
 
         return obs, info
 
     def step(self, action):
+        self._step_count += 1
+
         # Standard Mujoco rewards
         xy_position_before = self.get_body_com(self._agent_body_name)[:2].copy()
         self.do_simulation(action, self.frame_skip)
@@ -273,6 +302,8 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
                 fetch_reward -= 1
             self._fetch_reward_total += fetch_reward
             self._objects_picked_up[obj] += 1
+            # Increase the time limit for picking up objects
+            self._max_steps += self._extra_steps_per_pickup
 
         # Build return values
         terminated = self.terminated

@@ -156,6 +156,15 @@ def env_config_presets():
             },
         })
 
+        # Allow the agent more time whenever it reaches a target
+        config.add_change('fetch-004', {
+            'env_name': 'AntFetch-v0',
+            'config': {
+                'max_steps_initial': 1000,
+                'extra_steps_per_pickup': 500,
+            },
+        })
+
     init_locomotion()
     init_fetch()
 

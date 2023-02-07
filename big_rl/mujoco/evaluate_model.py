@@ -28,12 +28,20 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
     else:
         # If `warmup_episodes` is 0, we will recreate the environment for each episode to ensure they all start from the same state.
         return [
-            test2(model, make_env(**env_config), preprocess_obs_fn, video_callback_fn, verbose=verbose, render=render)
-            for _ in tqdm(range(num_episodes), desc='Test')
+            test2(
+                model,
+                make_env(**env_config),
+                preprocess_obs_fn,
+                video_callback_fn,
+                verbose=verbose,
+                render=render,
+                metadata={'episode': ep},
+            )
+            for ep in tqdm(range(num_episodes), desc='Test')
         ]
 
 
-def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False, render=False):
+def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False, render=False, metadata={}):
     episode_reward = 0 # total reward for the current episode
     episode_length = 0 # Number of transitions in the episode
     results = {
@@ -49,6 +57,7 @@ def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False, 
     hidden = model.init_hidden(1) # type: ignore (???)
     steps_iterator = itertools.count()
     #steps_iterator = range(100+np.random.randint(50)); print('--- DEBUG MODE ---')
+    #steps_iterator = range(10); print('--- DEBUG MODE ---')
     #if verbose:
     steps_iterator = tqdm(steps_iterator)
 
@@ -56,7 +65,7 @@ def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False, 
     obs = preprocess_obs_fn(obs)
     terminated = False
     truncated = False
-    for _ in steps_iterator:
+    for step in steps_iterator:
         with torch.no_grad():
             model_output = model(obs, hidden)
 
@@ -100,7 +109,7 @@ def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False, 
             break
 
         if video_callback_fn is not None:
-            video_callback_fn(model, env, obs, results)
+            video_callback_fn(model, env, obs, results, {**metadata, 'step': step})
 
     return {
         'episode_reward': episode_reward,
@@ -159,7 +168,7 @@ def draw_attention(core_attention, query_gating, output_attention, input_labels)
     # Core modules
     core_labels = []
     for label in input_labels:
-        text_width, text_height = font.getsize(label)
+        _, _, text_width, text_height = font.getbbox(label)
         width = text_width
         height = block_size
 
@@ -236,7 +245,7 @@ def draw_attention(core_attention, query_gating, output_attention, input_labels)
 
     text_images = {}
     for k in output_attention.keys():
-        text_width, text_height = font.getsize(k)
+        _, _, text_width, text_height = font.getbbox(k)
         img = PIL.Image.new('RGB',
                 (text_width+2*padding, text_height+2*padding),
                 color=(255,255,255))
@@ -279,7 +288,7 @@ def draw_attention(core_attention, query_gating, output_attention, input_labels)
 def draw_text(text, font_family=Roboto, font_size=18, color=(0,0,0), padding=2):
     font = PIL.ImageFont.truetype(font_family, font_size)
 
-    text_width, text_height = font.getsize(text)
+    _, _, text_width, text_height = font.getbbox(text)
     img = PIL.Image.new('RGB',
             (text_width+2*padding, text_height+2*padding),
             color=(255,255,255))
@@ -345,15 +354,16 @@ class VideoCallback:
     def get_video_writer(self, frame=None):
         if self._video_writer is None:
             assert frame is not None
+            self._frame_size = (frame.shape[1], frame.shape[0])
             self._video_writer = cv2.VideoWriter( # type: ignore
                     self.filename,
                     cv2.VideoWriter_fourcc(*'VP80'), # type: ignore
                     self.fps,
-                    (frame.shape[1], frame.shape[0]),
+                    self._frame_size,
             )
         return self._video_writer
 
-    def __call__(self, model, env, obs, results):
+    def __call__(self, model, env, obs, results, metadata={}):
         frame = env.render()
 
         obs_image = draw_observations(obs)
@@ -371,6 +381,17 @@ class VideoCallback:
                 ],
                 env.goal_str
         )
+        metadata_img = concat_images(
+                [
+                    draw_text('Metadata:'),
+                    *[
+                        draw_text(f'  {k}: {v}')
+                        for k,v in metadata.items()
+                    ]
+                ],
+                direction='v',
+                align=-1,
+        )
         frame_and_attn = concat_images(
             [
                 concat_images(
@@ -380,7 +401,15 @@ class VideoCallback:
                     align=-1,
                 ),
                 concat_images(
-                    [attn_img, rewards_img],
+                    [
+                        attn_img,
+                        concat_images(
+                            [rewards_img, metadata_img],
+                            padding = 5,
+                            direction='v',
+                            align=-1,
+                        )
+                    ],
                     padding = 5,
                     direction='h',
                 )
@@ -390,9 +419,14 @@ class VideoCallback:
             align = 0,
         )
 
-        frame_and_attn = np.array(frame_and_attn)[:,:,::-1]
-        video_writer = self.get_video_writer(frame_and_attn)
-        video_writer.write(frame_and_attn)
+        final_image = np.array(frame_and_attn)[:,:,::-1]
+        video_writer = self.get_video_writer(final_image)
+        # Resize frame if it's not the right size
+        if final_image.shape[:2] != self._frame_size:
+            final_image = PIL.Image.new('RGB', self._frame_size, color=(255,255,255))
+            final_image.paste(frame_and_attn)
+            final_image = np.array(final_image)[:,:,::-1]
+        video_writer.write(final_image)
 
     def close(self):
         if self._video_writer is not None:
@@ -480,8 +514,8 @@ if __name__ == '__main__':
         video_callback = VideoCallback(video_filename)
 
     #test_results = [
-    #        test(model, env_config, preprocess_obs, video_callback_fn=video_callback, verbose=args.verbose)
-    #        for _ in tqdm(range(args.num_episodes))
+    #        test3(model, env_config, preprocess_obs, video_callback_fn=video_callback, verbose=args.verbose, metadata={'episode': ep})
+    #        for ep in tqdm(range(args.num_episodes))
     #]
     test_results = test(model, env_config, preprocess_obs, video_callback_fn=video_callback, verbose=args.verbose, num_episodes=args.num_episodes, warmup_episodes=args.warmup_episodes)
 
