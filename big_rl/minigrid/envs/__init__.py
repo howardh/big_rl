@@ -397,7 +397,7 @@ class PotentialBasedReward:
 
 class RewardNoise:
     def __init__(self,
-                 noise_type: Literal[None, 'zero', 'gaussian', 'stop'],
+                 noise_type: Literal[None, 'zero', 'gaussian', 'stop'] = None,
                  *args,
                  rng: np.random.RandomState = None
         ):
@@ -589,7 +589,7 @@ class RewardNoise:
 
 class RewardDelay:
     def __init__(self,
-            delay_type: Literal[None, 'fixed', 'random', 'interval'],
+            delay_type: Literal[None, 'fixed', 'random', 'interval'] = None,
             steps: Union[int, Tuple[int,int]] = 0,
             overlap: Literal[None, 'replace', 'sum', 'sum_clipped'] = None,
             rng: np.random.RandomState = None
@@ -648,6 +648,9 @@ class RewardDelay:
                 assert min_steps > 0
                 assert max_steps > 0
                 assert min_steps <= max_steps
+
+    def trial_finished(self):
+        ...
 
     def delay(self, reward: float) -> float:
         if self.delay_type is None:
@@ -723,6 +726,72 @@ class RewardDelay:
                 raise ValueError(f'Unknown overlap type: {overlap}')
         else:
             return 0
+
+
+class RewardDelayedStart:
+    def __init__(self,
+            delay_type: Literal[None, 'fixed', 'random'] = None,
+            start_when: Union[int, Tuple[int,int]] = 0,
+            units: Literal['steps', 'trials'] = 'steps',
+            rng: np.random.RandomState = None
+        ):
+        """ Wait a certain number of steps or trials before giving a reward.
+        """
+
+        # Validate inputs
+        assert units in ['steps', 'trials']
+        if delay_type == 'fixed':
+            assert isinstance(start_when, int)
+        elif delay_type == 'random':
+            assert isinstance(start_when, tuple)
+            assert len(start_when) == 2
+
+        self._delay_type = delay_type
+        self._start_when = start_when
+        self._units = units
+
+        if rng is None:
+            self.np_random = np.random.RandomState()
+        else:
+            self.np_random = rng
+
+        self.reset()
+
+    def reset(self):
+        self._step_count = 0
+        self._trial_count = 0
+        if self._delay_type is None:
+            self._delay = 0
+        elif self._delay_type == 'fixed':
+            self._delay = self._start_when
+        elif self._delay_type == 'random':
+            self._delay = self.np_random.randint(*self._start_when)
+        else:
+            raise ValueError(f'Unknown delay type: {self._delay_type}')
+
+    def trial_finished(self):
+        self._trial_count += 1
+
+    def delay(self, reward: float) -> float:
+        self._step_count += 1
+        if self._delay_type is None:
+            return reward
+
+        if self._units == 'steps':
+            if self._step_count > self._delay:
+                return reward
+            else:
+                return 0
+        elif self._units == 'trials':
+            if self._trial_count >= self._delay:
+                return reward
+            else:
+                return 0
+        else:
+            raise ValueError(f'Unknown units: {self._units}')
+
+    def __call__(self, reward: float) -> float:
+        return self.delay(reward)
 
 
 ##################################################
@@ -856,9 +925,18 @@ class MultiRoomEnv_v1(MiniGridEnv):
         self.shaped_reward_config = shaped_reward_config
         if shaped_reward_config is not None:
             self.shaped_reward_noise = RewardNoise(
-                    *shaped_reward_config.get('noise', (None,)))
+                    *shaped_reward_config.get('noise', tuple()))
             self.shaped_reward_delay = RewardDelay(
-                    *shaped_reward_config.get('delay', (None,)))
+                    *shaped_reward_config.get('delay', tuple()))
+            self.shaped_reward_delayed_start = RewardDelayedStart(
+                    *shaped_reward_config.get('delayed_start', tuple()))
+            self.shaped_reward_transforms = [
+                self.shaped_reward_delay,
+                self.shaped_reward_noise,
+                self.shaped_reward_delayed_start,
+            ]
+        else:
+            self.shaped_reward_transforms = []
         self.reward_type = reward_type
 
         self.pbrs = PotentialBasedReward(
@@ -1281,8 +1359,10 @@ class MultiRoomEnv_v1(MiniGridEnv):
             raise ValueError(f'Unknown reward type: {reward_type}')
 
         reward = compute_reward()
-        reward = self.shaped_reward_delay(reward)
-        reward = self.shaped_reward_noise(reward)
+        for transform in self.shaped_reward_transforms:
+            reward = transform(reward)
+        #reward = self.shaped_reward_delay(reward)
+        #reward = self.shaped_reward_noise(reward)
         return reward
 
     def _potential(self):
@@ -1306,11 +1386,13 @@ class MultiRoomEnv_v1(MiniGridEnv):
             self._init_bandits(**self.bandits_config)
         if self.shaped_reward_config is not None:
             obs['shaped_reward'] = np.array([self._shaped_reward(self.shaped_reward_config)], dtype=np.float32)
-            self.shaped_reward_noise.reset()
+            #self.shaped_reward_noise.reset()
             info['supervised_reward'] = self.shaped_reward_noise.supervised_reward
             info['unsupervised_reward'] = self.shaped_reward_noise.unsupervised_reward
             info['supervised_trials'] = self.shaped_reward_noise.supervised_trials
             info['unsupervised_trials'] = self.shaped_reward_noise.unsupervised_trials
+            for transform in self.shaped_reward_transforms:
+                transform.reset()
         self.pbrs.reset()
         info['reward'] = 0
         return obs, info
@@ -1349,8 +1431,10 @@ class MultiRoomEnv_v1(MiniGridEnv):
                 self.carrying = None
                 # End current trial
                 self.trial_count += 1
-                if self.shaped_reward_config is not None:
-                    self.shaped_reward_noise.trial_finished()
+                #if self.shaped_reward_config is not None:
+                #    self.shaped_reward_noise.trial_finished()
+                for transform in self.shaped_reward_transforms:
+                    transform.trial_finished()
                 # Randomize task if needed
                 if self.np_random.uniform() < self.task_randomization_prob:
                     self._randomize_task()
@@ -1362,8 +1446,10 @@ class MultiRoomEnv_v1(MiniGridEnv):
                 reward = self.np_random.choice(curr_cell.rewards, p=curr_cell.probs)
                 terminated = False
                 self.trial_count += 1
-                if self.shaped_reward_config is not None:
-                    self.shaped_reward_noise.trial_finished()
+                #if self.shaped_reward_config is not None:
+                #    self.shaped_reward_noise.trial_finished()
+                for transform in self.shaped_reward_transforms:
+                    transform.trial_finished()
                 # Teleport the agent to a random location
                 self._init_agent()
                 # Randomize task if needed
@@ -1694,8 +1780,10 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
             raise ValueError(f'Unknown reward type: {reward_type}')
 
         reward = compute_reward()
-        reward = self.shaped_reward_delay(reward)
-        reward = self.shaped_reward_noise(reward)
+        for transform in self.shaped_reward_transforms:
+            reward = transform(reward)
+        #reward = self.shaped_reward_delay(reward)
+        #reward = self.shaped_reward_noise(reward)
         return reward
 
     def reset(self, seed=None, options=None):
@@ -1796,8 +1884,10 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
             self.removed_objects = []
             # End current trial
             self.trial_count += 1
-            if self.shaped_reward_config is not None:
-                self.shaped_reward_noise.trial_finished()
+            #if self.shaped_reward_config is not None:
+            #    self.shaped_reward_noise.trial_finished()
+            for transform in self.shaped_reward_transforms:
+                transform.trial_finished()
             # Randomize task if needed
             if self.np_random.uniform() < self.task_randomization_prob:
                 self._randomize_task()

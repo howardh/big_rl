@@ -462,6 +462,8 @@ if __name__ == '__main__':
                         help='Render the environment during testing. The episode cannot be saved to video if this is enabled.')
     parser.add_argument('--video', type=str, default='test.webm',
                         help='Path to a video file to save.')
+    parser.add_argument('--no-video', action='store_true', default=False,
+                        help='Do not save a video of the episode. By default, a video is saved to "test.webm".')
     parser.add_argument('--results', type=str, default=None,
                         help='Path to a file to save results.')
     init_parser_model(parser)
@@ -508,7 +510,7 @@ if __name__ == '__main__':
 
     # Test model
     video_filename = os.path.abspath(args.video)
-    if args.render:
+    if args.render or args.no_video:
         video_callback = None
     else:
         video_callback = VideoCallback(video_filename)

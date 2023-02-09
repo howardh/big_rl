@@ -401,6 +401,8 @@ if __name__ == '__main__':
     parser.add_argument('--verbose', action='store_true', default=False)
     parser.add_argument('--video', type=str, default='test.webm',
                         help='Path to a video file to save.')
+    parser.add_argument('--no-video', action='store_true', default=False,
+                        help='Do not save a video of the episode. By default, a video is saved to "test.webm".')
     parser.add_argument('--results', type=str, default=None,
                         help='Path to a file to save results.')
     init_parser_model(parser)
@@ -439,14 +441,18 @@ if __name__ == '__main__':
 
     # Test model
     video_filename = os.path.abspath(args.video)
-    video_callback = VideoCallback(video_filename)
+    if args.no_video:
+        video_callback = None
+    else:
+        video_callback = VideoCallback(video_filename)
 
     test_results = [
             test(model, env_config, preprocess_obs, video_callback_fn=video_callback, verbose=args.verbose)
             for _ in tqdm(range(args.num_episodes))
     ]
 
-    video_callback.close()
+    if video_callback is not None:
+        video_callback.close()
 
     rewards = np.array([r['episode_reward'] for r in test_results])
     reward_mean = rewards.mean()

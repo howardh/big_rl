@@ -412,6 +412,9 @@ def env_config_presets():
         }, inherit='fetch-004-stop_dynamic')
         for a,b in [(0,5), (1,5)]:
             config.add(f'fetch-005-delay_{a}_{b}', {
+                'meta_config': {
+                    'include_reward': False,
+                },
                 'config': {
                     'min_room_size': 5,
                     'max_room_size': 12,
@@ -431,6 +434,47 @@ def env_config_presets():
                     },
                 }
             }, inherit='fetch-004-stop_dynamic')
+        for a,b in [(0,5), (1,5), (1,10), (1,20)]:
+            config.add(f'fetch-005-delayed_start_{a}_{b}_trials', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'shaped_reward_config': {
+                        'type': 'subtask',
+                        'delayed_start': ('random', (a, b), 'trials')
+                    },
+                }
+            }, inherit='fetch-004')
+        for n in [10,20,50]:
+            config.add(f'fetch-005-delayed_start_{n}_trials', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'shaped_reward_config': {
+                        'type': 'subtask',
+                        'delayed_start': ('fixed', n, 'trials')
+                    },
+                }
+            }, inherit='fetch-004')
+        config.add(f'fetch-005-randomized_task', {
+            'meta_config': {
+                'include_reward': False,
+            },
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+                'task_randomization_prob': 0.02,
+                'shaped_reward_config': {
+                    'type': 'subtask',
+                },
+            }
+        }, inherit='fetch-004')
 
 
     def init_delayed():

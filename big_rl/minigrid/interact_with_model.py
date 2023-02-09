@@ -12,6 +12,26 @@ from big_rl.minigrid.common import env_config_presets, init_model
 from big_rl.utils import merge_space
 
 
+def render_text(surface, text: list[str], font, color=(255,255,255), padding=5):
+    text_sizes = [font.size(t) for t in text]
+    container_width = max(w for w,_ in text_sizes)
+    container_height = sum(h for _,h in text_sizes)
+
+    rect = pygame.Surface((
+        container_width + padding * 2,
+        container_height + padding * 2
+    ))
+    rect.set_alpha(128)
+    rect.fill((0,0,0))
+    surface.blit(rect, (0,0))
+
+    x = padding
+    y = padding
+    for i, t in enumerate(text):
+        surface.blit(font.render(t, True, color), (x, y))
+        y += text_sizes[i][1]
+
+
 def test(model, env_config, preprocess_obs_fn):
     env = make_env(**env_config)
 
@@ -54,8 +74,13 @@ def test(model, env_config, preprocess_obs_fn):
                     sys.exit()
                 # Reset everything
                 if event.key == pygame.K_r:
+                    print('Resetting environment and memory')
                     hidden = model.init_hidden(1)
                     obs, info = env.reset()
+                # Reset memory only
+                if event.key == pygame.K_m:
+                    print('Resetting memory')
+                    hidden = model.init_hidden(1)
                 # Speed up
                 if event.key == pygame.K_GREATER:
                     fps += 1
@@ -75,7 +100,7 @@ def test(model, env_config, preprocess_obs_fn):
                     paused = not paused
         # End pygame event handling
 
-        if not paused:
+        if paused:
             pygame.time.wait(1000)
             continue
 
@@ -122,9 +147,12 @@ def test(model, env_config, preprocess_obs_fn):
         screen.blit(rect, (0,0))
 
         font = pygame.font.SysFont('Arial', 20)
-
-        screen.blit(font.render(f'FPS: {fps}', True, (255,255,255)), (0, 0))
-        screen.blit(font.render(f'Reward: {user_reward}', True, (255,255,255)), (0, 20))
+        text = [
+                f'FPS: {fps}',
+                f'Reward: {user_reward}',
+                'More text boop boop boop'
+        ]
+        render_text(screen, text, font)
         pygame.display.flip()
 
     return {
