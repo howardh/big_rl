@@ -1,7 +1,7 @@
 from collections import defaultdict
 import os
 import itertools
-from typing import Optional, Generator, Dict, List, Any, Callable
+from typing import Optional, Generator, Dict, List, Any, Callable, Union, Tuple
 import time
 
 import gymnasium
@@ -34,7 +34,7 @@ def compute_ppo_losses(
         entropy_loss_coeff : float,
         vf_loss_coeff : float,
         target_kl : Optional[float],
-        num_epochs : int) -> Generator[Dict[str,torch.Tensor],None,None]:
+        num_epochs : int) -> Generator[Dict[str,Union[torch.Tensor,Tuple[torch.Tensor,...]]],None,None]:
     """
     Compute the losses for PPO.
     """
@@ -141,6 +141,7 @@ def compute_ppo_losses(
                 'loss_entropy': -entropy_loss,
                 'approx_kl': approx_kl,
                 'output': net_output,
+                'hidden': tuple(h.detach() for h in curr_hidden),
         }
 
         if target_kl is not None:
@@ -168,6 +169,7 @@ def train_single_env(
         target_kl: Optional[float] = None,
         norm_adv: bool = True,
         warmup_steps: int = 0,
+        update_hidden_after_grad: bool = False,
         ) -> Generator[Dict[str, Any], None, None]:
     """
     Train a model with PPO on an Atari game.
@@ -381,6 +383,7 @@ def train_single_env(
                 target_kl = target_kl,
                 num_epochs = num_epochs,
         )
+        x = None
         for x in losses:
             log['state_value'] = torch.stack(state_values)
             log['entropy'] = torch.stack(entropies)
@@ -394,6 +397,11 @@ def train_single_env(
 
         # Clear data
         history.clear()
+
+        # Update hidden state
+        if x is not None and update_hidden_after_grad:
+            history.misc_history[-1]['hidden'] = x['hidden']
+            hidden = x['hidden']
 
 
 def train(
@@ -419,6 +427,7 @@ def train(
         target_kl: Optional[float] = None,
         norm_adv: bool = True,
         warmup_steps: int = 0,
+        update_hidden_after_grad: bool = False,
         start_step: int = 0,
         ):
     global_step_counter = [start_step, start_step]
@@ -441,6 +450,7 @@ def train(
             target_kl = target_kl,
             norm_adv = norm_adv,
             warmup_steps = warmup_steps,
+            update_hidden_after_grad = update_hidden_after_grad,
         )
         for env,labels in zip(envs, env_labels)
     ]
@@ -656,6 +666,7 @@ if __name__ == '__main__':
             num_epochs = args.num_epochs,
             max_grad_norm = args.max_grad_norm,
             warmup_steps = args.warmup_steps,
+            update_hidden_after_grad = args.update_hidden_after_grad,
             start_step = start_step,
     )
 

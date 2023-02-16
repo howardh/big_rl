@@ -20,6 +20,7 @@ def init_parser_trainer(parser: ArgumentParser):
     parser.add_argument('--num-epochs', type=int, default=5, help='Number of minibatches.')
     parser.add_argument('--max-grad-norm', type=float, default=0.5, help='Maximum gradient norm.')
     parser.add_argument('--warmup-steps', type=int, default=0, help='Number of warmup steps on the environment before we start training on the generated samples.')
+    parser.add_argument('--update-hidden-after-grad', action='store_true', help='Update the hidden state after the gradient step.')
 
 
 def init_parser_model(parser: ArgumentParser):
