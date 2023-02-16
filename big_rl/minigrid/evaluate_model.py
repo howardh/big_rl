@@ -1,7 +1,7 @@
 import argparse
 import itertools
 import os
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Any
 
 import cv2
 import numpy as np
@@ -21,7 +21,7 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
 
     episode_reward = 0 # total reward for the current episode
     episode_length = 0 # Number of transitions in the episode
-    results = {
+    results: dict[str,Any] = {
             'reward': [],
             'regret': [],
             'attention': [],
@@ -67,9 +67,10 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
             x.cpu().detach().numpy() for x in model.last_hidden
         ])
         results['input_labels'].append(model.last_input_labels)
-        results['target'] = env.goal_str # type: ignore
+        if hasattr(env, 'goal_str'):
+            results['target'].append(env.goal_str) # type: ignore
 
-        episode_reward += reward
+        episode_reward += float(reward)
         episode_length += 1
 
         if verbose:
@@ -94,6 +95,30 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
         'episode_length': episode_length,
         'results': results,
     }
+
+
+def split_results_by_target(results):
+    """ Split up the results by target object. This is used when the target is randomized in the middle of an episode to get information on how well the agent performs for each target change. """
+
+    assert 'target' in results
+    if len(results['target']) == 0:
+        return []
+
+    keys = ['reward']
+
+    current_target = None
+    current_results = {}
+    split_results = []
+    for i, target in enumerate(results['target']):
+        if target != current_target:
+            if current_target is not None:
+                split_results.append((current_target,current_results))
+            current_target = target
+            current_results = {k: [] for k in keys}
+        for k in keys:
+            current_results[k].append(results[k][i])
+    split_results.append((current_target,current_results))
+    return split_results
 
 
 def compute_shaped_reward(model):
@@ -477,6 +502,58 @@ if __name__ == '__main__':
 
         print(f"Supervised reward mean / std: {supervised_rewards.mean():.2f} / {supervised_rewards.std():.2f}")
         print(f"Unsupervised reward mean / std: {unsupervised_rewards.mean():.2f} / {unsupervised_rewards.std():.2f}")
+
+    results_by_target = [split_results_by_target(r['results']) for r in test_results]
+    if max(len(r) for r in results_by_target) == 1:
+        print('Single target episodes only.')
+    else:
+        from tabulate import tabulate
+        import shutil
+        tables = []
+        for i,r in enumerate(results_by_target):
+            non_zero = [
+                (
+                    target,
+                    np.array(result['reward'])[np.array(result['reward']) != 0],
+                )
+                for target, result in r
+            ]
+            table_data = [
+                [
+                    target,
+                    rewards.sum(),
+                    len(rewards),
+                ] for target, rewards in non_zero
+            ]
+            total_row = [
+                'Total',
+                np.sum([r.sum() for _,r in non_zero]),
+                np.sum([len(r) for _,r in non_zero]),
+            ]
+            table = tabulate(
+                table_data + [total_row],
+                headers=['Target', 'Σ', '#'], tablefmt='simple_grid'
+            )
+            tables.append(table)
+        max_table_width = max(max(len(l) for l in table.split('\n')) for table in tables)
+        term_width = shutil.get_terminal_size().columns
+        tables_per_row = max(1, term_width // max_table_width)
+        row_width = 0
+        tables_grid = [[],[]]
+        for i,table in enumerate(tables):
+            if len(tables_grid[-1]) >= tables_per_row:
+                tables_grid.append([])
+                tables_grid.append([])
+            tables_grid[-1].append(table)
+            tables_grid[-2].append(f'Episode {i+1}')
+        table_str = tabulate(
+            tables_grid,
+            #headers=[f'Episode {i}' for i in range(len(tables))],
+            tablefmt="plain",
+        )
+        print()
+        print(table_str)
+        print()
 
     print(f'Video saved to {video_filename}')
 

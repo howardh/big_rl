@@ -1,10 +1,12 @@
 import os
 import threading
 import time
+from typing import TypeVar, Optional
 
 from bs4 import BeautifulSoup
 import gymnasium
 import gymnasium as gym
+from gymnasium.spaces import Dict
 from gymnasium.envs.registration import register
 from gymnasium.wrappers import RecordEpisodeStatistics, ClipAction, TransformObservation, NormalizeReward, TransformReward # pyright: ignore[reportPrivateImportUsage]
 from gymnasium.wrappers.normalize import RunningMeanStd
@@ -43,20 +45,25 @@ def make_env(env_name: str,
     return env
 
 
-class NormalizeDictObservation(gym.Wrapper):
+ObsType = TypeVar('ObsType')
+ActionType = TypeVar('ActionType')
+
+
+class NormalizeDictObservation(gym.Wrapper[dict, ActionType]):
     """This wrapper will normalize observations s.t. each coordinate is centered with unit variance.
     Note:
         The normalization depends on past trajectories and observations will not be normalized correctly if the wrapper was
         newly instantiated or the policy was changed recently.
     """
 
-    def __init__(self, env: gym.Env, epsilon: float = 1e-8):
+    def __init__(self, env: gym.Env[dict, ActionType], epsilon: float = 1e-8):
         """This wrapper will normalize observations s.t. each coordinate is centered with unit variance.
         Args:
             env (Env): The environment to apply the wrapper
             epsilon: A stability parameter that is used when scaling the observations.
         """
         super().__init__(env)
+        assert isinstance(self.observation_space, gym.spaces.Dict), "This wrapper only works with Dict observation spaces."
         self.num_envs = getattr(env, "num_envs", 1)
         self.is_vector_env = getattr(env, "is_vector_env", False)
         if self.is_vector_env:
@@ -73,21 +80,21 @@ class NormalizeDictObservation(gym.Wrapper):
                     k: RunningMeanStd(shape=obs_space.shape)
                     for k,obs_space in self.observation_space.items()
             }
-            self.observation_space = gymnasium.spaces.Dict({
+            self.observation_space = Dict({
                     k: gymnasium.spaces.Box(-np.inf, np.inf, v.shape, dtype=np.float32) if isinstance(v, gymnasium.spaces.Box) else v
                     for k,v in self.observation_space.items()
             })
         self.epsilon = epsilon
 
-    def step(self, action):
+    def step(self, action: ActionType):
         """Steps through the environment and normalizes the observation."""
-        obs, rews, terminateds, truncateds, infos = self.env.step(action)
+        obs, rews, terminateds, truncateds, infos = self.env.step(action) # type: ignore
         if self.is_vector_env:
             obs = self.normalize(obs)
         else:
             obs = {
                     k: v[0]
-                    for k,v in self.normalize({k: np.array([v]) for k,v in obs.items()}).items()
+                    for k,v in self.normalize({k: np.array([v]) for k,v in obs.items()}).items() # type: ignore
             }
         return obs, rews, terminateds, truncateds, infos
 
@@ -100,7 +107,7 @@ class NormalizeDictObservation(gym.Wrapper):
         else:
             return {
                     k: v[0]
-                    for k,v in self.normalize({k: np.array([v]) for k,v in obs.items()}).items()
+                    for k,v in self.normalize({k: np.array([v]) for k,v in obs.items()}).items() # type: ignore
             }, info
 
     def normalize(self, obs):
@@ -120,7 +127,7 @@ class RewardInfo(gym.Wrapper):
         self.key = key
 
     def step(self, action):
-        obs, reward, terminated, truncated, info = self.env.step(action)
+        obs, reward, terminated, truncated, info = self.env.step(action) # type: ignore
         info[self.key] = reward
         return obs, reward, terminated, truncated, info
 
@@ -151,7 +158,7 @@ class MetaWrapper(gym.Wrapper):
             image_transformation = None,
             task_id = None,
             task_label = None,
-            seed: int = None):
+            seed: Optional[int] = None):
         super().__init__(env)
         self.episode_stack = episode_stack
         self.randomize = randomize
@@ -218,8 +225,8 @@ class MetaWrapper(gym.Wrapper):
 
     def _randomize_actions(self):
         env = self.env
-        n = env.action_space.n
         assert isinstance(env.action_space, gymnasium.spaces.Discrete), 'Action shuffle only works with discrete actions'
+        n = env.action_space.n
         self.action_map = np.arange(n)
         self.rand.shuffle(self.action_map)
 
@@ -236,12 +243,12 @@ class MetaWrapper(gym.Wrapper):
         # Take a step
         if self._done:
             if self.episode_count == 0 and self.randomize:
-                self.env.randomize()
+                self.env.randomize() # type: ignore
             self.episode_count += 1
             self._done = False
             (obs, info), reward, terminated, truncated = self.env.reset(), 0, False, False
         else:
-            obs, reward, terminated, truncated, info = self.env.step(action)
+            obs, reward, terminated, truncated, info = self.env.step(action) # type: ignore
         done = terminated or truncated
         self._done = done
 
@@ -289,7 +296,7 @@ class MetaWrapper(gym.Wrapper):
     def reset(self, seed=None, options=None):
         self.episode_count = 0
         if self.randomize:
-            self.env.randomize()
+            self.env.randomize() # type: ignore
         #if self.action_shuffle:
         #    self._randomize_actions()
 
@@ -766,7 +773,7 @@ def list_geoms_by_body(env, body_id=0, depth=0, covered_bodies=None):
             print(f'{"  "*(depth+1)}   {geom_id} {geom_name}')
     for child_id,parent_id in enumerate(env.model.body_parentid):
         if parent_id == body_id:
-            list_geoms_by_body(child_id, depth+1, covered_bodies)
+            list_geoms_by_body(env, child_id, depth+1, covered_bodies)
 
 
 def list_joints_with_ancestor(env, body_id, depth=0, covered_bodies=None, verbose=False):
@@ -837,7 +844,7 @@ def rotate_vector_by_quaternion(v: np.ndarray, q: np.ndarray) -> np.ndarray:
     return quaternion_multiply(quaternion_multiply(q, np.array([0, *v])), q_conj)[1:]
 
 
-def is_upsidedown(q: np.ndarray, threshold=0) -> bool:
+def is_upsidedown(q: np.ndarray, threshold: float = 0.) -> bool:
     """
     Check if a quaternion represents an upside-down orientation.
     The positive z-axis is considered to be the "up" direction.
@@ -877,7 +884,7 @@ if __name__ == '__main__':
         #env.render()
         obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
 
-        total_reward += reward
+        total_reward += float(reward)
         done = terminated or truncated
         if done:
             print(f'Episode terminated with reward {total_reward}')

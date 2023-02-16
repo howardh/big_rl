@@ -165,6 +165,16 @@ def env_config_presets():
             },
         })
 
+        # 0 objects
+        config.add_change('fetch-004-debug', {
+            'env_name': 'AntFetch-v0',
+            'config': {
+                'object_colours': {},
+                'num_objs': 0,
+                'num_target_objs': 0,
+            },
+        })
+
     init_locomotion()
     init_fetch()
 

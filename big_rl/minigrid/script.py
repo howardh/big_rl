@@ -4,7 +4,6 @@ import itertools
 from typing import Optional, Generator, Dict, List, Any, Callable
 import time
 
-from torchtyping import TensorType
 import gymnasium
 import gymnasium.spaces
 import gymnasium.vector
@@ -35,7 +34,7 @@ def compute_ppo_losses(
         entropy_loss_coeff : float,
         vf_loss_coeff : float,
         target_kl : Optional[float],
-        num_epochs : int) -> Generator[Dict[str,TensorType],None,None]:
+        num_epochs : int) -> Generator[Dict[str,torch.Tensor],None,None]:
     """
     Compute the losses for PPO.
     """
@@ -228,7 +227,7 @@ def train_single_env(
             action = action_dist.sample().cpu().numpy()
 
         # Step environment
-        obs, reward, terminated, truncated, info = env.step(action)
+        obs, reward, terminated, truncated, info = env.step(action) # type: ignore
         done = terminated | truncated
 
         episode_reward += reward
@@ -298,7 +297,7 @@ def train_single_env(
                 entropies.append(action_dist.entropy())
 
             # Step environment
-            obs, reward, terminated, truncated, info = env.step(action)
+            obs, reward, terminated, truncated, info = env.step(action) # type: ignore
             done = terminated | truncated
 
             history.append_action(action)
@@ -454,7 +453,7 @@ def train(
         optimizer.zero_grad()
         mean_loss.backward()
         if max_grad_norm is not None:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm) # type: ignore
         for p in model.parameters(): # XXX: Debugging code
             if p._grad is None:
                 continue

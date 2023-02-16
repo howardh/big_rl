@@ -434,7 +434,7 @@ def env_config_presets():
                     },
                 }
             }, inherit='fetch-004-stop_dynamic')
-        for a,b in [(0,5), (1,5), (1,10), (1,20)]:
+        for a,b in [(0,5), (1,5), (1,10), (1,20), (10,20), (10,30)]:
             config.add(f'fetch-005-delayed_start_{a}_{b}_trials', {
                 'meta_config': {
                     'include_reward': False,

@@ -2,7 +2,7 @@ from typing import List
 
 import cv2
 from gymnasium import utils
-from gymnasium.envs.mujoco import MujocoEnv
+from gymnasium.envs.mujoco.mujoco_env import MujocoEnv
 from gymnasium.spaces import Box, Dict
 import numpy as np
 import tempfile
@@ -39,6 +39,11 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         extra_steps_per_pickup=0,
         num_objs = 2,
         num_target_objs = 1,
+        object_colours = {
+            'red': (1,0,0,1),
+            'green': (0,1,0,1),
+            'blue': (0,0,1,1),
+        },
         **kwargs
     ):
         """
@@ -59,7 +64,7 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
             num_objs (int): Number of objects available in the environment.
             num_target_objs (int): Number of objects that are targets. The target objects will give a +1 reward when picked up, and everything else will give a -1.
         """
-        utils.EzPickle.__init__(
+        utils.EzPickle.__init__( # type: ignore
             self,
             ctrl_cost_weight,
             use_contact_forces,
@@ -72,6 +77,11 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
             contact_force_range,
             reset_noise_scale,
             camera,
+            max_steps_initial,
+            extra_steps_per_pickup,
+            num_objs,
+            num_target_objs,
+            object_colours,
             **kwargs
         )
 
@@ -111,12 +121,7 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         self._agent_body_name = mjcf.add_ant([2.5,2.5], num_legs=4)
         self._objects = []
         self._object_desc = {}
-        colours = {
-                'red': (1,0,0,1),
-                'green': (0,1,0,1),
-                'blue': (0,0,1,1),
-        }
-        for colour_name, rgba in colours.items():
+        for colour_name, rgba in object_colours.items():
             obj_name = mjcf.add_box([0,0], rgba=rgba)
             self._objects.append(obj_name)
             self._object_desc[obj_name] = f'{colour_name} box'
@@ -134,13 +139,13 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
                 self,
                 model_path=f.name,
                 frame_skip=5,
-                observation_space=None,
+                observation_space=None, # type: ignore
                 default_camera_config={
                     'distance': 20.0,
                     #'lookat': [5, 5, 0], # TODO: Make this point to centre
                     'elevation': -45.0,
                     "trackbodyid": 1,
-                    'type': mujoco.mjtCamera.mjCAMERA_TRACKING,
+                    'type': mujoco.mjtCamera.mjCAMERA_TRACKING, # type: ignore
                 },
                 **kwargs
             )
@@ -157,7 +162,7 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
             observation_space_dict['image'] = Box(
                 low=0, high=255, shape=sample_obs['image'].shape, dtype=np.uint8
             )
-        self.observation_space = Dict(observation_space_dict)
+        self.observation_space = Dict(observation_space_dict) # type: ignore
 
 
     def _compute_indices(self, bodies):
@@ -426,7 +431,7 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
 
     def get_sq_dist_to_objects(self, pos):
         dist = {}
-        for obj_body_name in self._object_names:
+        for obj_body_name in self._objects:
             obj_pos = self.get_body_com(obj_body_name)
             sq_dist = np.sum(np.square(pos - obj_pos))
             dist[obj_body_name] = sq_dist
