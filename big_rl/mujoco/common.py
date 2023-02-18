@@ -166,7 +166,7 @@ def env_config_presets():
         })
 
         # 0 objects
-        config.add_change('fetch-004-debug', {
+        config.add_change('fetch-004-empty', {
             'env_name': 'AntFetch-v0',
             'config': {
                 'object_colours': {},
@@ -174,6 +174,15 @@ def env_config_presets():
                 'num_target_objs': 0,
             },
         })
+
+        # Larger environment
+        for n in [5,6,7,8,9,10]:
+            config.add(f'fetch-004-roomsize{n}', {
+                'env_name': 'AntFetch-v0',
+                'config': {
+                    'room_size': n,
+                },
+            }, inherit='fetch-004')
 
     init_locomotion()
     init_fetch()

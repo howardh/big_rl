@@ -44,6 +44,7 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
             'green': (0,1,0,1),
             'blue': (0,0,1,1),
         },
+        room_size = 5,
         **kwargs
     ):
         """
@@ -108,17 +109,18 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
 
         self.num_objs = num_objs
         self.num_target_objs = num_target_objs
+        self._room_size = room_size
 
         # Init MJCF file
         mjcf = MjcfModelFactory('ant')
         mjcf.add_ground()
         mjcf.add_light(pos=[2.5,2.5,5])
-        mjcf.add_wall([0,0], [5,0])
-        mjcf.add_wall([0,5], [5,5])
-        mjcf.add_wall([0,1], [0,4])
-        mjcf.add_wall([5,1], [5,4])
-        mjcf.set_boundary(x_min=0, x_max=5, y_min=0, y_max=5)
-        self._agent_body_name = mjcf.add_ant([2.5,2.5], num_legs=4)
+        mjcf.add_wall([0,0], [room_size,0])
+        mjcf.add_wall([0,room_size], [room_size,room_size])
+        mjcf.add_wall([0,1], [0,room_size-1])
+        mjcf.add_wall([room_size,1], [room_size,room_size-1])
+        mjcf.set_boundary(x_min=0, x_max=room_size, y_min=0, y_max=room_size)
+        self._agent_body_name = mjcf.add_ant([room_size/2,room_size/2], num_legs=4)
         self._objects = []
         self._object_desc = {}
         for colour_name, rgba in object_colours.items():
@@ -440,7 +442,7 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
     def place_object(self, object_name, position=None, orientation=None, height=None):
         """ Places an object at a given position and orientation. If no position or orientation is given, the object is placed at a random location. """
         if position is None:
-            position = np.random.uniform(low=1, high=4, size=2) * self._cell_size
+            position = np.random.uniform(low=1, high=self._room_size-1, size=2) * self._cell_size
         if height is None:
             height = np.random.uniform(low=3, high=10)
         if orientation is None:
