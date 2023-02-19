@@ -184,6 +184,16 @@ def env_config_presets():
                 },
             }, inherit='fetch-004')
 
+        ## Decrease time limit
+        ## It current takes around 100 steps to do a 360 and ~50 steps to run towards the object.
+        #config.add_change('fetch-005', {
+        #    'env_name': 'AntFetch-v0',
+        #    'config': {
+        #        'max_steps_initial': 500,
+        #        'extra_steps_per_pickup': 250,
+        #    },
+        #})
+
     init_locomotion()
     init_fetch()
 

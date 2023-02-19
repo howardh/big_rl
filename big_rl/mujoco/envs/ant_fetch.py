@@ -24,9 +24,8 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
 
     def __init__(
         self,
+        # Mujoco parameters
         ctrl_cost_weight=0.5,
-        use_contact_forces=False,
-        use_internal_forces=False,
         contact_cost_weight=5e-4,
         healthy_reward=1.0,
         terminate_when_unhealthy=True,
@@ -35,8 +34,10 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         contact_force_range=(-1.0, 1.0),
         reset_noise_scale=0.1,
         camera = 'first_person',
+        # Task parameters
         max_steps_initial=1000,
         extra_steps_per_pickup=0,
+        max_trials=None,
         num_objs = 2,
         num_target_objs = 1,
         object_colours = {
@@ -45,13 +46,18 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
             'blue': (0,0,1,1),
         },
         room_size = 5,
+        # Observation parameters
+        include_contact_forces=False,
+        include_internal_forces=False,
+        include_fetch_reward = False,
+        fetch_reward_key = 'shaped_reward',
         **kwargs
     ):
         """
         Args:
             ctrl_cost_weight (float): Weight of the cost of moving the joints to incentivise smaller movements.
-            use_contact_forces (bool): Whether to use contact forces as part of the observation.
-            use_internal_forces (bool): Whether to use internal forces as part of the observation.
+            include_contact_forces (bool): Whether to use contact forces as part of the observation.
+            include_internal_forces (bool): Whether to use internal forces as part of the observation.
             contact_cost_weight (float): Weight of the cost of contact forces.
             healthy_reward (float): Reward given when the agent is healthy.
             terminate_when_unhealthy (bool): Whether to terminate the episode when the agent is unhealthy.
@@ -62,14 +68,19 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
             camera (str): Which camera to use for the observation.
             max_steps_initial (int): Maximum number of steps available for the initial pickup.
             extra_steps_per_pickup (int): Number of steps to add to the time limit for each object picked up.
+            max_trials (int): Maximum number of trials before the episode is truncated. Each object picked up counts as a trial.
             num_objs (int): Number of objects available in the environment.
             num_target_objs (int): Number of objects that are targets. The target objects will give a +1 reward when picked up, and everything else will give a -1.
+            object_colours (dict): Dictionary mapping object names to their colour. A ball and a cube of each colour will be created in the environment.
+            room_size (int): Size of the room in which the agent is placed, walls included. The smallest room size is 3.
+            include_fetch_reward (bool): Whether to include the fetch reward in the observation.
+            fetch_reward_key (str): Key to use for the fetch reward in the observation. The default value is "shaped_reward" to match the Minigrid setup.
         """
         utils.EzPickle.__init__( # type: ignore
             self,
             ctrl_cost_weight,
-            use_contact_forces,
-            use_internal_forces,
+            include_contact_forces,
+            include_internal_forces,
             contact_cost_weight,
             healthy_reward,
             terminate_when_unhealthy,
@@ -80,9 +91,13 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
             camera,
             max_steps_initial,
             extra_steps_per_pickup,
+            max_trials,
             num_objs,
             num_target_objs,
             object_colours,
+            room_size,
+            include_fetch_reward,
+            fetch_reward_key,
             **kwargs
         )
 
@@ -98,18 +113,22 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
 
         self._reset_noise_scale = reset_noise_scale
 
-        self._use_contact_forces = use_contact_forces
-        self._use_internal_forces = use_internal_forces
+        self._include_contact_forces = include_contact_forces
+        self._include_internal_forces = include_internal_forces
 
         self._camera = camera
         self._image_size = 56
 
         self._max_steps_initial = max_steps_initial
         self._extra_steps_per_pickup = extra_steps_per_pickup
+        self._max_trials = max_trials
 
         self.num_objs = num_objs
         self.num_target_objs = num_target_objs
         self._room_size = room_size
+
+        self._include_fetch_reward = include_fetch_reward
+        self._fetch_reward_key = fetch_reward_key
 
         # Init MJCF file
         mjcf = MjcfModelFactory('ant')
@@ -164,6 +183,11 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
             observation_space_dict['image'] = Box(
                 low=0, high=255, shape=sample_obs['image'].shape, dtype=np.uint8
             )
+        if self._fetch_reward_key in sample_obs:
+            observation_space_dict[self._fetch_reward_key] = Box(
+                low=-np.inf, high=np.inf, shape=[1], dtype=np.float64
+            )
+        
         self.observation_space = Dict(observation_space_dict) # type: ignore
 
 
@@ -277,6 +301,8 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         self._step_count = 0
         self._max_steps = self._max_steps_initial
         self._fetch_reward_total = 0
+        self._fetch_reward_last = 0 # Reward in the last step
+        self._trial_count = 0
         self._objects_picked_up = {k:0 for k in self._objects}
 
         return obs, info
@@ -307,10 +333,13 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
                 fetch_reward += 1
             else:
                 fetch_reward -= 1
+            self._fetch_reward_last = fetch_reward
             self._fetch_reward_total += fetch_reward
             self._objects_picked_up[obj] += 1
             # Increase the time limit for picking up objects
             self._max_steps += self._extra_steps_per_pickup
+            # Trial counter
+            self._trial_count += 1
 
         # Build return values
         terminated = self.terminated
@@ -330,18 +359,22 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
             "objects_picked_up": self._objects_picked_up,
             "wandb_episode_end": {
                 "fetch_reward_total": self._fetch_reward_total,
-            }
+            },
         }
-        if self._use_contact_forces:
+        if self._include_contact_forces:
             contact_cost = self.contact_cost
             costs += contact_cost
             info["reward_ctrl"] = -contact_cost
 
         reward = fetch_reward + healthy_reward - costs
 
+        truncated = False
+        if self._max_trials is not None and self._trial_count >= self._max_trials:
+            truncated = True
+
         if self.render_mode == "human":
             self.render()
-        return observation, reward, terminated, False, info
+        return observation, reward, terminated, truncated, info
 
     def _get_obs_state_dict(self):
         position = self.data.qpos[self._qpos_adr]
@@ -353,6 +386,7 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
             "velocity": velocity,
             "contact_force": contact_force,
             "internal_force": internal_force,
+            "fetch_reward": self._fetch_reward_last,
         }
 
         if self._camera is not None:
@@ -379,11 +413,14 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         obs = {}
 
         state = [obs_dict['position'], obs_dict['velocity']]
-        if self._use_contact_forces:
+        if self._include_contact_forces:
             state.append(obs_dict['contact_force'])
-        if self._use_internal_forces:
+        if self._include_internal_forces:
             state.append(obs_dict['internal_force'])
         obs['state'] = np.concatenate(state)
+
+        if self._include_fetch_reward:
+            obs[self._fetch_reward_key] = self._fetch_reward_last
 
         if self._camera is not None:
             obs['image'] = obs_dict['image']
