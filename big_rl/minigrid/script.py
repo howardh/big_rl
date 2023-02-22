@@ -1,7 +1,7 @@
 from collections import defaultdict
 import os
 import itertools
-from typing import Optional, Generator, Dict, List, Any, Callable, Union, Tuple
+from typing import Optional, Generator, Dict, List, Any, Callable, Union, Tuple, Iterable
 import time
 
 import gymnasium
@@ -12,6 +12,7 @@ from torch.utils.data.dataloader import default_collate
 import torch.nn
 import torch.nn.utils
 import numpy as np
+import numpy.typing as npt
 import wandb
 
 from frankenstein.buffer.vec_history import VecHistoryBuffer
@@ -149,6 +150,70 @@ def compute_ppo_losses(
                 break
 
 
+class MultitaskDynamicWeight:
+    def __init__(self, max_score, random_score, temperature=1.0, ema_weight=0.99):
+        self._max_score = np.array(max_score)
+        self._random_score = np.array(random_score)
+        self._temperature = temperature
+        self._ema_weight = ema_weight
+
+        self._score = np.array(random_score)
+
+    def step(self, scores: Iterable[Iterable[float]]):
+        for i,task_scores in enumerate(scores):
+            for s in task_scores:
+                self._score[i] = self._score[i] * self._ema_weight + s * (1 - self._ema_weight)
+
+    @property
+    def weight(self):
+        relative_score = -(self._score - self._random_score) / (self._max_score - self._random_score)
+        x = np.exp(relative_score / self._temperature)
+        return x / x.sum()
+
+
+class MultitaskStaticWeight:
+    def __init__(self, weight):
+        if isinstance(weight, torch.Tensor):
+            self._weight = weight.clone()
+        else:
+            self._weight = torch.tensor(weight, dtype=torch.float)
+
+    def step(self, scores: Iterable[Iterable[float]]):
+        ...
+
+    @property
+    def weight(self):
+        return self._weight
+
+
+def log_episode_end(done, info, episode_reward, episode_true_reward, episode_steps, env_ids, env_label_to_id, global_step_counter):
+    for env_label, env_id in env_label_to_id.items():
+        done2 = done & (env_ids == env_id)
+        if not done2.any():
+            continue
+        fi = info['_final_info']
+        unsupervised_trials = np.array([x['unsupervised_trials'] for x in info['final_info'][fi]])
+        supervised_trials = np.array([x['supervised_trials'] for x in info['final_info'][fi]])
+        unsupervised_reward = np.array([x['unsupervised_reward'] for x in info['final_info'][fi]])
+        supervised_reward = np.array([x['supervised_reward'] for x in info['final_info'][fi]])
+        if wandb.run is not None:
+            data = {
+                    f'reward/{env_label}': episode_reward[done2].mean().item(),
+                    f'true_reward/{env_label}': episode_true_reward[done2].mean().item(),
+                    f'episode_length/{env_label}': episode_steps[done2].mean().item(),
+                    'step': global_step_counter[0]-global_step_counter[1],
+                    'step_total': global_step_counter[0],
+            }
+            data[f'unsupervised_trials/{env_label}'] = unsupervised_trials[done2[fi]].mean().item()
+            data[f'supervised_trials/{env_label}'] = supervised_trials[done2[fi]].mean().item()
+            if unsupervised_trials[done2[fi]].mean() > 0:
+                data[f'unsupervised_reward/{env_label}'] = unsupervised_reward[done2[fi]].mean().item()
+            if supervised_trials[done2[fi]].mean() > 0:
+                data[f'supervised_reward/{env_label}'] = supervised_reward[done2[fi]].mean().item()
+            wandb.log(data, step = global_step_counter[0])
+        print(f'  reward: {episode_reward[done].mean():.2f}\t len: {episode_steps[done].mean()} \t env: {env_label} ({done2.sum().item()})')
+
+
 def train_single_env(
         global_step_counter: List[int],
         model: torch.nn.Module,
@@ -279,6 +344,7 @@ def train_single_env(
         # Gather data
         state_values = [] # For logging purposes
         entropies = [] # For logging purposes
+        episode_rewards = [] # For multitask weighing purposes
         for _ in range(rollout_length):
             global_step_counter[0] += num_envs
 
@@ -318,36 +384,24 @@ def train_single_env(
 
             if done.any():
                 print(f'Episode finished ({step * num_envs * rollout_length:,} -- {global_step_counter[0]:,})')
-                for env_label, env_id in env_label_to_id.items():
-                    done2 = done & (env_ids == env_id)
-                    if not done2.any():
-                        continue
-                    fi = info['_final_info']
-                    unsupervised_trials = np.array([x['unsupervised_trials'] for x in info['final_info'][fi]])
-                    supervised_trials = np.array([x['supervised_trials'] for x in info['final_info'][fi]])
-                    unsupervised_reward = np.array([x['unsupervised_reward'] for x in info['final_info'][fi]])
-                    supervised_reward = np.array([x['supervised_reward'] for x in info['final_info'][fi]])
-                    if wandb.run is not None:
-                        data = {
-                                f'reward/{env_label}': episode_reward[done2].mean().item(),
-                                f'true_reward/{env_label}': episode_true_reward[done2].mean().item(),
-                                f'episode_length/{env_label}': episode_steps[done2].mean().item(),
-                                'step': global_step_counter[0]-global_step_counter[1],
-                                'step_total': global_step_counter[0],
-                        }
-                        data[f'unsupervised_trials/{env_label}'] = unsupervised_trials[done2[fi]].mean().item()
-                        data[f'supervised_trials/{env_label}'] = supervised_trials[done2[fi]].mean().item()
-                        if unsupervised_trials[done2[fi]].mean() > 0:
-                            data[f'unsupervised_reward/{env_label}'] = unsupervised_reward[done2[fi]].mean().item()
-                        if supervised_trials[done2[fi]].mean() > 0:
-                            data[f'supervised_reward/{env_label}'] = supervised_reward[done2[fi]].mean().item()
-                        wandb.log(data, step = global_step_counter[0])
-                    print(f'  reward: {episode_reward[done].mean():.2f}\t len: {episode_steps[done].mean()} \t env: {env_label} ({done2.sum().item()})')
+                log_episode_end(
+                        done = done,
+                        info = info,
+                        episode_reward = episode_reward,
+                        episode_true_reward = episode_true_reward,
+                        episode_steps = episode_steps,
+                        env_ids = env_ids,
+                        env_label_to_id = env_label_to_id,
+                        global_step_counter = global_step_counter,
+                )
                 # Reset hidden state for finished episodes
                 hidden = tuple(
                         torch.where(torch.tensor(done, device=device).unsqueeze(1), h0, h)
                         for h0,h in zip(model.init_hidden(num_envs), hidden) # type: ignore (???)
                 )
+                # Save episode rewards
+                for r in episode_reward[done]:
+                    episode_rewards.append(r)
                 # Reset episode stats
                 episode_reward[done] = 0
                 episode_true_reward[done] = 0
@@ -390,6 +444,7 @@ def train_single_env(
 
             yield {
                 'log': log,
+                'episode_rewards': episode_rewards,
                 **x
             }
 
@@ -397,6 +452,7 @@ def train_single_env(
 
         # Clear data
         history.clear()
+        episode_rewards = []
 
         # Update hidden state
         if x is not None and update_hidden_after_grad:
@@ -429,6 +485,12 @@ def train(
         warmup_steps: int = 0,
         update_hidden_after_grad: bool = False,
         start_step: int = 0,
+        # Task weight
+        env_random_score: Optional[List[float]] = None,
+        env_max_score: Optional[List[float]] = None,
+        use_multitask_dynamic_weighting: bool = False,
+        multitask_dynamic_weight_temperature: float = 10,
+        multitask_static_weight: Optional[List[float]] = None,
         ):
     global_step_counter = [start_step, start_step]
     trainers = [
@@ -454,12 +516,44 @@ def train(
         )
         for env,labels in zip(envs, env_labels)
     ]
+
+    multitask_weight = None
+    if use_multitask_dynamic_weighting:
+        assert multitask_static_weight is None
+        assert env_random_score is not None
+        assert env_max_score is not None
+        assert len(env_random_score) == len(env_max_score)
+        assert len(env_random_score) == len(envs)
+        multitask_weight = MultitaskDynamicWeight(
+            max_score = env_max_score,
+            random_score = env_random_score,
+            temperature = multitask_dynamic_weight_temperature,
+        )
+    elif multitask_static_weight is not None:
+        assert len(multitask_static_weight) == len(envs)
+        multitask_weight = MultitaskStaticWeight(
+                multitask_static_weight
+        )
+
     start_time = time.time()
     for _, losses in enumerate(zip(*trainers)):
         #env_steps = training_steps * rollout_length * sum(env.num_envs for env in envs)
         env_steps = global_step_counter[0]
 
-        mean_loss = torch.stack([x['loss'] for x in losses]).mean()
+        if multitask_weight is not None:
+            multitask_weight.step(
+                [x['episode_rewards'] for x in losses]
+            )
+            all_losses = torch.stack([x['loss'] for x in losses])
+            weight = torch.tensor(multitask_weight.weight, device=device)
+            mean_loss = (all_losses * weight).sum()
+            if wandb.run is not None:
+                wandb.log({
+                    f'multitask_dynamic_weight/{env_label}': w
+                    for w, env_label in zip(weight, env_group_labels)
+                }, step = global_step_counter[0])
+        else:
+            mean_loss = torch.stack([x['loss'] for x in losses]).mean()
         optimizer.zero_grad()
         mean_loss.backward()
         if max_grad_norm is not None:
@@ -668,6 +762,11 @@ if __name__ == '__main__':
             warmup_steps = args.warmup_steps,
             update_hidden_after_grad = args.update_hidden_after_grad,
             start_step = start_step,
+            env_random_score = args.random_score,
+            env_max_score = args.max_score,
+            use_multitask_dynamic_weighting = args.multitask_dynamic_weight,
+            multitask_dynamic_weight_temperature = args.multitask_dynamic_weight_temperature,
+            multitask_static_weight = args.multitask_static_weight,
     )
 
     # Run training loop

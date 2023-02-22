@@ -173,6 +173,7 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
 
         self._compute_indices([self._agent_body_name])
 
+        self.reset() # Resetting initializes some variables needed for creating the observation
         sample_obs = self._get_obs()
         observation_space_dict = {
             'state': Box(
@@ -284,6 +285,14 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
         return terminated
 
     def reset(self, *args, **kwargs):
+        # Reset Stats
+        self._step_count = 0
+        self._max_steps = self._max_steps_initial
+        self._fetch_reward_total = 0
+        self._fetch_reward_last = 0 # Reward in the last step
+        self._trial_count = 0
+        self._objects_picked_up = {k:0 for k in self._objects}
+
         obs, info = super().reset(*args, **kwargs)
 
         # Choose a number of objects to place to be accessible by the agent and hide the rest outside.
@@ -296,14 +305,6 @@ class AntFetchEnv(MujocoEnv, utils.EzPickle):
                 self.target_objects.append(self._objects[i])
         target_obj_desc = [self._object_desc[obj] for obj in self.target_objects]
         self.goal_str = f'Fetch the {" or ".join(target_obj_desc)}'
-
-        # Stats
-        self._step_count = 0
-        self._max_steps = self._max_steps_initial
-        self._fetch_reward_total = 0
-        self._fetch_reward_last = 0 # Reward in the last step
-        self._trial_count = 0
-        self._objects_picked_up = {k:0 for k in self._objects}
 
         return obs, info
 

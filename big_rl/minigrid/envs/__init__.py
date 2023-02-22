@@ -1,6 +1,6 @@
 import os
 from typing_extensions import Literal
-from typing import Union, Tuple, List
+from typing import Union, Tuple, List, Optional
 import threading
 import time
 
@@ -133,7 +133,7 @@ class MetaWrapper(gym.Wrapper):
             image_transformation = None,
             task_id = None,
             task_label = None,
-            seed: int = None):
+            seed: Optional[int] = None):
         super().__init__(env)
         self.episode_stack = episode_stack
         self.randomize = randomize
@@ -192,7 +192,7 @@ class MetaWrapper(gym.Wrapper):
                     'action_map',
                     gymnasium.spaces.Box(
                         low=0, high=1,
-                        shape=(self.env.action_space.n, self.env.action_space.n),
+                        shape=(int(self.env.action_space.n), int(self.env.action_space.n)),
                         dtype=np.float32
                     )
                 ))
@@ -883,11 +883,11 @@ class MultiRoomEnv_v1(MiniGridEnv):
         max_room_size=10,
         door_prob=0.5,
         num_trials=100,
-        fetch_config: dict = None,
-        bandits_config: dict = None,
+        fetch_config: Optional[dict] = None,
+        bandits_config: Optional[dict] = None,
         task_randomization_prob: float = 0,
         max_steps_multiplier: float = 1.,
-        shaped_reward_config: dict = None,
+        shaped_reward_config: Optional[dict] = None,
         reward_type: Literal['standard', 'pbrs'] = 'standard',
         pbrs_scale: float = 1.,
         pbrs_discount: float = 0.99,

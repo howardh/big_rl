@@ -184,15 +184,23 @@ def env_config_presets():
                 },
             }, inherit='fetch-004')
 
-        ## Decrease time limit
-        ## It current takes around 100 steps to do a 360 and ~50 steps to run towards the object.
-        #config.add_change('fetch-005', {
-        #    'env_name': 'AntFetch-v0',
-        #    'config': {
-        #        'max_steps_initial': 500,
-        #        'extra_steps_per_pickup': 250,
-        #    },
-        #})
+        # Decrease time limit
+        # It current takes around 100 steps to do a 360 and ~50 steps to run towards the object.
+        config.add('fetch-005', {
+            'env_name': 'AntFetch-v0',
+            'config': {
+                'max_steps_initial': 500,
+                'extra_steps_per_pickup': 250,
+            },
+        }, inherit='fetch-004')
+
+        for n in [5,6,7,8,9,10]:
+            config.add(f'fetch-005-roomsize{n}', {
+                'env_name': 'AntFetch-v0',
+                'config': {
+                    'room_size': n,
+                },
+            }, inherit='fetch-005')
 
     init_locomotion()
     init_fetch()

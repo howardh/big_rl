@@ -22,6 +22,12 @@ def init_parser_trainer(parser: ArgumentParser):
     parser.add_argument('--warmup-steps', type=int, default=0, help='Number of warmup steps on the environment before we start training on the generated samples.')
     parser.add_argument('--update-hidden-after-grad', action='store_true', help='Update the hidden state after the gradient step.')
 
+    parser.add_argument('--random-score', type=float, nargs='*', default=None, help='Random score for each environment.')
+    parser.add_argument('--max-score', type=float, nargs='*', default=None, help='Max score for each environment.')
+    parser.add_argument('--multitask-dynamic-weight', action='store_true', help='Use dynamic weight for multitask learning.')
+    parser.add_argument('--multitask-dynamic-weight-temperature', type=float, default=10., help='Temperature for dynamic weight for multitask learning.')
+    parser.add_argument('--multitask-static-weight', type=float, nargs='*', default=None, help='Relative weight of each task. If the sum is not 1, they will be normalized.')
+
 
 def init_parser_model(parser: ArgumentParser):
     parser.add_argument('--model-type', type=str, default='ModularPolicy5',
