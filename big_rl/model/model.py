@@ -652,7 +652,7 @@ class RecurrentAttention15(RecurrentAttention11):
             )
         }
 
-    def _make_mlp(self, sizes, last_activation=torch.nn.ReLU()):
+    def _make_mlp(self, sizes, last_activation: torch.nn.Module = torch.nn.ReLU()):
         layers = []
         for in_size, out_size in zip(sizes[:-1], sizes[1:]):
             layers.append(torch.nn.ReLU())
@@ -1436,7 +1436,7 @@ class StateIndependentOutput(torch.nn.Module):
     def forward(self,
             key: TensorType['num_blocks','batch_size','hidden_size',float],
             value: TensorType['num_blocks','batch_size','hidden_size',float],
-            ) -> Dict[str,TensorType]:
+            ) -> Dict[str,torch.Tensor]:
         assert len(key.shape) == 3, f'Key shape must be [num_blocks,batch_size,hidden_size]. Got {key.shape}'
         assert len(value.shape) == 3, f'Value shape must be [num_blocks,batch_size,hidden_size]. Got {value.shape}'
         device = next(self.parameters()).device
@@ -2323,6 +2323,7 @@ class ModularPolicy5LSTM(torch.nn.Module):
         self.initial_hidden_state = torch.nn.ParameterList([
             torch.nn.Parameter(torch.zeros([hidden_size])),
             torch.nn.Parameter(torch.zeros([hidden_size])),
+
         ])
 
     def _init_input_modules(self, input_configs: Dict[str,Dict], key_size, value_size):
@@ -2608,7 +2609,7 @@ class ModularPolicy7(torch.nn.Module):
         internal_state : List[TensorType] = []
         is_idx = 2
         for size in self._state_sizes:
-            internal_state.append(hidden[is_idx:is_idx+size])
+            internal_state.append(hidden[is_idx:is_idx+size]) # type: ignore
             is_idx += size
 
         # Core module computation
@@ -2664,7 +2665,7 @@ class ModularPolicy7(torch.nn.Module):
     def init_hidden(self, batch_size: int = 1):
         device = next(self.parameters()).device
         state = [
-            attn.init_hidden(batch_size)
+            attn.init_hidden(batch_size) # type: ignore
             for attn in self.attention
         ]
         self._state_sizes = [len(s) for s in state]

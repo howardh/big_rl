@@ -173,10 +173,13 @@ class MultitaskDynamicWeight:
 
 class MultitaskStaticWeight:
     def __init__(self, weight):
+        for w in weight:
+            assert w >= 0, 'weight must be non-negative'
         if isinstance(weight, torch.Tensor):
-            self._weight = weight.clone()
+            self._weight = weight.clone() / weight.sum()
         else:
             self._weight = torch.tensor(weight, dtype=torch.float)
+            self._weight /= self._weight.sum()
 
     def step(self, scores: Iterable[Iterable[float]]):
         ...

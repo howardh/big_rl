@@ -476,6 +476,22 @@ def env_config_presets():
             }
         }, inherit='fetch-004')
 
+        config.add(f'fetch-005-alternating', {
+            'meta_config': {
+                'include_reward': False,
+            },
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+                'fetch_config': {
+                    'cycle_targets': True
+                },
+                'shaped_reward_config': {
+                    'type': 'subtask',
+                },
+            }
+        }, inherit='fetch-004')
+
 
     def init_delayed():
         config.add('delayed-001', {

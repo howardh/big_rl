@@ -200,8 +200,8 @@ class MetaWrapper(gym.Wrapper):
 
     def _randomize_actions(self):
         env = self.env
-        n = env.action_space.n
         assert isinstance(env.action_space, gymnasium.spaces.Discrete), 'Action shuffle only works with discrete actions'
+        n = env.action_space.n
         self.action_map = np.arange(n)
         self.rand.shuffle(self.action_map)
 
@@ -213,6 +213,7 @@ class MetaWrapper(gym.Wrapper):
         # Map action to the shuffled action space
         original_action = action
         if self.action_shuffle:
+            assert isinstance(action, int)
             action = self.action_map[action]
 
         # Take a step
@@ -1069,7 +1070,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
         if self.max_steps < 0:
             self.max_steps = float('inf')
 
-    def _init_fetch(self, num_objs, num_obj_types=2, num_obj_colors=6, unique_objs=True, prob=1.0):
+    def _init_fetch(self, num_objs, num_obj_types=2, num_obj_colors=6, unique_objs=True, prob=1.0, cycle_targets=False):
         """
         Initialize the fetch task
 
@@ -1109,8 +1110,13 @@ class MultiRoomEnv_v1(MiniGridEnv):
 
         # Choose a random object to be picked up
         target = objs[self._rand_int(0, len(objs))]
-        self.target_type = target.type
-        self.target_color = target.color
+        self._target_type = target.type
+        self._target_color = target.color
+
+        self._fetch_target_cycle = [
+            (obj.type, obj.color) for obj in objs
+        ]
+        self._fetch_target_cycle_idx = 0
 
     def _init_bandits(self, probs=[1,0]):
         reward_scale = 1
@@ -1376,6 +1382,22 @@ class MultiRoomEnv_v1(MiniGridEnv):
     def goal_str(self):
         return f'{self.target_color} {self.target_type}'
 
+    @property
+    def target_type(self):
+        assert self.fetch_config is not None
+        if self.fetch_config.get('cycle_targets', False):
+            return self._fetch_target_cycle[self._fetch_target_cycle_idx][0]
+        else:
+            return self._target_type
+
+    @property
+    def target_color(self):
+        assert self.fetch_config is not None
+        if self.fetch_config.get('cycle_targets', False):
+            return self._fetch_target_cycle[self._fetch_target_cycle_idx][1]
+        else:
+            return self._target_color
+
     def reset(self, seed=None, options=None):
         obs, info = super().reset(seed=seed, options=options)
         self.trial_count = 0
@@ -1419,6 +1441,8 @@ class MultiRoomEnv_v1(MiniGridEnv):
                    self.carrying.type == self.target_type:
                     reward = reward_correct
                     info['regret'] = 0
+                    # Cycle to the next target (these variables are not used if not cycling)
+                    self._fetch_target_cycle_idx = (self._fetch_target_cycle_idx + 1) % len(self._fetch_target_cycle)
                 else:
                     reward = reward_incorrect
                     info['regret'] = reward_correct*p+reward_incorrect*(1-p) - reward_incorrect*p+reward_correct*(1-p)
@@ -1431,8 +1455,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
                 self.carrying = None
                 # End current trial
                 self.trial_count += 1
-                #if self.shaped_reward_config is not None:
-                #    self.shaped_reward_noise.trial_finished()
+                # Inform shaped reward transforms that a trial was completed
                 for transform in self.shaped_reward_transforms:
                     transform.trial_finished()
                 # Randomize task if needed
@@ -1469,7 +1492,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
 
 register(
     id='MiniGrid-MultiRoom-v1',
-    entry_point=MultiRoomEnv_v1,
+    entry_point=MultiRoomEnv_v1, # type: ignore
 )
 
 
@@ -1906,7 +1929,7 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
 
 register(
     id='MiniGrid-Delayed-Reward-v0',
-    entry_point=DelayedRewardEnv,
+    entry_point=DelayedRewardEnv, # type: ignore
 )
 
 

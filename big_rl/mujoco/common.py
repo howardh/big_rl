@@ -202,6 +202,23 @@ def env_config_presets():
                 },
             }, inherit='fetch-005')
 
+        # Even shorter time limit
+        config.add('fetch-006', {
+            'env_name': 'AntFetch-v0',
+            'config': {
+                'max_steps_initial': 250,
+                'extra_steps_per_pickup': 100,
+            },
+        }, inherit='fetch-004')
+
+        for n in [5,6,7,8,9,10]:
+            config.add(f'fetch-006-roomsize{n}', {
+                'env_name': 'AntFetch-v0',
+                'config': {
+                    'room_size': n,
+                },
+            }, inherit='fetch-005')
+
     init_locomotion()
     init_fetch()
 
