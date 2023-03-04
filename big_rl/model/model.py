@@ -1,11 +1,12 @@
 import itertools
-from typing import List, Dict, Sequence, Tuple
+from typing import List, Dict, Sequence, Tuple, Iterable
 import math
 
 import torch
 from torchtyping.tensor_type import TensorType
 from torch.utils.data.dataloader import default_collate
 
+#from big_rl.model.recurrent_attention_16 import RecurrentAttention16 # XXX: Causes circular imports
 
 # Recurrences
 
@@ -774,8 +775,8 @@ class NonBatchMultiHeadAttention(torch.nn.Module):
             ])
         )
 
-    def to_multihead_attention_modules(self):
-        return self.attentions
+    def to_multihead_attention_modules(self) -> List[torch.nn.MultiheadAttention]:
+        return list(self.attentions) # type: ignore
 
 
 class BatchMultiHeadAttentionBroadcast(torch.nn.Module):
@@ -888,8 +889,8 @@ class BatchMultiHeadAttentionBroadcast(torch.nn.Module):
 
         return attn_output.transpose(0,1), attn_output_weights.view(num_modules, batch_size, num_heads, 1, num_inputs).mean(2)
 
-    def to_multihead_attention_modules(self):
-        return self.attentions
+    def to_multihead_attention_modules(self) -> List[torch.nn.MultiheadAttention]:
+        return list(self.attentions) # type: ignore
 
 
 class BatchMultiHeadAttentionEinsum(torch.nn.Module):
@@ -992,7 +993,7 @@ class BatchMultiHeadAttentionEinsum(torch.nn.Module):
 
         return attn_output, attn_output_weights.view(num_modules, batch_size, num_heads, 1, num_inputs).mean(2)
 
-    def to_multihead_attention_modules(self):
+    def to_multihead_attention_modules(self) -> List[torch.nn.MultiheadAttention]:
         num_modules = self.num_modules
         num_heads = self.num_heads
         embed_dim = self.key_size
@@ -1056,8 +1057,8 @@ class NonBatchLinear(torch.nn.Module):
             for x,module in zip(batched_x,self.linear)
         ])
 
-    def to_linear_modules(self):
-        return self.linear
+    def to_linear_modules(self) -> List[torch.nn.Linear]:
+        return list(self.linear) # type: ignore
 
 
 class BatchLinear(torch.nn.Module):
@@ -2461,6 +2462,14 @@ class ModularPolicy6(ModularPolicy5):
 class ModularPolicy7(torch.nn.Module):
     """
     Copied ModularPolicy5 and made modifications to work with the API changes in RecurrentAttention15.
+
+    Recurrennce API:
+    - forward(state, key, value) -> dict
+        state (tuple[torch.Tensor,...]): A tuple containing the module's state. For example, an LSTM layer's (h,c) output. The tuple can be any size(i.e. can be different from one module to the next), but must not change.
+        key (torch.Tensor): Key of the module's input
+        value (torch.Tensor): Value of the module's input
+    - init_hidden(batch_size: int) -> tuple[torch.Tensor,...]
+        Return the initial state of the module.
     """
     def __init__(self, inputs, outputs, input_size, key_size, value_size, num_heads, ff_size, architecture, recurrence_type='RecurrentAttention15'):
         super().__init__()

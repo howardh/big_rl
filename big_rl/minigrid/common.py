@@ -1,6 +1,7 @@
 import torch
 
 from big_rl.model.model import ModularPolicy2, ModularPolicy4, ModularPolicy5, ModularPolicy5LSTM, ModularPolicy7
+from big_rl.model.modular_policy_8 import ModularPolicy8
 from big_rl.utils import ExperimentConfigs
 
 
@@ -9,6 +10,7 @@ def init_model(observation_space, action_space,
         recurrence_type,
         num_recurrence_blocks=3,
         architecture=[3,3],
+        ff_size=[1024],
         hidden_size=None, # For LSTM model only
         device=torch.device('cpu')):
     observation_space = observation_space # Unused variable
@@ -70,7 +72,7 @@ def init_model(observation_space, action_space,
         'key_size': 512,
         'value_size': 512,
         'num_heads': 8,
-        'ff_size': 1024,
+        'ff_size': ff_size[0] if len(ff_size) == 1 else ff_size,
         'recurrence_type': recurrence_type,
     }
     if model_type == 'ModularPolicy2':
@@ -110,6 +112,16 @@ def init_model(observation_space, action_space,
         return ModularPolicy7(
                 **common_model_params,
                 architecture=architecture,
+        ).to(device)
+    elif model_type == 'ModularPolicy8':
+        recurrence_kwargs = {
+            'ff_size': common_model_params.pop('ff_size'),
+        }
+        if architecture is not None:
+            recurrence_kwargs['architecture'] = architecture
+        return ModularPolicy8(
+                **common_model_params,
+                recurrence_kwargs=recurrence_kwargs,
         ).to(device)
     raise NotImplementedError()
 
@@ -293,6 +305,21 @@ def env_config_presets():
                 'shaped_reward_config': {
                     'type': 'subtask',
                     'noise': ('dynamic_zero', 10, (0.8, -float('inf'))), # Never resume after the reward is stopped.
+                },
+            }
+        }, inherit='fetch-004')
+
+        # 
+        config.add(f'fetch-004-alternating', {
+            'meta_config': {
+                'include_reward': False,
+            },
+            'config': {
+                'fetch_config': {
+                    'cycle_targets': True
+                },
+                'shaped_reward_config': {
+                    'type': 'subtask',
                 },
             }
         }, inherit='fetch-004')

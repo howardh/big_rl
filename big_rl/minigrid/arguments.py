@@ -31,14 +31,15 @@ def init_parser_trainer(parser: ArgumentParser):
 
 def init_parser_model(parser: ArgumentParser):
     parser.add_argument('--model-type', type=str, default='ModularPolicy5',
-                        help='Model type', choices=['ModularPolicy5', 'ModularPolicy5LSTM', 'ModularPolicy7'])
+                        help='Model type', choices=['ModularPolicy5', 'ModularPolicy5LSTM', 'ModularPolicy7', 'ModularPolicy8'])
     parser.add_argument('--recurrence-type', type=str,
                         default='RecurrentAttention14',
                         help='Recurrence type',
-                        choices=[f'RecurrentAttention{i}' for i in [11,14,15]])
+                        choices=[f'RecurrentAttention{i}' for i in [11,14,15,16]])
     parser.add_argument('--architecture', type=int,
                         default=[3,3], nargs='*',
                         help='Size of each layer in the model\'s core')
     parser.add_argument('--hidden-size', type=int, default=None,
                         help='Size of the model\'s hidden state. Only applies to LSTM models.')
-
+    parser.add_argument('--ff-size', type=int, nargs='*', default=[1024],
+                        help='Size of the model\'s fully connected feedforward layers. Only applies to attention models.')

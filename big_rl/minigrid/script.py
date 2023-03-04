@@ -699,6 +699,7 @@ if __name__ == '__main__':
             model_type = args.model_type,
             recurrence_type = args.recurrence_type,
             architecture = args.architecture,
+            ff_size = args.ff_size,
             hidden_size = args.hidden_size,
             device = device,
     )
