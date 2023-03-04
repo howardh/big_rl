@@ -122,13 +122,6 @@ class BatchRecurrentAttention16Layer_v2(torch.nn.Module):
         return { # seq_len = number of inputs receives
             'attn_output': attn_output, # (num_blocks, batch_size, value_size)
             'attn_output_weights': attn_output_weights, # (num_blocks, batch_size, seq_len)
-            #'debug': outputs,
-            #'outputs': {
-            #    'query': output_queries,
-            #    'key': output_keys,
-            #    'value': output_values,
-            #    'state': output_state,
-            #},
             'gates': {
                 'query': output_query_gate, # (num_blocks, batch_size)
                 'key': output_key_gate, # (num_blocks, batch_size)
@@ -284,12 +277,6 @@ class BatchRecurrentAttention16Layer(torch.nn.Module):
         return { # seq_len = number of inputs receives
             'attn_output': attn_output, # (num_blocks, batch_size, value_size)
             'attn_output_weights': attn_output_weights, # (num_blocks, batch_size, seq_len)
-            #'outputs': {
-            #    'query': output_queries,
-            #    'key': output_keys,
-            #    'value': output_values,
-            #    'state': output_state,
-            #},
             'gates': {
                 'query': output_query_gate, # (num_blocks, batch_size)
                 'key': output_key_gate, # (num_blocks, batch_size)
@@ -324,7 +311,7 @@ class BatchRecurrentAttention16Layer(torch.nn.Module):
         )
 
     def to_nonbatched(self):
-        return _to_nonbatched(self)
+        return _batched_to_nonbatched(self)
 
     @classmethod
     def from_nonbatched(cls, obj):
@@ -445,13 +432,6 @@ class NonBatchRecurrentAttention16Layer(torch.nn.Module):
         return { # seq_len = number of inputs receives
             'attn_output': attn_output, # (num_blocks, batch_size, value_size)
             'attn_output_weights': attn_output_weights, # (num_blocks, batch_size, seq_len)
-            #'debug': (output_queries, output_keys, output_values, output_state),
-            #'outputs': {
-            #    'query': output_queries,
-            #    'key': output_keys,
-            #    'value': output_values,
-            #    'state': output_state,
-            #},
             'gates': {
                 'query': output_query_gate, # (num_blocks, batch_size)
                 'key': output_key_gate, # (num_blocks, batch_size)
@@ -553,7 +533,7 @@ class RecurrentAttention16(torch.nn.Module):
 # Batching / Unbatching utils
 
 
-def _to_nonbatched(rec: BatchRecurrentAttention16Layer) -> NonBatchRecurrentAttention16Layer:
+def _batched_to_nonbatched(rec: BatchRecurrentAttention16Layer) -> NonBatchRecurrentAttention16Layer:
     rec = copy.deepcopy(rec)
     output = NonBatchRecurrentAttention16Layer(
         input_size = rec._input_size,

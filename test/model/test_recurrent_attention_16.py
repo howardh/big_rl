@@ -45,25 +45,9 @@ def test_convert_to_batched_same_output(batched_cls):
         value_size=8,
         num_heads=4,
         ff_size=[3,7],
-        #ff_size=[],
-        #num_modules=2,
-        num_modules=1,
+        num_modules=2,
     )
-    #foo = {}
-    #for i,(k,p) in enumerate(nonbatched_module.named_parameters()): # XXX: DEBUG
-    #    #p.data *= 0
-    #    #p.data += i
-    #    l = torch.tensor(p.shape).prod().item()
-    #    p.data = (torch.arange(i,i+l).reshape(p.shape).float() - l//2) / (l*l)
-    #    #p.data = torch.arange(i,i+l).reshape(p.shape).float()
-    #    foo[k] = i
-
     batched_module = batched_cls.from_nonbatched(nonbatched_module)
-
-    # list(nonbatched_module.fc_query[1].parameters())
-    #for k,p in batched_module.fc_outputs[1].named_parameters():
-    #    l = torch.tensor(p.shape).prod().item()
-    #    breakpoint()
 
     # Test that the modules produce the same outputs.
     batched_state = batched_module.init_state(5)
@@ -76,10 +60,6 @@ def test_convert_to_batched_same_output(batched_cls):
     value = torch.randn(2, 5, 8)
     batched_output = batched_module(state, key, value)
     nonbatched_output = nonbatched_module(state, key, value)
-
-    #d1 = batched_output['debug']
-    #d2 = nonbatched_output['debug']
-    #breakpoint()
 
     assert_same_output(batched_output, nonbatched_output)
 
