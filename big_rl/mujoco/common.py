@@ -1,6 +1,7 @@
 import torch
 
 from big_rl.model.model import ModularPolicy2, ModularPolicy4, ModularPolicy5, ModularPolicy5LSTM
+from big_rl.model.modular_policy_8 import ModularPolicy8
 from big_rl.minigrid.common import ExperimentConfigs
 
 
@@ -9,6 +10,7 @@ def init_model(observation_space, action_space,
         recurrence_type,
         num_recurrence_blocks=3,
         architecture=[3,3],
+        ff_size=[1024],
         hidden_size=None, # For LSTM model only
         device=torch.device('cpu')):
     observation_space = observation_space # Unused variable
@@ -69,7 +71,7 @@ def init_model(observation_space, action_space,
         'key_size': 512,
         'value_size': 512,
         'num_heads': 8,
-        'ff_size': 1024,
+        'ff_size': ff_size[0] if len(ff_size) == 1 else ff_size,
         'recurrence_type': recurrence_type,
     }
     if model_type == 'ModularPolicy2':
@@ -104,6 +106,16 @@ def init_model(observation_space, action_space,
                 value_size=common_model_params['value_size'],
                 hidden_size=hidden_size,
         ).to(device)
+    elif model_type == 'ModularPolicy8':
+        recurrence_kwargs = {
+            'ff_size': common_model_params.pop('ff_size'),
+        }
+        if architecture is not None:
+            recurrence_kwargs['architecture'] = architecture
+        return ModularPolicy8(
+                **common_model_params,
+                recurrence_kwargs=recurrence_kwargs,
+        ).to(device)
     raise NotImplementedError()
 
 
@@ -125,7 +137,7 @@ def env_config_presets():
             'normalize_obs': False,
         })
 
-    def init_fetch():
+    def init_ant_fetch():
         config.add('fetch-001', {
             'env_name': 'AntFetch-v0',
             'normalize_obs': False,
@@ -219,7 +231,30 @@ def env_config_presets():
                 },
             }, inherit='fetch-005')
 
+    def init_arm_fetch():
+        config.add('arm_fetch-001', {
+            'env_name': 'ArmFetch-v0',
+            'normalize_obs': False,
+            'config': {
+                'num_objs': 1,
+                'num_target_objs': 1,
+            },
+            'meta_config': {
+                'episode_stack': 1,
+                'dict_obs': True,
+                'randomize': False,
+            },
+        })
+
+        config.add_change('arm_fetch-002', {
+            'config': {
+                'num_objs': 2,
+                'num_target_objs': 1,
+            },
+        })
+
     init_locomotion()
-    init_fetch()
+    init_ant_fetch()
+    init_arm_fetch()
 
     return config

@@ -620,6 +620,142 @@ class MjcfModelFactory():
 
         return body_name
 
+    def add_arm(self, pos, name_prefix='', segment_lengths=[2, 2]):
+        tip_length = 0.1
+
+        body_name = f'{name_prefix}torso'
+        body = self.soup.new_tag('body', attrs={
+            'name': body_name,
+            'pos': f'{pos[0] * self.cell_size} {pos[1] * self.cell_size} 0.75'
+        })
+        actuators = []
+
+        # Top-down camera
+        camera_track = self.soup.new_tag(
+            'camera',
+            attrs={
+                'name': name_prefix+'topdown',
+                'mode': 'track',
+                'pos': '0 0 10',
+                'xyaxes': '1 0 0 0 1 0',
+                #'fovy': '135',
+            }
+        )
+        body.append(camera_track)
+
+        # Base
+        base_geom = self.soup.new_tag('geom', attrs={
+            'name': name_prefix+'base_geom',
+            'fromto': '0 0 0 0 0 0.5',
+            'size': '0.25',
+            'type': 'capsule',
+            'rgba': '0.3 0.3 0.3 1.0',
+        })
+        body.append(base_geom)
+
+        # Base can rotate around the vertical axis
+        root_joint = self.soup.new_tag('joint', attrs={
+            'axis': '0 0 1',
+            'name': name_prefix+'root_joint',
+            'pos': '0 0 0',
+            'range': '-180 180',
+            'type': 'hinge'
+        })
+        body.append(root_joint)
+        actuators.append(self.soup.new_tag('motor', attrs={
+            'ctrllimited': 'true',
+            'ctrlrange': '-1 1',
+            'joint': name_prefix+'root_joint',
+            'gear': '150',
+        }))
+
+
+        # Arm segment 1
+        arm_segment_1 = self.soup.new_tag('body', attrs={'name': name_prefix+'arm_segment_1', 'pos': '0 0 0.5'})
+        body.append(arm_segment_1)
+
+        arm_segment_1_geom = self.soup.new_tag('geom', attrs={
+            'name': name_prefix+'arm_segment_1_geom',
+            'fromto': f'0 0 0 0 0 {segment_lengths[0]}',
+            'size': '0.25',
+            'type': 'capsule',
+            'rgba': '0.5 0.5 0.5 1.0',
+        })
+        arm_segment_1.append(arm_segment_1_geom)
+
+        arm_segment_1_joint = self.soup.new_tag('joint', attrs={
+            'axis': '1 0 0',
+            'name': name_prefix+'arm_segment_1_joint',
+            'pos': '0 0 0',
+            'range': '0 90',
+            'type': 'hinge'
+        })
+        arm_segment_1.append(arm_segment_1_joint)
+        actuators.append(self.soup.new_tag('motor', attrs={
+            'ctrllimited': 'true',
+            'ctrlrange': '-1 1',
+            'joint': name_prefix+'arm_segment_1_joint',
+            'gear': '150',
+        }))
+
+        # Arm segment 2
+        arm_segment_2 = self.soup.new_tag('body', attrs={'name': name_prefix+'arm_segment_2', 'pos': f'0 0 {segment_lengths[0]}'})
+        arm_segment_1.append(arm_segment_2)
+
+        arm_segment_2_geom = self.soup.new_tag('geom', attrs={
+            'name': name_prefix+'arm_segment_2_geom',
+            'fromto': f'0 0 0 0 0 {segment_lengths[1]-tip_length}',
+            'size': '0.25',
+            'type': 'capsule',
+            'rgba': '0.3 0.3 0.3 1.0',
+        })
+        arm_segment_2.append(arm_segment_2_geom)
+
+        arm_segment_2_joint = self.soup.new_tag('joint', attrs={
+            'axis': '1 0 0',
+            'name': name_prefix+'arm_segment_2_joint',
+            'pos': '0 0 0',
+            'range': '0 135',
+            'type': 'hinge'
+        })
+        arm_segment_2.append(arm_segment_2_joint)
+        actuators.append(self.soup.new_tag('motor', attrs={
+            'ctrllimited': 'true',
+            'ctrlrange': '-1 1',
+            'joint': name_prefix+'arm_segment_2_joint',
+            'gear': '150',
+        }))
+
+        # Effector tip
+        arm_tip = self.soup.new_tag('body', attrs={'name': name_prefix+'arm_tip', 'pos': f'0 0 {segment_lengths[1]}'})
+        arm_segment_2.append(arm_tip)
+
+        arm_tip_geom = self.soup.new_tag('geom', attrs={
+            'name': name_prefix+'arm_tip_geom',
+            'fromto': f'0 0 0 0 0 0.1',
+            'size': '0.25',
+            'type': 'capsule',
+            'rgba': '1 0 0 1',
+        })
+        arm_tip.append(arm_tip_geom)
+
+        # First person camera
+        camera_first_person = self.soup.new_tag('camera', attrs={
+            'name': name_prefix+'first_person',
+            'mode': 'fixed',
+            'pos': f'0 0 {segment_lengths[1]}',
+            'axisangle': '0 1 0 180',
+            #'fovy': '135',
+        })
+        arm_tip.append(camera_first_person)
+
+        self.worldbody.append(body)
+        for a in actuators:
+            self.actuator.append(a)
+        self.agent = { 'body': body, 'actuators': actuators }
+
+        return body_name
+
     def add_wall(self, cell, cell2=None, rgba=(0.8, 0.8, 0.8, 1), height=None):
         if height is None:
             height = self.height
@@ -871,9 +1007,14 @@ register(
     #reward_threshold=6000.0,
 )
 
+register(
+    id="ArmFetch-v0",
+    entry_point="big_rl.mujoco.envs.arm_fetch:ArmFetchEnv",
+)
+
 
 if __name__ == '__main__':
-    env = gym.make('AntFetch-v0', render_mode='human', num_objs=6)
+    env = gym.make('ArmFetch-v0', render_mode='human', num_objs=6)
     #env = gym.make('AntBaseline-v0', render_mode='human')
     env.reset()
     #breakpoint()
@@ -890,13 +1031,6 @@ if __name__ == '__main__':
             print(f'Episode terminated with reward {total_reward}')
             total_reward = 0
             obs, info = env.reset()
-
-        #collided_objects = env.get_collisions()
-        #if len(collided_objects) > 0:
-        #    print('Collisions:', collided_objects)
-        #for obj in collided_objects:
-        #    env.place_object(obj)
-
 
         ## Display image
         #import matplotlib

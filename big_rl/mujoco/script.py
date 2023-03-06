@@ -624,6 +624,7 @@ if __name__ == '__main__':
             model_type = args.model_type,
             recurrence_type = args.recurrence_type,
             architecture = args.architecture,
+            ff_size = args.ff_size,
             hidden_size = args.hidden_size,
             device = device,
     )
@@ -720,6 +721,6 @@ if __name__ == '__main__':
         torch_save({
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
-            'step': x['step'],
+            #'step': x['step'],
         }, tmp_checkpoint)
         print(f'Saved temporary checkpoint to {os.path.abspath(tmp_checkpoint)}')
