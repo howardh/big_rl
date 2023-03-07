@@ -236,6 +236,7 @@ def env_config_presets():
             'env_name': 'ArmFetch-v0',
             'normalize_obs': False,
             'config': {
+                'ctrl_cost_weight': 0.5/300,
                 'num_objs': 1,
                 'num_target_objs': 1,
             },
