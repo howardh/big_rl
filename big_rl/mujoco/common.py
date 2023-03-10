@@ -254,6 +254,14 @@ def env_config_presets():
             },
         })
 
+        config.add_change('arm_fetch-003', {
+            'config': {
+                'num_objs': 2,
+                'num_target_objs': 1,
+                'camera_fov': 90,
+            },
+        })
+
     init_locomotion()
     init_ant_fetch()
     init_arm_fetch()

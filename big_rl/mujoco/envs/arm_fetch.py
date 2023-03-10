@@ -46,6 +46,7 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
             'blue': (0,0,1,1),
         },
         room_size = 5,
+        camera_fov = 45,
         # Observation parameters
         include_contact_forces=False,
         include_internal_forces=False,
@@ -96,6 +97,7 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
             num_target_objs,
             object_colours,
             room_size,
+            camera_fov,
             include_fetch_reward,
             fetch_reward_key,
             **kwargs
@@ -141,7 +143,9 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
         mjcf.set_boundary(x_min=0, x_max=room_size, y_min=0, y_max=room_size)
         self._agent_body_name = mjcf.add_arm(
                 pos=[room_size/2,room_size/2],
-                segment_lengths=[2,2]
+                segment_lengths=[2,2],
+                gear=[150,150,150],
+                camera_fov=camera_fov,
         )
         self._arm_tip_name = 'arm_tip'
         self._objects = []

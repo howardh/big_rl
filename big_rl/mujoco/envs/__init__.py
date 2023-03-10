@@ -620,7 +620,7 @@ class MjcfModelFactory():
 
         return body_name
 
-    def add_arm(self, pos, name_prefix='', segment_lengths=[2, 2]):
+    def add_arm(self, pos, name_prefix='', segment_lengths=[2, 2], camera_fov=45, gear=[150,150,150]):
         tip_length = 0.1
 
         body_name = f'{name_prefix}torso'
@@ -666,7 +666,7 @@ class MjcfModelFactory():
             'ctrllimited': 'true',
             'ctrlrange': '-1 1',
             'joint': name_prefix+'root_joint',
-            'gear': '150',
+            'gear': str(gear[0]),
         }))
 
 
@@ -687,7 +687,7 @@ class MjcfModelFactory():
             'axis': '1 0 0',
             'name': name_prefix+'arm_segment_1_joint',
             'pos': '0 0 0',
-            'range': '0 90',
+            'range': '-45 90',
             'type': 'hinge'
         })
         arm_segment_1.append(arm_segment_1_joint)
@@ -695,7 +695,7 @@ class MjcfModelFactory():
             'ctrllimited': 'true',
             'ctrlrange': '-1 1',
             'joint': name_prefix+'arm_segment_1_joint',
-            'gear': '150',
+            'gear': str(gear[1]),
         }))
 
         # Arm segment 2
@@ -723,7 +723,7 @@ class MjcfModelFactory():
             'ctrllimited': 'true',
             'ctrlrange': '-1 1',
             'joint': name_prefix+'arm_segment_2_joint',
-            'gear': '150',
+            'gear': str(gear[2]),
         }))
 
         # Effector tip
@@ -745,7 +745,7 @@ class MjcfModelFactory():
             'mode': 'fixed',
             'pos': f'0 0 {segment_lengths[1]}',
             'axisangle': '0 1 0 180',
-            #'fovy': '135',
+            'fovy': str(camera_fov),
         })
         arm_tip.append(camera_first_person)
 
@@ -1014,7 +1014,7 @@ register(
 
 
 if __name__ == '__main__':
-    env = gym.make('ArmFetch-v0', render_mode='human', num_objs=6)
+    env = gym.make('ArmFetch-v0', render_mode='human', num_objs=6, camera_fov=135)
     #env = gym.make('AntBaseline-v0', render_mode='human')
     env.reset()
     #breakpoint()
@@ -1022,6 +1022,8 @@ if __name__ == '__main__':
     total_reward = 0
     for i in range(1000):
         #breakpoint()
+        #env.model.opt.timestep = 0.01 * (i%2+1) # Timestep size can be modified on the fly
+        #print(f'{env.model.opt.timestep} {env.data.time:.2f}')
         #env.render()
         obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
 
