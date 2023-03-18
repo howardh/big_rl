@@ -27,10 +27,6 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
         # Mujoco parameters
         ctrl_cost_weight=0.5,
         contact_cost_weight=5e-4,
-        healthy_reward=1.0,
-        terminate_when_unhealthy=True,
-        healthy_z_range=(0.2, 2.0),
-        healthy_if_flipped=True,
         contact_force_range=(-1.0, 1.0),
         reset_noise_scale=0.1,
         camera = 'first_person',
@@ -47,6 +43,7 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
         },
         room_size = 5,
         camera_fov = 45,
+        camera_distance = 1,
         # Observation parameters
         include_contact_forces=False,
         include_internal_forces=False,
@@ -60,10 +57,6 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
             include_contact_forces (bool): Whether to use contact forces as part of the observation.
             include_internal_forces (bool): Whether to use internal forces as part of the observation.
             contact_cost_weight (float): Weight of the cost of contact forces.
-            healthy_reward (float): Reward given when the agent is healthy.
-            terminate_when_unhealthy (bool): Whether to terminate the episode when the agent is unhealthy.
-            healthy_z_range (tuple): Range of z values that are considered healthy.
-            healthy_if_flipped (bool): Whether to consider the agent healthy if it is upside down.
             contact_force_range (tuple): The contact force in the observation is clipped to this range.
             reset_noise_scale (float): The amount of noise added to the initial state upon resetting.
             camera (str): Which camera to use for the observation.
@@ -74,6 +67,8 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
             num_target_objs (int): Number of objects that are targets. The target objects will give a +1 reward when picked up, and everything else will give a -1.
             object_colours (dict): Dictionary mapping object names to their colour. A ball and a cube of each colour will be created in the environment.
             room_size (int): Size of the room in which the agent is placed, walls included. The smallest room size is 3.
+            camera_fov (int): Field of view of the camera in degrees.
+            camera_distance (int): Distance of the camera along the final arm segment. A distance of 1 means it is at the end of the segment, while 0 means it's at the joint. The distance can be set to negative values for a third person view, or to a value greater than 1 to be placed beyond the arm (though I don't see why you'd ever want that).
             include_fetch_reward (bool): Whether to include the fetch reward in the observation.
             fetch_reward_key (str): Key to use for the fetch reward in the observation. The default value is "shaped_reward" to match the Minigrid setup.
         """
@@ -83,10 +78,6 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
             include_contact_forces,
             include_internal_forces,
             contact_cost_weight,
-            healthy_reward,
-            terminate_when_unhealthy,
-            healthy_z_range,
-            healthy_if_flipped,
             contact_force_range,
             reset_noise_scale,
             camera,
@@ -98,6 +89,7 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
             object_colours,
             room_size,
             camera_fov,
+            camera_distance,
             include_fetch_reward,
             fetch_reward_key,
             **kwargs
@@ -105,11 +97,6 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
 
         self._ctrl_cost_weight = ctrl_cost_weight
         self._contact_cost_weight = contact_cost_weight
-
-        self._healthy_reward = healthy_reward
-        self._terminate_when_unhealthy = terminate_when_unhealthy
-        self._healthy_z_range = healthy_z_range
-        self._healthy_if_flipped = healthy_if_flipped
 
         self._contact_force_range = contact_force_range
 
@@ -146,6 +133,7 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
                 segment_lengths=[2,2],
                 gear=[150,150,150],
                 camera_fov=camera_fov,
+                camera_distance=camera_distance,
         )
         self._arm_tip_name = 'arm_tip'
         self._objects = []
@@ -247,7 +235,7 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
         self._body_ids = np.array(list(sorted(body_ids)))
 
     def control_cost(self, action):
-        control_cost = self._ctrl_cost_weight * np.sum(np.square(action))
+        control_cost = np.sum(np.square(action))
         return control_cost
 
     @property
@@ -259,7 +247,7 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
 
     @property
     def contact_cost(self):
-        contact_cost = self._contact_cost_weight * np.sum(
+        contact_cost = np.sum(
             np.square(self.contact_forces)
         )
         return contact_cost
@@ -273,6 +261,8 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
         # Reset Stats
         self._step_count = 0
         self._max_steps = self._max_steps_initial
+        self._control_cost_total = 0
+        self._contact_cost_total = 0
         self._fetch_reward_total = 0
         self._fetch_reward_last = 0 # Reward in the last step
         self._trial_count = 0
@@ -306,7 +296,9 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
 
         forward_reward = x_velocity
 
-        costs = ctrl_cost = self.control_cost(action)
+        ctrl_cost = self.control_cost(action)
+        self._control_cost_total += ctrl_cost
+        costs = self._ctrl_cost_weight * ctrl_cost
 
         # Task-specific
         # If the agent touches an object, it gets a reward and the object is dropped in a new random location.
@@ -344,11 +336,16 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
             "objects_picked_up": self._objects_picked_up,
             "wandb_episode_end": {
                 "fetch_reward_total": self._fetch_reward_total,
+                "control_cost_mean (raw)": self._control_cost_total/self._step_count,
+                "contact_cost_mean (raw)": self._contact_cost_total/self._step_count,
+                "control_cost_mean": self._ctrl_cost_weight * self._control_cost_total/self._step_count,
+                "contact_cost_mean": self._contact_cost_weight * self._contact_cost_total/self._step_count,
             },
         }
         if self._include_contact_forces:
             contact_cost = self.contact_cost
-            costs += contact_cost
+            self._contact_cost_total += contact_cost
+            costs += self._contact_cost_weight * contact_cost
             info["reward_ctrl"] = -contact_cost
 
         reward = fetch_reward - costs

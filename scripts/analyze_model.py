@@ -5,6 +5,7 @@ import torch
 from big_rl.minigrid.envs import make_env
 from big_rl.minigrid.arguments import init_parser_model
 from big_rl.minigrid.common import env_config_presets, init_model
+#from big_rl.mujoco.common import env_config_presets, init_model
 
 def count_parameters(parameters):
     return sum(p.numel() for p in parameters if p.requires_grad)
@@ -70,6 +71,8 @@ if __name__ == '__main__':
             model_type = args.model_type,
             recurrence_type = args.recurrence_type,
             architecture = args.architecture,
+            ff_size = args.ff_size,
+            hidden_size = args.hidden_size,
             device = torch.device('cpu'),
     )
 

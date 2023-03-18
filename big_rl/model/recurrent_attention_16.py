@@ -1,6 +1,8 @@
+from __future__ import annotations
+from abc import ABC, abstractmethod
 import copy
 import itertools
-from typing import Tuple
+from typing import Tuple, List, Type
 
 import torch
 from torchtyping.tensor_type import TensorType
@@ -9,7 +11,36 @@ from big_rl.model.model import BatchMultiHeadAttentionEinsum, NonBatchMultiHeadA
 from big_rl.model.model import BatchLinear, NonBatchLinear
 
 
-class BatchRecurrentAttention16Layer_v2(torch.nn.Module):
+class RecurrentAttention16Layer(torch.nn.Module, ABC):
+    @abstractmethod
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        ...
+
+    @abstractmethod
+    def forward(self,
+            state: Tuple[
+                TensorType['num_blocks','batch_size','input_size',float], # Internal state
+                TensorType['num_blocks','batch_size','key_size',float], # Previous query
+                TensorType['num_blocks','batch_size','key_size',float], # Previous key
+                TensorType['num_blocks','batch_size','value_size',float], # Previous value
+            ],
+            key: TensorType['seq_len','batch_size','key_size',float],
+            value: TensorType['seq_len','batch_size','value_size',float],
+        ):
+        ...
+
+    @abstractmethod
+    def to_nonbatched(self):
+        ...
+
+    @classmethod
+    @abstractmethod
+    def from_nonbatched(cls, obj):
+        ...
+
+
+class BatchRecurrentAttention16Layer_v2(RecurrentAttention16Layer):
     def __init__(self, input_size, key_size, value_size, num_heads, ff_size, num_modules, batch_type: str = 'einsum'):
         super().__init__()
 
@@ -163,7 +194,7 @@ class BatchRecurrentAttention16Layer_v2(torch.nn.Module):
         return _to_batchedv2(obj)
 
 
-class BatchRecurrentAttention16Layer(torch.nn.Module):
+class BatchRecurrentAttention16Layer(RecurrentAttention16Layer):
     def __init__(self, input_size, key_size, value_size, num_heads, ff_size, num_modules, batch_type: str = 'einsum'):
         super().__init__()
 
@@ -318,7 +349,7 @@ class BatchRecurrentAttention16Layer(torch.nn.Module):
         return _to_batched(obj)
 
 
-class NonBatchRecurrentAttention16Layer(torch.nn.Module):
+class NonBatchRecurrentAttention16Layer(RecurrentAttention16Layer):
     """ Same as RecurrentAttention14, but added gating to the output keys and values. 
     
     API changes:
@@ -465,6 +496,97 @@ class NonBatchRecurrentAttention16Layer(torch.nn.Module):
             for x in self.default_state
         )
 
+    def to_nonbatched(self):
+        return self
+
+    @classmethod
+    def from_nonbatched(cls, obj):
+        return obj
+
+    def remove_modules(self, mask):
+        assert len(mask) == self._num_modules, f"Mask must be the same length as the number of modules. Expected {self._num_modules}. Received {len(mask)}"
+
+        def process(module):
+            if isinstance(module, NonBatchLinear):
+                return NonBatchLinear(
+                    [l for l, m in zip(module.to_linear_modules(), mask) if m],
+                    default_batch=module.default_batch,
+                )
+            else:
+                return module
+
+        self.fc_query = torch.nn.Sequential(*[process(m) for m in self.fc_query])
+        self.fc_key = torch.nn.Sequential(*[process(m) for m in self.fc_key])
+        self.fc_value = torch.nn.Sequential(*[process(m) for m in self.fc_value])
+        self.fc_state = torch.nn.Sequential(*[process(m) for m in self.fc_state])
+
+        self.fc_query_gate = torch.nn.Sequential(*[process(m) for m in self.fc_query_gate])
+        self.fc_key_gate = torch.nn.Sequential(*[process(m) for m in self.fc_key_gate])
+        self.fc_value_gate = torch.nn.Sequential(*[process(m) for m in self.fc_value_gate])
+        self.fc_state_gate = torch.nn.Sequential(*[process(m) for m in self.fc_state_gate])
+
+        self.attention = NonBatchMultiHeadAttention([
+            a for a,m in zip(self.attention.to_multihead_attention_modules(), mask) if m
+        ], key_size=self._key_size, num_heads=self._num_heads, default_batch=self.attention.default_batch)
+
+        self.default_state = torch.nn.ParameterList([
+            torch.nn.Parameter(s[torch.tensor(mask),:])
+            for s in self.default_state
+        ])
+
+        self._num_modules = sum(mask)
+
+    def merge(self, module: NonBatchRecurrentAttention16Layer, positions=None):
+        def interleave(a:list,b:list):
+            if positions is None:
+                return a+b
+            else:
+                output = []
+                for i in range(len(a)+len(b)):
+                    if i in positions:
+                        output.append(b.pop(0))
+                    else:
+                        output.append(a.pop(0))
+                return output
+        def process(module1,module2):
+            assert type(module1) == type(module2)
+
+            if isinstance(module1, NonBatchLinear) and isinstance(module2, NonBatchLinear):
+                assert module1.default_batch == module2.default_batch
+                return NonBatchLinear(
+                    interleave(module1.to_linear_modules(), module2.to_linear_modules()),
+                    default_batch=module1.default_batch,
+                )
+            else:
+                return module1
+
+        self.fc_query = torch.nn.Sequential(*[process(m1,m2) for m1,m2 in zip(self.fc_query, module.fc_query)])
+        self.fc_key = torch.nn.Sequential(*[process(m1,m2) for m1,m2 in zip(self.fc_key, module.fc_key)])
+        self.fc_value = torch.nn.Sequential(*[process(m1,m2) for m1,m2 in zip(self.fc_value, module.fc_value)])
+        self.fc_state = torch.nn.Sequential(*[process(m1,m2) for m1,m2 in zip(self.fc_state, module.fc_state)])
+
+        self.fc_query_gate = torch.nn.Sequential(*[process(m1,m2) for m1,m2 in zip(self.fc_query_gate, module.fc_query_gate)])
+        self.fc_key_gate = torch.nn.Sequential(*[process(m1,m2) for m1,m2 in zip(self.fc_key_gate, module.fc_key_gate)])
+        self.fc_value_gate = torch.nn.Sequential(*[process(m1,m2) for m1,m2 in zip(self.fc_value_gate, module.fc_value_gate)])
+        self.fc_state_gate = torch.nn.Sequential(*[process(m1,m2) for m1,m2 in zip(self.fc_state_gate, module.fc_state_gate)])
+
+        self.attention = NonBatchMultiHeadAttention(
+            interleave(
+                self.attention.to_multihead_attention_modules(),
+                module.attention.to_multihead_attention_modules()
+            ),
+            key_size=self._key_size,
+            num_heads=self._num_heads,
+            default_batch=self.attention.default_batch
+        )
+
+        self.default_state = torch.nn.ParameterList([
+            torch.nn.Parameter(torch.cat(interleave(list(s1.split(1)),list(s2.split(1))),dim=0))
+            for s1,s2 in zip(self.default_state, module.default_state)
+        ])
+
+        self._num_modules += module._num_modules
+
 
 class RecurrentAttention16(torch.nn.Module):
     """ Same as RecurrentAttention14, but added gating to the output keys and values. 
@@ -476,13 +598,13 @@ class RecurrentAttention16(torch.nn.Module):
 
     Previously, `forward()` had a `initial_x` input which was used as a default query. This doesn't change between batches, so it makes more sense for this to be a parameter of the model than an input. Unclear why I made it a parameter of the parent module rather than of the recurrence module.
     """
-    def __init__(self, input_size, key_size, value_size, num_heads, ff_size, architecture=[]):
+    def __init__(self, input_size, key_size, value_size, num_heads, ff_size, architecture=[], layer_cls: Type[RecurrentAttention16Layer]=BatchRecurrentAttention16Layer_v2):
         super().__init__()
 
         self._architecture = architecture
 
         self._layers = torch.nn.ModuleList([
-                BatchRecurrentAttention16Layer_v2(input_size, key_size, value_size, num_heads, ff_size, layer_size)
+                layer_cls(input_size, key_size, value_size, num_heads, ff_size, layer_size)
                 for layer_size in architecture
         ])
 
@@ -497,6 +619,9 @@ class RecurrentAttention16(torch.nn.Module):
         ]
 
         # Pass through each layer
+        extras_attention = []
+        extras_gating = []
+
         current_key = key
         current_value = value
         new_state = []
@@ -507,10 +632,19 @@ class RecurrentAttention16(torch.nn.Module):
             current_value = layer_output['value']
             new_state.append(layer_output['state'])
 
+            extras_attention.append(layer_output['attn_output_weights'].cpu().detach())
+            extras_gating.append({k:v.cpu().detach() for k,v in layer_output['gates'].items()})
+
         return {
+            # Required outputs
             'key': current_key,
             'value': current_value,
             'state': tuple(itertools.chain(*new_state)),
+            # Extras
+            'misc': {
+                'attention': extras_attention,
+                'gates': extras_gating,
+            }
         }
 
     def init_state(self, batch_size: int) -> Tuple[torch.Tensor, ...]:
@@ -528,6 +662,13 @@ class RecurrentAttention16(torch.nn.Module):
     def state_size(self):
         """ The number of elements in the state tuple. """
         return len(self._architecture) * 4
+
+    def convert_layer_type(self, layer_cls: Type[RecurrentAttention16Layer]):
+        """ Convert all layers to a new type. """
+        self._layers = torch.nn.ModuleList([
+            layer_cls.from_nonbatched(layer.to_nonbatched()) # type: ignore
+            for layer in self._layers
+        ])
 
 
 # Batching / Unbatching utils
@@ -734,6 +875,39 @@ def _to_batchedv2(rec: NonBatchRecurrentAttention16Layer) -> BatchRecurrentAtten
     output.default_state = rec.default_state
 
     return output
+
+
+# Resizing / Ablation / Merging utils
+
+
+def ablate(model: RecurrentAttention16, mask: List[List[bool]]) -> RecurrentAttention16:
+    """ Return a new RecurrentAttention16 model with the specified modules removed.
+    """
+
+    # Validation
+    num_layers = len(model._layers)
+    assert len(mask) == num_layers, f"Mask shape must match model shape. Expected {num_layers} layers, got {len(mask)}"
+
+    layer_size = [layer._num_modules for layer in model._layers]
+    assert all(len(m) == s for m, s in zip(mask, layer_size)), f"Mask shape must match model shape. Expected {layer_size}, got {[len(m) for m in mask]}"
+
+    # Convert to non-batched layers
+    model = copy.deepcopy(model)
+    original_layer_type = type(model._layers[0])
+    model.convert_layer_type(NonBatchRecurrentAttention16Layer)
+
+    for layer, layer_mask in zip(model._layers, mask):
+        assert isinstance(layer, NonBatchRecurrentAttention16Layer)
+        layer.remove_modules(layer_mask)
+
+    # Convert back to original layer type
+    model.convert_layer_type(original_layer_type) # type: ignore
+
+    return model
+
+
+def merge(models: List[RecurrentAttention16]):
+    ...
 
 
 if __name__ == '__main__':

@@ -33,7 +33,7 @@ def dummy_loss(output):
     return loss
 
 
-# Tests
+# Test conversion between batched and non-batched
 
 @pytest.mark.parametrize('batched_cls', [BatchRecurrentAttention16Layer, BatchRecurrentAttention16Layer_v2])
 def test_convert_to_batched_same_output(batched_cls):
@@ -203,6 +203,164 @@ def test_same_gradients_after_conversion(batched_cls):
     assert_same_output(batched_output, nonbatched_output)
 
 
+# Test merging and removing modules
+def test_remove_modules_no_removals():
+    # Make sure `remove_modules` can be called without error and the resulting module works
+    module = NonBatchRecurrentAttention16Layer(
+        input_size=8,
+        key_size=8,
+        value_size=8,
+        num_heads=4,
+        ff_size=[3,7],
+        num_modules=2,
+    )
+
+    key = torch.randn([2, 5, 8])
+    value = torch.randn(2, 5, 8)
+    state = module.init_state(5)
+
+    output1 = module(state, key, value)
+
+    # Mask is all True, so everything is kept (nothing removed)
+    module.remove_modules([True, True])
+
+    output2 = module(state, key, value)
+
+    # Output should be unchanged because nothing was removed
+    assert_same_output(output1, output2)
+
+
+def test_remove_modules_2_to_1():
+    # Make sure `remove_modules` can be called without error and the resulting module works
+    module = NonBatchRecurrentAttention16Layer(
+        input_size=8,
+        key_size=8,
+        value_size=8,
+        num_heads=4,
+        ff_size=[3,7],
+        num_modules=2,
+    )
+
+    key = torch.randn([2, 5, 8])
+    value = torch.randn(2, 5, 8)
+    state = module.init_state(5)
+
+    module(state, key, value)
+
+    # Mask is all True, so everything is kept (nothing removed)
+    module.remove_modules([False, True])
+
+    state = module.init_state(5)
+    module(state, key, value)
+
+
+def test_merge_modules_no_error():
+    # Make sure `merge_modules` can be called without error and the resulting module works
+    module1 = NonBatchRecurrentAttention16Layer(
+        input_size=8,
+        key_size=8,
+        value_size=8,
+        num_heads=4,
+        ff_size=[3,7],
+        num_modules=2,
+    )
+    module2 = NonBatchRecurrentAttention16Layer(
+        input_size=8,
+        key_size=8,
+        value_size=8,
+        num_heads=4,
+        ff_size=[3,7],
+        num_modules=3,
+    )
+
+    # Merge modules. Make sure it doesn't error.
+    module1.merge(module2)
+
+    # Check that resulting model works
+    key = torch.randn([4, 5, 8])
+    value = torch.randn(4, 5, 8)
+    state = module1.init_state(5)
+    module1(state, key, value)
+
+
+def test_merge_and_remove_roundtrip():
+    module1 = NonBatchRecurrentAttention16Layer(
+        input_size=8,
+        key_size=8,
+        value_size=8,
+        num_heads=4,
+        ff_size=[3,7],
+        num_modules=2,
+    )
+    module2 = NonBatchRecurrentAttention16Layer(
+        input_size=8,
+        key_size=8,
+        value_size=8,
+        num_heads=4,
+        ff_size=[3,7],
+        num_modules=3,
+    )
+
+    # Get output before merging
+    key = torch.randn([4, 5, 8])
+    value = torch.randn(4, 5, 8)
+    state = module1.init_state(5)
+
+    output1 = module1(state, key, value)
+
+    # Merge modules
+    module1.merge(module2)
+
+    # Remove new modules
+    module1.remove_modules([True, True, False, False, False])
+
+    # Get output after roundtrip
+    output2 = module1(state, key, value)
+
+    # Make sure the outputs are unchanged
+    assert_same_output(output1, output2)
+
+
+def test_merge_and_remove_roundtrip_interleaved():
+    module1 = NonBatchRecurrentAttention16Layer(
+        input_size=8,
+        key_size=8,
+        value_size=8,
+        num_heads=4,
+        ff_size=[3,7],
+        num_modules=2,
+    )
+    module2 = NonBatchRecurrentAttention16Layer(
+        input_size=8,
+        key_size=8,
+        value_size=8,
+        num_heads=4,
+        ff_size=[3,7],
+        num_modules=3,
+    )
+
+    # Get output before merging
+    key = torch.randn([4, 5, 8])
+    value = torch.randn(4, 5, 8)
+    state = module1.init_state(5)
+
+    output1 = module1(state, key, value)
+
+    # Merge modules
+    module1.merge(module2, positions=[0, 2, 4])
+
+    # Remove new modules
+    module1.remove_modules([False, True, False, True, False])
+
+    # Get output after roundtrip
+    output2 = module1(state, key, value)
+
+    # Make sure the outputs are unchanged
+    assert_same_output(output1, output2)
+
+
+# misc
+
 @pytest.mark.parametrize('architecture', [[1], [1,1], [1,2]])
 def test_state_shape(architecture):
     # Check that the number of tensors in the state matches `state_size`.
@@ -225,4 +383,3 @@ def test_state_shape(architecture):
     output = module(state, key, value)
     state = output['state']
     assert len(state) == module.state_size
-

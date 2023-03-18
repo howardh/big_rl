@@ -1,4 +1,4 @@
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Any
 from typing_extensions import Protocol # Needed for python<=3.7. Can import from typing in 3.8.
 
 import torch
@@ -12,7 +12,7 @@ class RecurrenceProtocol(Protocol):
     def init_state(self, batch_size: int) -> Tuple[torch.Tensor]:
         ...
 
-    def forward(self, state: Tuple[torch.Tensor], key: torch.Tensor, value: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(self, state: Tuple[torch.Tensor], key: torch.Tensor, value: torch.Tensor) -> Dict[str, Any]:
         ...
 
     def __call__(self, state: Tuple[torch.Tensor], key: torch.Tensor, value: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -54,10 +54,7 @@ class ModularPolicy8(torch.nn.Module):
                 recurrence_kwargs = recurrence_kwargs,
         )
 
-        ## Store the attention for analysis purposes
-        #self.last_attention = None # [num_layers, batch_size, num_heads, seq_len]
-        #self.last_ff_gating = None
-        #self.last_output_attention = None
+        self.last_output = None
 
     def _init_input_modules(self, input_configs: Dict[str,Dict], key_size, value_size):
         valid_modules = {
@@ -197,14 +194,20 @@ class ModularPolicy8(torch.nn.Module):
 
         self.last_hidden = (new_keys, new_values, *core_output['state'])
 
-        return {
+        #self.last_attention = core_output['misc']['attention'] # type: ignore
+        #self.last_ff_gating = core_output['misc']['gates'] # type: ignore
+
+        self.last_output = {
             **output,
             'hidden': self.last_hidden,
             'misc': {
                 'core_output': core_output,
                 'input_labels': input_labels,
+                'output_attention': self.last_output_attention,
             }
         }
+
+        return self.last_output
 
     def init_hidden(self, batch_size: int = 1):
         device = next(self.parameters()).device
@@ -214,3 +217,7 @@ class ModularPolicy8(torch.nn.Module):
                 torch.zeros([self.attention.num_outputs, batch_size, self._key_size], device=device), # Value
                 *state,
         )
+
+    @property
+    def has_attention(self):
+        return False # TODO: Disabled drawing attention until it's implemented in `evalute_model.py`.

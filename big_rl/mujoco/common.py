@@ -262,6 +262,49 @@ def env_config_presets():
             },
         })
 
+        # Remove control cost
+        config.add_change('arm_fetch-003-ctrlcost0', {
+            'config': {
+                'ctrl_cost_weight': 0,
+            },
+        })
+
+        # Allow extra steps per pickup
+        config.add('arm_fetch-004', {
+            'config': {
+                'max_steps_initial': 1000,
+                'extra_steps_per_pickup': 500,
+                'max_trials': 100,
+            }
+        }, inherit='arm_fetch-003')
+
+        config.add_change('arm_fetch-004-ctrlcost0', {
+            'config': {
+                'ctrl_cost_weight': 0,
+            },
+        })
+
+        # Easier task
+        # Placed the camera further back so it's more likely to see what's happening with random movements.
+        config.add('arm_fetch-005', {
+            'config': {
+                'max_steps_initial': 1000,
+                'extra_steps_per_pickup': 500,
+                'max_trials': 100,
+                'camera_fov': 90,
+                'camera_distance': 0,
+            }
+        }, inherit='arm_fetch-004')
+
+        # Even easier task
+        # One object only
+        config.add('arm_fetch-006', {
+            'config': {
+                'num_objs': 1,
+                'num_target_objs': 1,
+            }
+        }, inherit='arm_fetch-005')
+
     init_locomotion()
     init_ant_fetch()
     init_arm_fetch()

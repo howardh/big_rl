@@ -620,7 +620,7 @@ class MjcfModelFactory():
 
         return body_name
 
-    def add_arm(self, pos, name_prefix='', segment_lengths=[2, 2], camera_fov=45, gear=[150,150,150]):
+    def add_arm(self, pos, name_prefix='', segment_lengths=[2, 2], camera_fov=45, camera_distance=1, gear=[150,150,150]):
         tip_length = 0.1
 
         body_name = f'{name_prefix}torso'
@@ -726,6 +726,16 @@ class MjcfModelFactory():
             'gear': str(gear[2]),
         }))
 
+        # First person camera
+        camera_first_person = self.soup.new_tag('camera', attrs={
+            'name': name_prefix+'first_person',
+            'mode': 'fixed',
+            'pos': f'0 0 {segment_lengths[1]*camera_distance}',
+            'axisangle': '0 1 0 180',
+            'fovy': str(camera_fov),
+        })
+        arm_segment_2.append(camera_first_person)
+
         # Effector tip
         arm_tip = self.soup.new_tag('body', attrs={'name': name_prefix+'arm_tip', 'pos': f'0 0 {segment_lengths[1]}'})
         arm_segment_2.append(arm_tip)
@@ -738,16 +748,6 @@ class MjcfModelFactory():
             'rgba': '1 0 0 1',
         })
         arm_tip.append(arm_tip_geom)
-
-        # First person camera
-        camera_first_person = self.soup.new_tag('camera', attrs={
-            'name': name_prefix+'first_person',
-            'mode': 'fixed',
-            'pos': f'0 0 {segment_lengths[1]}',
-            'axisangle': '0 1 0 180',
-            'fovy': str(camera_fov),
-        })
-        arm_tip.append(camera_first_person)
 
         self.worldbody.append(body)
         for a in actuators:
@@ -1014,7 +1014,7 @@ register(
 
 
 if __name__ == '__main__':
-    env = gym.make('ArmFetch-v0', render_mode='human', num_objs=6, camera_fov=135)
+    env = gym.make('ArmFetch-v0', render_mode='human', num_objs=6, camera_fov=90, camera_distance=0)
     #env = gym.make('AntBaseline-v0', render_mode='human')
     env.reset()
     #breakpoint()

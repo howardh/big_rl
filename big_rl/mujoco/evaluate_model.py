@@ -9,6 +9,8 @@ import torch
 from tqdm import tqdm
 import PIL.Image, PIL.ImageDraw, PIL.ImageFont
 from fonts.ttf import Roboto # type: ignore
+from big_rl.model.modular_policy_8 import ModularPolicy8
+from big_rl.model.recurrent_attention_16 import RecurrentAttention16 # type: ignore
 
 from big_rl.mujoco.envs import make_env
 from big_rl.minigrid.arguments import init_parser_model
@@ -85,11 +87,12 @@ def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False, 
 
         results['reward'].append(reward)
         results['regret'].append(info.get('regret', None))
-        results['attention'].append((
-            [x.numpy() for x in model.last_attention],
-            [x.numpy() for x in model.last_ff_gating],
-            {k: v.numpy() for k,v in model.last_output_attention.items()},
-        ))
+        if model.has_attention:
+            results['attention'].append((
+                [x.numpy() for x in model.last_attention],
+                [x.numpy() for x in model.last_ff_gating],
+                {k: v.numpy() for k,v in model.last_output_attention.items()},
+            ))
         results['hidden'].append([
             x.cpu().detach().numpy() for x in model.last_hidden
         ])
@@ -285,6 +288,74 @@ def draw_attention(core_attention, query_gating, output_attention, input_labels)
 
     return all_images_concat
 
+def draw_attention2(attention, input_labels, title=None, block_size=24, padding=2, font_size=18):
+    font_family = Roboto
+    font = PIL.ImageFont.truetype(font_family, font_size)
+
+    all_images = []
+
+    # Title
+    if title is not None:
+        _, _, text_width, text_height = font.getbbox(title)
+
+        img = PIL.Image.new('RGB', (text_width, text_height), color=(255,255,255))
+        draw = PIL.ImageDraw.Draw(img)
+        draw.fontmode = 'L' # type: ignore
+        draw.text(
+                (0,0),
+                title,
+                font=font,
+                fill=(0,0,0)
+        )
+
+        all_images.append(img)
+
+    # Labels
+    if input_labels is not None:
+        input_label_images = []
+        for label in input_labels:
+            _, _, text_width, text_height = font.getbbox(label)
+            width = text_width
+            height = block_size
+
+            img = PIL.Image.new('RGB', (width, height), color=(255,255,255))
+            draw = PIL.ImageDraw.Draw(img)
+            draw.fontmode = 'L' # type: ignore
+            draw.text(
+                    (0,0),
+                    label,
+                    font=font,
+                    fill=(0,0,0)
+            )
+            input_label_images.append(img)
+        input_labels_concat = concat_images(input_label_images, padding=padding, direction='v', align=-1)
+        input_labels_concat = input_labels_concat.rotate(90, expand=True)
+
+        all_images.append(input_labels_concat)
+
+    # Attention
+    while len(attention.shape) > 2:
+        attention = attention.mean(dim=0)
+    num_outputs, num_inputs = attention.shape
+    width = num_inputs*block_size + (num_inputs+1)*padding
+    height = num_outputs*block_size + (num_outputs+1)*padding
+    attention_img = PIL.Image.new('RGB', (width, height), color=(255,255,255))
+    for i in range(num_outputs):
+        for j in range(num_inputs):
+            weight = attention[i,j].item()
+            c = int(255*(1-weight))
+            x = j*(block_size+padding) + padding
+            y = i*(block_size+padding) + padding
+            PIL.ImageDraw.Draw(attention_img).rectangle(
+                    (x,y,x+block_size,y+block_size),
+                    fill=(c,c,c),
+            )
+    all_images.append(attention_img)
+
+    if len(all_images) == 1:
+        return all_images[0]
+    return concat_images(all_images, padding=padding, direction='v', align=-1) # Attach labels to first layer attention
+
 def draw_text(text, font_family=Roboto, font_size=18, color=(0,0,0), padding=2):
     font = PIL.ImageFont.truetype(font_family, font_size)
 
@@ -331,6 +402,53 @@ def draw_observations(observations: dict):
     return concat_images(images, direction='v', align=-1)
 
 
+def draw_attention_mp8ra16(model_output):
+    block_size = 24
+    padding = 2
+    font_size = 18
+
+    core_attention = model_output['misc']['core_output']['misc']['attention']
+    gates = model_output['misc']['core_output']['misc']['gates']
+    output_attention = model_output['misc']['output_attention']
+    input_labels = model_output['misc']['input_labels']
+
+    # Core modules
+    core_images = []
+    for i,layer in enumerate(core_attention):
+        if i == 0:
+            # FIXME: Not aligning properly when there's input labels. The blocks with label and without label are off by 2 pixels.
+            core_images.append(draw_attention2(layer.mean(1), input_labels, block_size=block_size, padding=padding, font_size=font_size))
+        else:
+            core_images.append(draw_attention2(layer.mean(1), None, block_size=block_size, padding=padding, font_size=font_size))
+    core_images_concat = concat_images(core_images, padding=padding, direction='v', align=1)
+
+    # Gating
+    gate_images = []
+    for layer in gates:
+        layer_gate_images = []
+        for k,v in layer.items():
+            layer_gate_images.append(draw_attention2(v.squeeze(1), input_labels=None, title=k, block_size=block_size, padding=padding, font_size=font_size))
+        gate_images.append(concat_images(layer_gate_images, padding=padding, direction='v', align=-1))
+    gate_images_concat = concat_images(gate_images, padding=padding, direction='h', align=1)
+
+    ## Output modules
+    output_images = []
+    for k,v in output_attention.items():
+        output_images.append(draw_attention2(v, input_labels=None, title=k, block_size=block_size, padding=padding, font_size=font_size))
+    output_images_concat = concat_images(output_images, padding=padding, direction='v', align=1)
+
+    all_images_concat = concat_images(
+            [
+                core_images_concat,
+                gate_images_concat,
+                output_images_concat,
+            ],
+            padding=padding, direction='h'
+    )
+
+    return all_images_concat
+
+
 class VideoCallback:
     def __init__(self, filename: str, 
                  size: Optional[Tuple[int,int]] = None,
@@ -367,12 +485,20 @@ class VideoCallback:
         frame = env.render()
 
         obs_image = draw_observations(obs)
-        attn_img = draw_attention(
-                core_attention = model.last_attention,
-                query_gating = model.last_ff_gating,
-                output_attention = model.last_output_attention,
-                input_labels = results['input_labels'][-1],
-        )
+        obs_image = draw_observations(obs)
+        if isinstance(model, ModularPolicy8) and isinstance(model.attention, RecurrentAttention16):
+            attn_img = draw_attention_mp8ra16(
+                    model.last_output,
+            )
+        elif model.has_attention:
+            attn_img = draw_attention(
+                    core_attention = model.last_attention,
+                    query_gating = model.last_ff_gating,
+                    output_attention = model.last_output_attention,
+                    input_labels = results['input_labels'][-1],
+            )
+        else:
+            attn_img = draw_text('No Attention')
         rewards_img = draw_rewards(
                 [
                     rew
@@ -493,6 +619,8 @@ if __name__ == '__main__':
             model_type = args.model_type,
             recurrence_type = args.recurrence_type,
             architecture = args.architecture,
+            ff_size = args.ff_size,
+            hidden_size = args.hidden_size,
             device = device,
     )
     model.to(device)
