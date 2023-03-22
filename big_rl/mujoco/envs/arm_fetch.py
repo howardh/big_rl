@@ -310,13 +310,13 @@ class ArmFetchEnv(MujocoEnv, utils.EzPickle):
                 fetch_reward += 1
             else:
                 fetch_reward -= 1
-            self._fetch_reward_last = fetch_reward
-            self._fetch_reward_total += fetch_reward
             self._objects_picked_up[obj] += 1
             # Increase the time limit for picking up objects
             self._max_steps += self._extra_steps_per_pickup
             # Trial counter
             self._trial_count += 1
+        self._fetch_reward_last = fetch_reward
+        self._fetch_reward_total += fetch_reward
 
         # Build return values
         terminated = self.terminated
