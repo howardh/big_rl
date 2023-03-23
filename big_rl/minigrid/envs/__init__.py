@@ -1070,7 +1070,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
         if self.max_steps < 0:
             self.max_steps = float('inf')
 
-    def _init_fetch(self, num_objs, num_obj_types=2, num_obj_colors=6, unique_objs=True, prob=1.0, cycle_targets=False):
+    def _init_fetch(self, num_objs, num_obj_types=2, num_obj_colors=6, unique_objs=True, prob=1.0, cycle_targets=False, fixed_target=None):
         """
         Initialize the fetch task
 
@@ -1080,6 +1080,7 @@ class MultiRoomEnv_v1(MiniGridEnv):
             num_obj_colors: number of object colours to choose from. Colours are taken from `gym_minigrid.minigrid.COLOR_NAMES`.
             unique_objs: if True, all objects will be unique. If False, objects can be repeated.
             prob: Probability of obtaining a positive reward upon picking up the target object, or a negative reward upon picking up non-target objects.
+            fixed_target: If specified, the target object will be fixed to this object type and colour. Specify as a tuple `(type, colour)`. For example: `("ball", "red")`.
         """
         self._fetch_reward_prob = prob
 
@@ -1109,9 +1110,13 @@ class MultiRoomEnv_v1(MiniGridEnv):
         self.objects = objs
 
         # Choose a random object to be picked up
-        target = objs[self._rand_int(0, len(objs))]
-        self._target_type = target.type
-        self._target_color = target.color
+        if fixed_target is None:
+            target = objs[self._rand_int(0, len(objs))]
+            self._target_type = target.type
+            self._target_color = target.color
+        else:
+            self._target_type = fixed_target[0]
+            self._target_color = fixed_target[1]
 
         self._fetch_target_cycle = [
             (obj.type, obj.color) for obj in objs

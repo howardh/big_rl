@@ -18,6 +18,8 @@ def init_parser_trainer(parser: ArgumentParser):
     parser.add_argument('--entropy-loss-coeff', type=float, default=0.01, help='Coefficient for the entropy loss.')
     parser.add_argument('--target-kl', type=float, default=None, help='Target KL divergence.')
     parser.add_argument('--num-epochs', type=int, default=5, help='Number of minibatches.')
+    parser.add_argument('--minibatch-size', type=int, default=256, help='Minibatch size. Only applies to the non-recurrent baseline model.')
+    parser.add_argument('--num-minibatches', type=int, default=4, help='Number of minibatches. Only applies to the non-recurrent baseline model.')
     parser.add_argument('--max-grad-norm', type=float, default=0.5, help='Maximum gradient norm.')
     parser.add_argument('--warmup-steps', type=int, default=0, help='Number of warmup steps on the environment before we start training on the generated samples.')
     parser.add_argument('--update-hidden-after-grad', action='store_true', help='Update the hidden state after the gradient step.')
@@ -31,7 +33,7 @@ def init_parser_trainer(parser: ArgumentParser):
 
 def init_parser_model(parser: ArgumentParser):
     parser.add_argument('--model-type', type=str, default='ModularPolicy5',
-                        help='Model type', choices=['ModularPolicy5', 'ModularPolicy5LSTM', 'ModularPolicy7', 'ModularPolicy8'])
+                        help='Model type', choices=['ModularPolicy5', 'ModularPolicy5LSTM', 'ModularPolicy7', 'ModularPolicy8', 'Baseline'])
     parser.add_argument('--recurrence-type', type=str,
                         default='RecurrentAttention14',
                         help='Recurrence type',

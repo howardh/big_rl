@@ -2,6 +2,7 @@ import torch
 
 from big_rl.model.model import ModularPolicy2, ModularPolicy4, ModularPolicy5, ModularPolicy5LSTM, ModularPolicy7
 from big_rl.model.modular_policy_8 import ModularPolicy8
+from big_rl.model.baseline import BaselineModel
 from big_rl.utils import ExperimentConfigs
 
 
@@ -122,6 +123,22 @@ def init_model(observation_space, action_space,
         return ModularPolicy8(
                 **common_model_params,
                 recurrence_kwargs=recurrence_kwargs,
+        ).to(device)
+    elif model_type == 'Baseline':
+        # Similar to ModularPolicy5LSTM setup
+        assert architecture is not None
+        for k in ['reward', 'obs (shaped_reward)']:
+            if k not in inputs:
+                continue
+            inputs[k]['config'] = {
+                    **inputs[k].get('config', {}),
+                    'value_size': 1,
+            }
+        return BaselineModel(
+                inputs=inputs,
+                outputs=outputs,
+                value_size=common_model_params['value_size'],
+                architecture=architecture,
         ).to(device)
     raise NotImplementedError()
 
@@ -268,6 +285,40 @@ def env_config_presets():
                     'include_reward': False,
                 },
                 'config': {
+                    'shaped_reward_config': {
+                        'type': 'subtask',
+                        'noise': ('stop', cutoff, 'trials'),
+                    },
+                }
+            }, inherit='fetch-004')
+            config.add(f'fetch-004-stop_{cutoff}_trials-green_key', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'fetch_config': {
+                        'num_objs': 2,
+                        'num_obj_types': 1,
+                        'num_obj_colors': 2,
+                        'fixed_target': ('key', 'green'),
+                    },
+                    'shaped_reward_config': {
+                        'type': 'subtask',
+                        'noise': ('stop', cutoff, 'trials'),
+                    },
+                }
+            }, inherit='fetch-004')
+            config.add(f'fetch-004-stop_{cutoff}_trials-blue_key', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'fetch_config': {
+                        'num_objs': 2,
+                        'num_obj_types': 1,
+                        'num_obj_colors': 2,
+                        'fixed_target': ('key', 'blue'),
+                    },
                     'shaped_reward_config': {
                         'type': 'subtask',
                         'noise': ('stop', cutoff, 'trials'),

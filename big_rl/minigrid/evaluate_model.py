@@ -33,7 +33,8 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
 
     hidden = model.init_hidden(1) # type: ignore (???)
     steps_iterator = itertools.count()
-    #steps_iterator = range(100+np.random.randint(50))
+    #steps_iterator = range(100+np.random.randint(50)); print('--- DEBUG MODE ---')
+    steps_iterator = range(10); print('--- DEBUG MODE ---')
     if verbose:
         steps_iterator = tqdm(steps_iterator)
 
@@ -458,9 +459,14 @@ if __name__ == '__main__':
     )
     model.to(device)
 
-    checkpoint = torch.load(args.model, map_location=device)
-    model.load_state_dict(checkpoint['model'], strict=False)
-    print(f'Loaded checkpoint from {args.model}')
+    if args.model is not None:
+        checkpoint = torch.load(args.model, map_location=device)
+        model.load_state_dict(checkpoint['model'], strict=False)
+        print(f'Loaded checkpoint from {args.model}')
+    else:
+        print('No model checkpoint specified, using random initialization.')
+        checkpoint = {}
+
     if 'step' in checkpoint:
         print(f'Checkpoint step: {checkpoint["step"]:,}')
 
