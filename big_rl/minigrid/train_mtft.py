@@ -600,6 +600,7 @@ if __name__ == '__main__':
         if type(v) is str:
             v = v.format(
                 RUN_ID = args.run_id,
+                step = '{step}', # Keep {step} as a placeholder for the step number.
             )
             setattr(args, k, v)
 
@@ -717,7 +718,7 @@ if __name__ == '__main__':
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'step': x['step'],
-            }, args.model_checkpoint)
+                }, args.model_checkpoint.format(step=f"{x['step']:,}"))
             print(f'Saved checkpoint to {os.path.abspath(args.model_checkpoint)}')
     else:
         x = {}
