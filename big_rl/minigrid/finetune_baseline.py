@@ -1,7 +1,5 @@
-from collections import defaultdict
-import os
 import itertools
-from typing import Optional, Generator, Dict, List, Any, Callable, Union, Tuple
+from typing import Optional, Generator, Dict, List, Any, Callable
 import time
 
 import gymnasium
@@ -20,7 +18,7 @@ from frankenstein.advantage.gae import generalized_advantage_estimate
 from frankenstein.loss.policy_gradient import clipped_advantage_policy_gradient_loss
 
 from big_rl.minigrid.envs import make_env
-from big_rl.utils import torch_save, zip2, merge_space, generate_id
+from big_rl.utils import merge_space
 from big_rl.minigrid.common import init_model, env_config_presets
 
 
@@ -58,6 +56,8 @@ def compute_ppo_losses(
     """
     Compute the losses for PPO.
     """
+    device = next(model.parameters()).device
+
     obs = history.obs
     action = history.action
     reward = history.reward
@@ -185,13 +185,13 @@ def log_episode_end(done, info, episode_reward, episode_true_reward, episode_ste
         supervised_trials = np.array([x['supervised_trials'] for x in info['final_info'][fi]])
         unsupervised_reward = np.array([x['unsupervised_reward'] for x in info['final_info'][fi]])
         supervised_reward = np.array([x['supervised_reward'] for x in info['final_info'][fi]])
-        #rewards_by_trial = np.array([x['episode_rewards'] for x in info['final_info'][done2 & fi]]).mean(0, keepdims=True)
+        rewards_by_trial = np.array([x['episode_rewards'] for x in info['final_info'][done2 & fi]]).mean(0, keepdims=True)
         if wandb.run is not None:
             data = {
                     f'reward/{env_label}': episode_reward[done2].mean().item(),
                     f'true_reward/{env_label}': episode_true_reward[done2].mean().item(),
                     f'episode_length/{env_label}': episode_steps[done2].mean().item(),
-                    #'trials/rewards_by_trial': ... # TODO: HOW DO I LOG THIS???
+                    'trials/rewards_by_trial': wandb.Histogram(rewards_by_trial),
                     'step': global_step_counter[0]-global_step_counter[1],
                     'step_total': global_step_counter[0],
             }
@@ -225,7 +225,6 @@ def train_single_env(
         minibatch_size: int = 32,
         target_kl: Optional[float] = None,
         norm_adv: bool = True,
-        warmup_steps: int = 0,
         ) -> Generator[Dict[str, Any], None, None]:
     """
     Train a model with PPO on an Atari game.
@@ -265,72 +264,11 @@ def train_single_env(
     episode_steps = np.zeros(num_envs)
 
     ##################################################
-    # Warmup
-    # The state of all environments are similar at the start of an episode. By warming up, we increase the diversity of states to something that is closer to iid.
-
-    start_time = time.time()
-    warmup_episode_rewards = defaultdict(lambda: [])
-    warmup_episode_steps = defaultdict(lambda: [])
-    for _ in range(warmup_steps):
-        # Select action
-        with torch.no_grad():
-            model_output = model({
-                k: torch.tensor(v, dtype=torch.float, device=device)*obs_scale.get(k,1)
-                for k,v in obs.items()
-                if k not in obs_ignore
-            })
-
-            action_probs = model_output['action'].softmax(1)
-            action_dist = torch.distributions.Categorical(action_probs)
-            action = action_dist.sample().cpu().numpy()
-
-        # Step environment
-        obs, reward, terminated, truncated, info = env.step(action) # type: ignore
-        done = terminated | truncated
-
-        episode_reward += reward
-        episode_true_reward += info.get('reward', reward)
-        episode_steps += 1
-
-        if done.any():
-            # Print stats
-            for env_label, env_id in env_label_to_id.items():
-                done2 = done & (env_ids == env_id)
-                if not done2.any():
-                    continue
-                for x in episode_reward[done2]:
-                    warmup_episode_rewards[env_label].append(x.item())
-                for x in episode_steps[done2]:
-                    warmup_episode_steps[env_label].append(x.item())
-                print(f'Warmup\t reward: {episode_reward[done2].mean():.2f}\t len: {episode_steps[done2].mean()} \t env: {env_label} ({done2.sum().item()})')
-            # Reset episode stats
-            episode_reward[done] = 0
-            episode_true_reward[done] = 0
-            episode_steps[done] = 0
-
-    if warmup_steps > 0:
-        print(f'Warmup time: {time.time() - start_time:.2f} s')
-        for env_label, env_id in env_label_to_id.items():
-            reward_mean = np.mean(warmup_episode_rewards[env_label])
-            reward_std = np.std(warmup_episode_rewards[env_label])
-            steps_mean = np.mean(warmup_episode_steps[env_label])
-            # TODO: handle case where there are no completed episodes during warmup?
-            if wandb.run is not None:
-                wandb.log({
-                    f'reward/{env_label}': reward_mean,
-                    f'episode_length/{env_label}': steps_mean,
-                    'step': global_step_counter[0]-global_step_counter[1],
-                    'step_total': global_step_counter[0],
-                }, step = global_step_counter[0])
-            print(f'\t{env_label}\treward: {reward_mean:.2f} +/- {reward_std:.2f}\t len: {steps_mean:.2f}')
-
-    ##################################################
     # Start training
     for step in itertools.count():
         # Gather data
         state_values = [] # For logging purposes
         entropies = [] # For logging purposes
-        episode_rewards = [] # For multitask weighing purposes
         for _ in range(rollout_length):
             global_step_counter[0] += num_envs
 
@@ -378,29 +316,16 @@ def train_single_env(
                         env_label_to_id = env_label_to_id,
                         global_step_counter = global_step_counter,
                 )
-                # Save episode rewards
-                for r in episode_reward[done]:
-                    episode_rewards.append(r)
                 # Reset episode stats
                 episode_reward[done] = 0
                 episode_true_reward[done] = 0
                 episode_steps[done] = 0
-
-        if type(model).__name__ == 'ModularPolicy5':
-            assert isinstance(model.last_attention, list)
-            assert isinstance(model.last_input_labels, list)
-            assert isinstance(model.last_output_attention, dict)
-            log['attention max'] = {
-                label: max([a.max().item() for a in attn])
-                for label, attn in
-                zip(model.last_input_labels,
-                    zip(
-                        model.last_attention[0].split(1,dim=2),
-                        model.last_output_attention['action'].split(1,dim=1), # type: ignore (???)
-                        model.last_output_attention['value'].split(1,dim=1), # type: ignore (???)
-                    )
-                )
-            }
+                # Only do one episode
+                if done[0]:
+                    yield {
+                        'episode_rewards': info['final_info'][0]['episode_rewards']
+                    }
+                    return
 
         # Train
         losses = compute_ppo_losses(
@@ -426,7 +351,6 @@ def train_single_env(
 
             yield {
                 'log': log,
-                'episode_rewards': episode_rewards,
                 **x
             }
 
@@ -434,7 +358,6 @@ def train_single_env(
 
         # Clear data
         history.clear()
-        episode_rewards = []
 
 
 def train(
@@ -460,7 +383,6 @@ def train(
         minibatch_size: int = 32,
         target_kl: Optional[float] = None,
         norm_adv: bool = True,
-        warmup_steps: int = 0,
         start_step: int = 0,
         ):
     global_step_counter = [start_step, start_step]
@@ -483,13 +405,18 @@ def train(
             num_minibatches = num_minibatches,
             target_kl = target_kl,
             norm_adv = norm_adv,
-            warmup_steps = warmup_steps,
         )
         for env,labels in zip(envs, env_labels)
     ]
 
     start_time = time.time()
     for _, losses in enumerate(zip(*trainers)):
+        if 'loss' not in losses[0]:
+            yield {
+                'step': global_step_counter[0],
+                'episode_rewards': losses[0]['episode_rewards'],
+            }
+            return
         #env_steps = training_steps * rollout_length * sum(env.num_envs for env in envs)
         env_steps = global_step_counter[0]
 
@@ -556,6 +483,137 @@ def train(
             break
 
 
+def finetune(
+        env_config_name: str,
+        num_envs: int,
+        checkpoint_filename: str,
+        model_type: str,
+        model_architecture: List[int],
+        # Training parameters
+        optimizer_type: str = 'adam',
+        learning_rate: float = 1e-5,
+        max_steps: int = 0,
+        rollout_length: int = 128,
+        reward_clip: Optional[float] = 1.0,
+        reward_scale: float = 1.0,
+        discount: float = 0.99,
+        gae_lambda: float = 0.95,
+        norm_adv: bool = True,
+        clip_vf_loss: Optional[float] = 0.1,
+        vf_loss_coeff: float = 0.5,
+        entropy_loss_coeff: float = 0.01,
+        minibatch_size: int = 256,
+        num_minibatches: int = 4,
+        target_kl: Optional[float] = None,
+        max_grad_norm: float = 0.5,
+        cuda: bool = True,
+        load_optimizer: bool = False,
+        # Override configs
+        num_trials: Optional[int] = None,
+        room_size: Optional[int] = None,
+    ):
+    ENV_CONFIG_PRESETS = env_config_presets()
+    env_config = ENV_CONFIG_PRESETS[env_config_name]
+    if num_trials is not None:
+        env_config['config']['num_trials'] = num_trials
+    if room_size is not None:
+        env_config['config']['min_room_size'] = room_size
+        env_config['config']['max_room_size'] = room_size
+    envs = [
+        gymnasium.vector.SyncVectorEnv([lambda: make_env(**env_config) for _ in range(num_envs)])
+    ]
+
+    if cuda and torch.cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
+
+    # Initialize model
+    model = init_model(
+            observation_space = merge_space(*[env.single_observation_space for env in envs]),
+            action_space = envs[0].single_action_space, # Assume the same action space for all environments
+            model_type = model_type,
+            recurrence_type = None,
+            architecture = model_architecture,
+            device = device,
+    )
+    model.to(device)
+
+    # Initialize optimizer
+    if optimizer_type == 'Adam':
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    elif optimizer_type == 'RMSprop':
+        optimizer = torch.optim.RMSprop(model.parameters(), lr=learning_rate)
+    elif optimizer_type == 'SGD':
+        optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    else:
+        raise ValueError(f'Unknown optimizer: {optimizer_type}')
+
+    # Initialize learning rate scheduler
+    lr_scheduler = None # TODO
+
+    # Load checkpoint
+    start_step = 0
+    checkpoint = None
+
+    assert checkpoint_filename is not None
+    checkpoint = torch.load(checkpoint_filename, map_location=device)
+    print(f'Loading model from {checkpoint_filename}')
+
+    if checkpoint is not None:
+        model.load_state_dict(checkpoint['model'], strict=False)
+        if 'optimizer' in checkpoint and load_optimizer:
+            optimizer.load_state_dict(checkpoint['optimizer'])
+        #if lr_scheduler is not None and 'lr_scheduler' in checkpoint:
+        #    lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        start_step = checkpoint.get('step', 0)
+        print(f'Loaded checkpoint from {checkpoint_filename} at step {start_step}')
+
+    # Initialize trainer
+    trainer = train(
+            model = model,
+            envs = envs, # type: ignore (??? AsyncVectorEnv is not a subtype of VectorEnv ???)
+            env_labels = [[env_config_name]*num_envs],
+            env_group_labels = [env_config_name],
+            optimizer = optimizer,
+            lr_scheduler = lr_scheduler,
+            max_steps = max_steps,
+            rollout_length = rollout_length,
+            obs_scale = {'obs (image)': 1.0/255.0},
+            reward_clip = reward_clip,
+            reward_scale = reward_scale,
+            discount = discount,
+            gae_lambda = gae_lambda,
+            norm_adv = norm_adv,
+            clip_vf_loss = clip_vf_loss,
+            vf_loss_coeff = vf_loss_coeff,
+            entropy_loss_coeff = entropy_loss_coeff,
+            target_kl = target_kl,
+            minibatch_size = minibatch_size,
+            num_minibatches = num_minibatches,
+            max_grad_norm = max_grad_norm,
+            start_step = start_step,
+    )
+
+    # Run training loop
+    start_weights = torch.nn.utils.parameters_to_vector(model.parameters()).detach().clone()
+    x = {}
+    for x in trainer:
+        pass
+    end_weights = torch.nn.utils.parameters_to_vector(model.parameters()).detach().clone()
+
+    print('-'*80)
+    print(f'Episode rewards: {x["episode_rewards"]}')
+    print(f'Episode rewards total: {sum(x["episode_rewards"])}') # type: ignore
+    print(f'Weight change: {torch.norm(end_weights - start_weights)}')
+    print('-'*80)
+    breakpoint()
+
+    return {
+        'episode_rewards': x['episode_rewards'],
+    }
+
+
 if __name__ == '__main__':
     import argparse
 
@@ -576,167 +634,146 @@ if __name__ == '__main__':
 
     parser.add_argument('--starting-model', type=str, default=None,
                         help='Path to a model checkpoint to start training from.')
-    parser.add_argument('--model-checkpoint', type=str, default=None,
-                        help='Path to a model checkpoint to save the model to.')
-    parser.add_argument('--checkpoint-interval', type=int, default=1000,
-                        help='Number of training steps between checkpoints.')
 
-    parser.add_argument('--slurm-split', action='store_true', help='Set this flag to let the script know it is running on a SLURM cluster with one job split across an array job. This ensures that the same checkpoint is used for each of these jobs.')
     parser.add_argument('--cuda', action='store_true', help='Use CUDA.')
     parser.add_argument('--wandb', action='store_true', help='Save results to W&B.')
     parser.add_argument('--wandb-id', type=str, default='{RUN_ID}',
                         help='W&B run ID. Defaults to the run ID.')
 
+    # Override configs
+    parser.add_argument('--load-optimizer', action='store_true', help='Load optimizer state from checkpoint.')
+    parser.add_argument('--num-trials', type=int, default=None)
+    parser.add_argument('--room-size', type=int, default=None)
+
     # Parse arguments
     args = parser.parse_args()
 
-    # Post-process string arguments
-    # Note: Only non-string arguments and args.run_id can be used until the post-processing is done.
-    if args.run_id is None:
-        args.run_id = generate_id(slurm_split = args.slurm_split)
-    else:
-        assert '{' not in args.run_id and '}' not in args.run_id, 'Run ID cannot contain {} variables.'
-    print(f'Run ID: {args.run_id}')
+    #ENV_CONFIG_PRESETS = env_config_presets()
+    #env_config = ENV_CONFIG_PRESETS[args.envs[0]]
+    #if args.num_trials is not None:
+    #    env_config['config']['num_trials'] = args.num_trials
+    #if args.room_size is not None:
+    #    env_config['config']['min_room_size'] = args.room_size
+    #    env_config['config']['max_room_size'] = args.room_size
+    #envs = [
+    #    gymnasium.vector.SyncVectorEnv([lambda: make_env(**env_config) for _ in range(args.num_envs[0])])
+    #]
 
-    for k,v in vars(args).items():
-        if type(v) is str:
-            v = v.format(
-                RUN_ID = args.run_id,
-                step = '{step}', # Keep {step} as a placeholder for the step number.
-            )
-            setattr(args, k, v)
+    #if args.cuda and torch.cuda.is_available():
+    #    device = torch.device('cuda')
+    #else:
+    #    device = torch.device('cpu')
 
-    # Initialize W&B
-    if args.wandb:
-        if args.model_checkpoint is not None:
-            wandb_id = os.path.basename(args.model_checkpoint).split('.')[0]
-            wandb.init(project='ppo-multitask-minigrid', id=wandb_id, resume='allow')
-        else:
-            wandb.init(project='ppo-multitask-minigrid')
-        wandb.config.update(args)
+    ## Initialize model
+    #model = init_model(
+    #        observation_space = merge_space(*[env.single_observation_space for env in envs]),
+    #        action_space = envs[0].single_action_space, # Assume the same action space for all environments
+    #        model_type = args.model_type,
+    #        recurrence_type = args.recurrence_type,
+    #        architecture = args.architecture,
+    #        ff_size = args.ff_size,
+    #        hidden_size = args.hidden_size,
+    #        device = device,
+    #)
+    #model.to(device)
 
-    ENV_CONFIG_PRESETS = env_config_presets()
-    env_configs = [
-        [ENV_CONFIG_PRESETS[e] for _ in range(n)]
-        for e,n in zip(args.envs, args.num_envs)
-    ]
-    envs = [
-        gymnasium.vector.AsyncVectorEnv([lambda conf=conf: make_env(**conf) for conf in env_config]) # type: ignore (Why is `make_env` missing an argument?)
-        for env_config in env_configs
-    ]
+    ## Initialize optimizer
+    #if args.optimizer == 'Adam':
+    #    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    #elif args.optimizer == 'RMSprop':
+    #    optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr)
+    #elif args.optimizer == 'SGD':
+    #    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
+    #else:
+    #    raise ValueError(f'Unknown optimizer: {args.optimizer}')
 
-    if args.cuda and torch.cuda.is_available():
-        device = torch.device('cuda')
-    else:
-        device = torch.device('cpu')
+    ## Initialize learning rate scheduler
+    #lr_scheduler = None # TODO
 
-    # Initialize model
-    model = init_model(
-            observation_space = merge_space(*[env.single_observation_space for env in envs]),
-            action_space = envs[0].single_action_space, # Assume the same action space for all environments
-            model_type = args.model_type,
-            recurrence_type = args.recurrence_type,
-            architecture = args.architecture,
-            ff_size = args.ff_size,
-            hidden_size = args.hidden_size,
-            device = device,
+    ## Load checkpoint
+    #start_step = 0
+    #checkpoint = None
+
+    #assert args.starting_model is not None
+    #checkpoint = torch.load(args.starting_model, map_location=device)
+    #print(f'Loading model from {args.starting_model}')
+
+    #if checkpoint is not None:
+    #    model.load_state_dict(checkpoint['model'], strict=False)
+    #    if 'optimizer' in checkpoint and args.load_optimizer:
+    #        optimizer.load_state_dict(checkpoint['optimizer'])
+    #    #if lr_scheduler is not None and 'lr_scheduler' in checkpoint:
+    #    #    lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+    #    start_step = checkpoint.get('step', 0)
+    #    print(f'Loaded checkpoint from {args.starting_model}')
+
+    ## Initialize trainer
+    #trainer = train(
+    #        model = model,
+    #        envs = envs, # type: ignore (??? AsyncVectorEnv is not a subtype of VectorEnv ???)
+    #        env_labels = [[e]*n for e,n in zip(args.envs, args.num_envs)],
+    #        env_group_labels = args.envs,
+    #        optimizer = optimizer,
+    #        lr_scheduler = lr_scheduler,
+    #        max_steps = args.max_steps,
+    #        rollout_length = args.rollout_length,
+    #        obs_scale = {'obs (image)': 1.0/255.0},
+    #        reward_clip = args.reward_clip,
+    #        reward_scale = args.reward_scale,
+    #        discount = args.discount,
+    #        gae_lambda = args.gae_lambda,
+    #        norm_adv = args.norm_adv,
+    #        clip_vf_loss = args.clip_vf_loss,
+    #        vf_loss_coeff = args.vf_loss_coeff,
+    #        entropy_loss_coeff = args.entropy_loss_coeff,
+    #        target_kl = args.target_kl,
+    #        minibatch_size = args.minibatch_size,
+    #        num_minibatches = args.num_minibatches,
+    #        max_grad_norm = args.max_grad_norm,
+    #        warmup_steps = args.warmup_steps,
+    #        start_step = start_step,
+    #)
+
+    ## Run training loop
+    #start_weights = torch.nn.utils.parameters_to_vector(model.parameters()).detach().clone()
+    #x = {}
+    #for x in trainer:
+    #    pass
+    #end_weights = torch.nn.utils.parameters_to_vector(model.parameters()).detach().clone()
+
+    #print('-'*80)
+    #print(f'Episode rewards: {x["episode_rewards"]}')
+    #print(f'Episode rewards total: {sum(x["episode_rewards"])}') # type: ignore
+    #print(f'Weight change: {torch.norm(end_weights - start_weights)}')
+    #print('-'*80)
+    #breakpoint()
+
+    results = finetune(
+            env_config_name = args.envs[0],
+            num_envs = args.num_envs[0],
+            checkpoint_filename = args.starting_model,
+            model_type=args.model_type,
+            model_architecture=args.architecture,
+            # Training parameters
+            optimizer_type=args.optimizer,
+            learning_rate=args.lr,
+            max_steps=args.max_steps,
+            rollout_length=args.rollout_length,
+            reward_clip=args.reward_clip,
+            reward_scale=args.reward_scale,
+            discount=args.discount,
+            gae_lambda=args.gae_lambda,
+            norm_adv=args.norm_adv,
+            clip_vf_loss=args.clip_vf_loss,
+            vf_loss_coeff=args.vf_loss_coeff,
+            entropy_loss_coeff=args.entropy_loss_coeff,
+            target_kl=args.target_kl,
+            minibatch_size=args.minibatch_size,
+            num_minibatches=args.num_minibatches,
+            max_grad_norm=args.max_grad_norm,
+            cuda=args.cuda,
+            load_optimizer=args.load_optimizer,
+            # Override configs
+            num_trials=args.num_trials,
+            room_size=args.room_size,
     )
-    model.to(device)
-
-    # Initialize optimizer
-    if args.optimizer == 'Adam':
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    elif args.optimizer == 'RMSprop':
-        optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr)
-    else:
-        raise ValueError(f'Unknown optimizer: {args.optimizer}')
-
-    # Initialize learning rate scheduler
-    lr_scheduler = None # TODO
-
-    # Load checkpoint
-    start_step = 0
-    checkpoint = None
-
-    if args.model_checkpoint is not None and os.path.exists(args.model_checkpoint) and os.stat(args.model_checkpoint).st_size > 0:
-        assert not os.path.isdir(args.model_checkpoint), 'Model checkpoint must be a file, not a directory'
-        # The checkpoint exists, which means the experiment already started. Resume the experiment instead of restarting it.
-        # If the checkpoint file is empty, it means we just created the file and the experiment hasn't started yet.
-        checkpoint = torch.load(args.model_checkpoint, map_location=device)
-        print(f'Experiment already started. Loading checkpoint from {args.model_checkpoint}')
-    elif args.starting_model is not None:
-        checkpoint = torch.load(args.starting_model, map_location=device)
-        print(f'Loading starting model from {args.starting_model}')
-
-    if checkpoint is not None:
-        model.load_state_dict(checkpoint['model'], strict=False)
-        if 'optimizer' in checkpoint:
-            optimizer.load_state_dict(checkpoint['optimizer'])
-        if lr_scheduler is not None and 'lr_scheduler' in checkpoint:
-            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-        start_step = checkpoint.get('step', 0)
-        print(f'Loaded checkpoint from {args.starting_model}')
-
-    # Initialize trainer
-    trainer = train(
-            model = model,
-            envs = envs, # type: ignore (??? AsyncVectorEnv is not a subtype of VectorEnv ???)
-            #env_labels = [['doot']*len(envs)], # TODO: Make this configurable
-            #env_labels = [[e]*n for e,n in zip(args.envs, args.num_envs)],
-            env_labels = [[e]*n for e,n in zip(args.envs, args.num_envs)],
-            env_group_labels = args.envs,
-            optimizer = optimizer,
-            lr_scheduler = lr_scheduler,
-            max_steps = args.max_steps,
-            rollout_length = args.rollout_length,
-            obs_scale = {'obs (image)': 1.0/255.0},
-            reward_clip = args.reward_clip,
-            reward_scale = args.reward_scale,
-            discount = args.discount,
-            gae_lambda = args.gae_lambda,
-            norm_adv = args.norm_adv,
-            clip_vf_loss = args.clip_vf_loss,
-            vf_loss_coeff = args.vf_loss_coeff,
-            entropy_loss_coeff = args.entropy_loss_coeff,
-            target_kl = args.target_kl,
-            minibatch_size = args.minibatch_size,
-            num_minibatches = args.num_minibatches,
-            max_grad_norm = args.max_grad_norm,
-            warmup_steps = args.warmup_steps,
-            start_step = start_step,
-    )
-
-    # Run training loop
-    if args.model_checkpoint is not None:
-        os.makedirs(os.path.dirname(args.model_checkpoint), exist_ok=True)
-        if not args.model_checkpoint.endswith('.pt'):
-            # If the path is a directory, generate a unique filename
-            raise NotImplementedError()
-        while True:
-            x = {}
-            for _,x in zip(range(args.checkpoint_interval), trainer):
-                pass
-            torch_save({
-                'model': model.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'step': x['step'],
-                }, args.model_checkpoint.format(step=f"{x['step']:,}"))
-            print(f'Saved checkpoint to {os.path.abspath(args.model_checkpoint)}')
-    else:
-        x = {}
-        try:
-            for x in trainer:
-                pass
-        except KeyboardInterrupt:
-            print('Interrupted')
-            pass
-        # Sometimes, we run an experiment without intending to save the model, but then change our mind later.
-        print('Saving model')
-        tmp_checkpoint = f'./temp-checkpoint.pt'
-        torch_save({
-            'model': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'step': x['step'],
-        }, tmp_checkpoint)
-        print(f'Saved temporary checkpoint to {os.path.abspath(tmp_checkpoint)}')
-

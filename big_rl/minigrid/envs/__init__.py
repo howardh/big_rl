@@ -1123,6 +1123,10 @@ class MultiRoomEnv_v1(MiniGridEnv):
         ]
         self._fetch_target_cycle_idx = 0
 
+        # Logging
+        self._fetch_rewards = []
+        self._fetch_regrets = []
+
     def _init_bandits(self, probs=[1,0]):
         reward_scale = 1
         self.goals = [
@@ -1445,12 +1449,15 @@ class MultiRoomEnv_v1(MiniGridEnv):
                 if self.carrying.color == self.target_color and \
                    self.carrying.type == self.target_type:
                     reward = reward_correct
-                    info['regret'] = 0
+                    regret = 0
                     # Cycle to the next target (these variables are not used if not cycling)
                     self._fetch_target_cycle_idx = (self._fetch_target_cycle_idx + 1) % len(self._fetch_target_cycle)
                 else:
                     reward = reward_incorrect
-                    info['regret'] = reward_correct*p+reward_incorrect*(1-p) - reward_incorrect*p+reward_correct*(1-p)
+                    regret = reward_correct*p+reward_incorrect*(1-p) - reward_incorrect*p+reward_correct*(1-p)
+                self._fetch_regrets.append(regret)
+                self._fetch_rewards.append(reward)
+                info['regret'] = regret
                 # Flip the reward with some probability
                 if self.np_random.uniform() > p:
                     reward *= -1
@@ -1492,6 +1499,9 @@ class MultiRoomEnv_v1(MiniGridEnv):
         if self.reward_type == 'pbrs':
             self.pbrs.update_potential(self._potential())
             return obs, reward+self.pbrs.reward, terminated, truncated, info
+        if terminated or truncated:
+            info['reward_by_trial'] = self._fetch_rewards
+            info['regret_by_trial'] = self._fetch_regrets
         return obs, reward, terminated, truncated, info
 
 

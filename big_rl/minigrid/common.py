@@ -279,7 +279,7 @@ def env_config_presets():
         }, inherit='fetch-004-shaped')
 
         # Remove reward signal, keep shaped reward, but cut off shaped reward after some number of steps
-        for cutoff in [100, 50, 0]:
+        for cutoff in [1000, 100, 50, 0]:
             config.add(f'fetch-004-stop_{cutoff}_trials', {
                 'meta_config': {
                     'include_reward': False,
