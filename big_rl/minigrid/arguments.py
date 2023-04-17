@@ -4,7 +4,7 @@ from argparse import ArgumentParser
 def init_parser_trainer(parser: ArgumentParser):
     parser.add_argument('--max-steps', type=int, default=0, help='Number of training steps to run. One step is one weight update.')
 
-    parser.add_argument('--optimizer', type=str, default='RMSprop', help='Optimizer', choices=['Adam', 'RMSprop'])
+    parser.add_argument('--optimizer', type=str, default='RMSprop', help='Optimizer', choices=['Adam', 'RMSprop', 'SGD'])
     parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate.')
 
     parser.add_argument('--rollout-length', type=int, default=128, help='Length of rollout.')

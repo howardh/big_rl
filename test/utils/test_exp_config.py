@@ -114,6 +114,19 @@ def test_add_change_replace_list_of_dicts_of_different_length():
     assert config['config-2'] == {'a': [{'e': 5}, {'f': 6}]}
 
 
+def test_add_change_new_lists():
+    """ New lists are added to the dict. """
+    config = ExperimentConfigs()
+    config.add('config-1', {})
+    config.add_change('config-2', {'a': [4, 5, 6]})
+
+    assert 'config-1' in config.keys()
+    assert 'config-2' in config.keys()
+
+    assert config['config-1'] == {}
+    assert config['config-2'] == {'a': [4, 5, 6]}
+
+
 # Overriding default behaviour
 
 

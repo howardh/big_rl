@@ -631,8 +631,556 @@ def env_config_presets():
                 }
             }, inherit='delayed-003')
 
+
+    def init_fetch2():
+        config.add('fetch2-debug', {
+            'env_name': 'MiniGrid-MultiRoom-v2',
+            'minigrid_config': {},
+            'meta_config': {
+                'episode_stack': 1,
+                'dict_obs': True,
+                'randomize': False,
+            },
+            'config': {
+                'num_trials': 1,
+                'min_num_rooms': 1,
+                'max_num_rooms': 1,
+                'min_room_size': 5,
+                'max_room_size': 5,
+                'door_prob': 0.5,
+                'max_steps_multiplier': 5,
+                'num_objs': 2,
+                'num_obj_types': 1,
+                'num_obj_colors': 2,
+                'task_config': {
+                    'task': 'fetch',
+                    'args': {
+                        'reward_correct': 1,
+                        'reward_incorrect': -1,
+                        'reward_flip_prob': 0.0,
+                    }
+                }
+            }
+        })
+        config.add('fetch2-001', {
+            'env_name': 'MiniGrid-MultiRoom-v2',
+            'minigrid_config': {},
+            'meta_config': {
+                'episode_stack': 1,
+                'dict_obs': True,
+                'randomize': False,
+            },
+            'config': {
+                'num_trials': 100,
+                'min_num_rooms': 1,
+                'max_num_rooms': 1,
+                'min_room_size': 5,
+                'max_room_size': 5,
+                'door_prob': 0.5,
+                'max_steps_multiplier': 5,
+                'num_objs': 2,
+                'num_obj_types': 1,
+                'num_obj_colors': 2,
+                'task_config': {
+                    'task': 'fetch',
+                    'args': {
+                        'reward_correct': 1,
+                        'reward_incorrect': -1,
+                        'reward_flip_prob': 0,
+                    }
+                }
+            }
+        })
+        config.add_change('fetch2-002', {
+            'config': {
+                'num_trials': 100,
+                'min_num_rooms': 1,
+                'max_num_rooms': 1,
+                'min_room_size': 8,
+                'max_room_size': 16,
+                'num_objs': 2,
+                'num_obj_types': 2,
+                'num_obj_colors': 6,
+            }
+        })
+        config.add_change('fetch2-002-shaped', {
+            'config': {
+                'task_config': {
+                    'args': {
+                        'pseudo_reward_config': {
+                            'type': 'inverse distance',
+                        },
+                    }
+                }
+            }
+        })
+        config.add_change('fetch2-002-shaped-adjacent', {
+            'config': {
+                'task_config': {
+                    'args': {
+                        'pseudo_reward_config': {
+                            'type': 'adjacent to subtask',
+                        },
+                    }
+                }
+            }
+        })
+
+        # Noisy shaped rewards
+        config.add('fetch2-002-shaped-noisy-debug', {
+            'config': {
+                'task_config': {
+                    'args': {
+                        'pseudo_reward_config': {
+                            'type': 'adjacent to subtask',
+                            'noise': ('stop', 500, 'steps'),
+                        },
+                    }
+                }
+            }
+        }, inherit='fetch2-002')
+
+        # Skipping 003 to match up with the delayed task numbering
+        config.add('fetch2-004', {
+            'config': {
+                'min_room_size': 4,
+                'max_room_size': 6,
+                'task_config': {
+                    'args': {
+                        'reward_type': 'standard',
+                    }
+                }
+            }
+        }, inherit='fetch2-002')
+        config.add_change('fetch2-004-pbrs', {
+            'config': {
+                'task_config': {
+                    'args': {
+                        'reward_type': 'pbrs',
+                        'pbrs_scale': 0.1,
+                        'pbrs_discount': 0.99,
+                    }
+                }
+            }
+        })
+        config.add('fetch2-004-shaped', {
+            'config': {
+                'task_config': {
+                    'args': {
+                        'pseudo_reward_config': {
+                            'type': 'inverse distance',
+                        },
+                    }
+                }
+            }
+        }, inherit='fetch2-004')
+
+        # Increase map size from 4-6 to 5-8
+        config.add('fetch2-004-bigger', {
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+            }
+        }, inherit='fetch2-004')
+        config.add('fetch2-004-bigger-pbrs', {
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+            }
+        }, inherit='fetch2-004-pbrs')
+        config.add('fetch2-004-bigger-shaped', {
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+            }
+        }, inherit='fetch2-004-shaped')
+
+        # Remove reward signal, keep shaped reward, but cut off shaped reward after some number of steps
+        for cutoff in [1000, 100, 50, 0]:
+            config.add(f'fetch2-004-stop_{cutoff}_trials', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                'task_config': {
+                        'args': {
+                            'pseudo_reward_config': {
+                                'type': 'subtask',
+                                'noise': ('stop', cutoff, 'trials'),
+                            },
+                        }
+                    }
+                }
+            }, inherit='fetch2-004')
+            config.add(f'fetch2-004-stop_{cutoff}_trials-green_key', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'num_objs': 2,
+                    'num_obj_types': 1,
+                    'num_obj_colors': 2,
+                    'task_config': {
+                        'args': {
+                            'fixed_target': ('key', 'green'),
+                            'pseudo_reward_config': {
+                                'type': 'subtask',
+                                'noise': ('stop', cutoff, 'trials'),
+                            },
+                        }
+                    }
+                }
+            }, inherit='fetch2-004')
+            config.add(f'fetch2-004-stop_{cutoff}_trials-blue_key', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'num_objs': 2,
+                    'num_obj_types': 1,
+                    'num_obj_colors': 2,
+                'task_config': {
+                        'args': {
+                            'fixed_target': ('key', 'blue'),
+                            'pseudo_reward_config': {
+                                'type': 'subtask',
+                                'noise': ('stop', cutoff, 'trials'),
+                            },
+                        }
+                    }
+                }
+            }, inherit='fetch2-004')
+        for x in range(2,51):
+            config.add(f'fetch2-004-zero_{x}_{x}_trials', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                'task_config': {
+                        'args': {
+                            'pseudo_reward_config': {
+                                'type': 'subtask',
+                                'noise': ('zero', (x,x), 'cycle_trials'),
+                            },
+                        }
+                    },
+                }
+            }, inherit='fetch2-004')
+        config.add(f'fetch2-004-zero_dynamic', {
+            'meta_config': {
+                'include_reward': False,
+            },
+            'config': {
+                'task_config': {
+                    'args': {
+                        'pseudo_reward_config': {
+                            'type': 'subtask',
+                            'noise': ('dynamic_zero', 10, (0.8, 0.1)),
+                        },
+                    }
+                },
+            }
+        }, inherit='fetch2-004')
+        config.add(f'fetch2-004-stop_dynamic', {
+            'meta_config': {
+                'include_reward': False,
+            },
+            'config': {
+                'task_config': {
+                    'args': {
+                        'pseudo_reward_config': {
+                            'type': 'subtask',
+                            'noise': ('dynamic_zero', 10, (0.8, -float('inf'))), # Never resume after the reward is stopped.
+                        },
+                    }
+                },
+            }
+        }, inherit='fetch2-004')
+
+         
+        config.add(f'fetch2-004-alternating', {
+            'meta_config': {
+                'include_reward': False,
+            },
+            'config': {
+                'task_config': {
+                    'task': 'fetch',
+                    'args': {
+                        'cycle_targets': True,
+                        'pseudo_reward_config': {
+                            'type': 'subtask',
+                        },
+                    }
+                },
+            }
+        }, inherit='fetch2-004')
+
+        # 005: Same as above, but with bigger rooms
+        for cutoff in [500, 200, 100, 50, 20, 1]:
+            config.add(f'fetch2-005-stop_{cutoff}', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'task_config': {
+                        'task': 'fetch',
+                        'args': {
+                            'pseudo_reward_config': {
+                                'type': 'subtask',
+                                'noise': ('stop', cutoff, 'steps'),
+                            },
+                        }
+                    },
+                }
+            }, inherit='fetch2-004')
+            for delay in [1]:
+                config.add(f'fetch2-005-stop_{cutoff}-delay_{delay}', {
+                    'meta_config': {
+                        'include_reward': False,
+                    },
+                    'config': {
+                        'min_room_size': 5,
+                        'max_room_size': 12,
+                        'task_config': {
+                            'task': 'fetch',
+                            'args': {
+                                'pseudo_reward_config': {
+                                    'type': 'subtask',
+                                    'noise': ('stop', cutoff, 'steps'),
+                                    'delay': ('fixed', delay)
+                                },
+                            }
+                        },
+                    }
+                }, inherit='fetch2-004')
+            for delay in [(1,2)]:
+                config.add(f'fetch2-005-stop_{cutoff}-delay_{delay[0]}_{delay[1]}', {
+                    'meta_config': {
+                        'include_reward': False,
+                    },
+                    'config': {
+                        'min_room_size': 5,
+                        'max_room_size': 12,
+                        'tasks': {
+                            'task': 'fetch',
+                            'args': {
+                                'pseudo_reward_config': {
+                                    'type': 'subtask',
+                                    'noise': ('stop', cutoff, 'steps'),
+                                    'delay': ('random', delay[0], delay[1])
+                                },
+                            }
+                        },
+                    }
+                }, inherit='fetch2-004')
+        for cutoff in [100, 50, 0]:
+            config.add(f'fetch2-005-stop_{cutoff}_trials', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'task_config': {
+                        'task': 'fetch',
+                        'args': {
+                            'pseudo_reward_config': {
+                                'type': 'subtask',
+                                'noise': ('stop', cutoff, 'trials'),
+                            },
+                        }
+                    },
+                }
+            }, inherit='fetch2-004')
+        for x in range(1,10):
+            config.add(f'fetch2-005-zero_1_{x}_trials', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'task_config': {
+                        'task': 'fetch',
+                        'args': {
+                            'pseudo_reward_config': {
+                                'type': 'subtask',
+                                'noise': ('zero', (1,x), 'cycle_trials'),
+                            },
+                        }
+                    },
+                }
+            }, inherit='fetch2-004')
+        for x in range(2,51):
+            config.add(f'fetch2-005-zero_{x}_{x}_trials', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'task_config': {
+                        'task': 'fetch',
+                        'args': {
+                            'pseudo_reward_config': {
+                                'type': 'subtask',
+                                'noise': ('zero', (x,x), 'cycle_trials'),
+                            },
+                        }
+                    },
+                }
+            }, inherit='fetch2-004')
+        for x in [70]:
+            config.add(f'fetch2-005-zero_30_{x}_trials', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'task_config': {
+                        'task': 'fetch',
+                        'args': {
+                            'pseudo_reward_config': {
+                                'type': 'subtask',
+                                'noise': ('zero', (30,x), 'cycle_trials'),
+                            },
+                        }
+                    },
+                }
+            }, inherit='fetch2-004')
+        config.add(f'fetch2-005-zero_dynamic', {
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+            }
+        }, inherit='fetch2-004-zero_dynamic')
+        config.add(f'fetch2-005-stop_dynamic', {
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+            }
+        }, inherit='fetch2-004-stop_dynamic')
+        for a,b in [(0,5), (1,5)]:
+            config.add(f'fetch2-005-delay_{a}_{b}', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'task_config': {
+                        'task': 'fetch',
+                        'args': {
+                            'pseudo_reward_config': {
+                                'type': 'subtask',
+                                'delay': ('random', (a, b), 'replace')
+                            },
+                        }
+                    },
+                }
+            }, inherit='fetch2-004')
+            config.add(f'fetch2-005-stop_dynamic-delay_{a}_{b}', {
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'task_config': {
+                        'task': 'fetch',
+                        'args': {
+                            'pseudo_reward_config': {
+                                'type': 'subtask',
+                                'delay': ('random', (a, b), 'replace')
+                            },
+                        }
+                    },
+                }
+            }, inherit='fetch2-004-stop_dynamic')
+        for a,b in [(0,5), (1,5), (1,10), (1,20), (10,20), (10,30)]:
+            config.add(f'fetch2-005-delayed_start_{a}_{b}_trials', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'task_config': {
+                        'task': 'fetch',
+                        'args': {
+                            'pseudo_reward_config': {
+                                'type': 'subtask',
+                                'delayed_start': ('random', (a, b), 'trials')
+                            },
+                        }
+                    },
+                }
+            }, inherit='fetch2-004')
+        for n in [10,20,50]:
+            config.add(f'fetch2-005-delayed_start_{n}_trials', {
+                'meta_config': {
+                    'include_reward': False,
+                },
+                'config': {
+                    'min_room_size': 5,
+                    'max_room_size': 12,
+                    'task_config': {
+                        'task': 'fetch',
+                        'args': {
+                            'pseudo_reward_config': {
+                                'type': 'subtask',
+                                'delayed_start': ('fixed', n, 'trials')
+                            },
+                        }
+                    },
+                }
+            }, inherit='fetch2-004')
+        config.add(f'fetch2-005-randomized_task', {
+            'meta_config': {
+                'include_reward': False,
+            },
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+                'task_config': {
+                    'task': 'fetch',
+                    'args': {
+                        'pseudo_reward_config': {
+                            'type': 'subtask',
+                        },
+                    },
+                    'wrappers': [{
+                        'type': 'random_reset',
+                        'args': {
+                            'prob': 0.02,
+                        },
+                    }]
+                },
+            }
+        }, inherit='fetch2-004')
+
+        config.add(f'fetch2-005-alternating', {
+            'meta_config': {
+                'include_reward': False,
+            },
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+                'task_config': {
+                    'task': 'fetch',
+                    'args': {
+                        'cycle_targets': True,
+                        'pseudo_reward_config': {
+                            'type': 'subtask',
+                        },
+                    },
+                },
+            }
+        }, inherit='fetch2-004')
+
     init_fetch()
     init_delayed()
+    init_fetch2()
 
     return config
 

@@ -643,6 +643,8 @@ if __name__ == '__main__':
                         help='Path to a model checkpoint to save the model to.')
     parser.add_argument('--checkpoint-interval', type=int, default=1000,
                         help='Number of training steps between checkpoints.')
+    parser.add_argument('--ignore-checkpoint-optimizer', action='store_true',
+                        help='If set, then the optimizer state is not loaded from the checkpoint.')
 
     parser.add_argument('--slurm-split', action='store_true', help='Set this flag to let the script know it is running on a SLURM cluster with one job split across an array job. This ensures that the same checkpoint is used for each of these jobs.')
     parser.add_argument('--cuda', action='store_true', help='Use CUDA.')
@@ -710,6 +712,8 @@ if __name__ == '__main__':
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     elif args.optimizer == 'RMSprop':
         optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr)
+    elif args.optimizer == 'SGD':
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
     else:
         raise ValueError(f'Unknown optimizer: {args.optimizer}')
 
@@ -732,7 +736,7 @@ if __name__ == '__main__':
 
     if checkpoint is not None:
         model.load_state_dict(checkpoint['model'], strict=False)
-        if 'optimizer' in checkpoint:
+        if 'optimizer' in checkpoint and not args.ignore_checkpoint_optimizer:
             optimizer.load_state_dict(checkpoint['optimizer'])
         if lr_scheduler is not None and 'lr_scheduler' in checkpoint:
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])

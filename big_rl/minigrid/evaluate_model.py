@@ -34,7 +34,7 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
     hidden = model.init_hidden(1) # type: ignore (???)
     steps_iterator = itertools.count()
     #steps_iterator = range(100+np.random.randint(50)); print('--- DEBUG MODE ---')
-    steps_iterator = range(10); print('--- DEBUG MODE ---')
+    #steps_iterator = range(10); print('--- DEBUG MODE ---')
     if verbose:
         steps_iterator = tqdm(steps_iterator)
 

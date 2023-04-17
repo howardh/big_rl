@@ -196,7 +196,7 @@ def merge(source, destination):
                 node = destination.setdefault(key, {})
                 destination[key] = merge(value, node)
             elif isinstance(value, list):
-                if isinstance(destination[key],list) and len(destination[key]) == len(value):
+                if key in destination and isinstance(destination[key],list) and len(destination[key]) == len(value):
                     destination[key] = [merge(s,d) for s,d in zip(source[key],destination[key])]
                 else:
                     destination[key] = value

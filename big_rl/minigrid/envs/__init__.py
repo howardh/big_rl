@@ -1,6 +1,7 @@
+import itertools
 import os
 from typing_extensions import Literal
-from typing import Union, Tuple, List, Optional
+from typing import Sequence, Union, Tuple, List, Optional
 import threading
 import time
 
@@ -219,12 +220,12 @@ class MetaWrapper(gym.Wrapper):
         # Take a step
         if self._done:
             if self.episode_count == 0 and self.randomize:
-                self.env.randomize()
+                self.env.randomize() # type: ignore
             self.episode_count += 1
             self._done = False
             (obs, info), reward, terminated, truncated = self.env.reset(), 0, False, False
         else:
-            obs, reward, terminated, truncated, info = self.env.step(action)
+            obs, reward, terminated, truncated, info = self.env.step(action) # type: ignore
         done = terminated or truncated
         self._done = done
 
@@ -272,7 +273,7 @@ class MetaWrapper(gym.Wrapper):
     def reset(self, seed=None, options=None):
         self.episode_count = 0
         if self.randomize:
-            self.env.randomize()
+            self.env.randomize() # type: ignore
         if self.action_shuffle:
             self._randomize_actions()
 
@@ -317,6 +318,7 @@ class ActionShuffle(gym.Wrapper):
             permutation: list of ints, indices of the permutation to use. If not set, then a new permutation is randomly generated at the start of each episode.
         """
         super().__init__(env)
+        assert isinstance(self.env.action_space, gymnasium.spaces.Discrete)
         if actions is None:
             self._actions = list(range(self.env.action_space.n))
         else:
@@ -344,7 +346,7 @@ class ActionShuffle(gym.Wrapper):
         return self.env.reset(**kwargs)
 
     def step(self, action):
-        action = self.mapping[action]
+        action = self.mapping[action] # type: ignore
         return self.env.step(action)
 
 
@@ -400,7 +402,7 @@ class RewardNoise:
     def __init__(self,
                  noise_type: Literal[None, 'zero', 'gaussian', 'stop'] = None,
                  *args,
-                 rng: np.random.RandomState = None
+                 rng: np.random.RandomState | None = None
         ):
         self.noise_type = noise_type
         self.args = args
@@ -494,6 +496,7 @@ class RewardNoise:
             units: str, the units of `zero_when`. Can be 'probability', 'cycle_steps', or 'cycle_trials'
         """
         if units == 'probability':
+            assert isinstance(zero_when, float)
             if self.np_random.uniform() < zero_when:
                 self._unsupervised_steps_in_trial[-1] += 1
                 self.unsupervised_reward += reward
@@ -503,6 +506,7 @@ class RewardNoise:
                 self.supervised_reward += reward
                 return reward
         elif units == 'cycle_steps':
+            assert isinstance(zero_when, Sequence)
             assert len(zero_when) == 2
             period = sum(zero_when)
             assert period > 0
@@ -516,6 +520,7 @@ class RewardNoise:
                 self.unsupervised_reward += reward
                 return 0
         elif units == 'cycle_trials':
+            assert isinstance(zero_when, Sequence)
             assert len(zero_when) == 2
             period = sum(zero_when)
             assert period > 0
@@ -593,7 +598,7 @@ class RewardDelay:
             delay_type: Literal[None, 'fixed', 'random', 'interval'] = None,
             steps: Union[int, Tuple[int,int]] = 0,
             overlap: Literal[None, 'replace', 'sum', 'sum_clipped'] = None,
-            rng: np.random.RandomState = None
+            rng: np.random.RandomState | None = None
         ):
         """ Applies a delay to the reward
 
@@ -627,7 +632,7 @@ class RewardDelay:
         if self.delay_type == 'fixed':
             assert type(self.steps) is int
             if self.steps >= 0:
-                self._buffer = [0] * (self.steps + 1)
+                self._buffer = [0.] * (self.steps + 1)
             else:
                 self._buffer = [] 
             self._buffer_idx = 0
@@ -635,11 +640,11 @@ class RewardDelay:
         if self.delay_type == 'random':
             assert type(self.steps) is tuple
             _, max_steps = self.steps
-            self._buffer = [0] * (max_steps + 1)
+            self._buffer = [0.] * (max_steps + 1)
             self._buffer_idx = 0
 
         if self.delay_type == 'interval':
-            self._buffer = [0]
+            self._buffer = [0.]
             self._buffer_idx = 1
 
             if isinstance(self.steps, int):
@@ -658,11 +663,17 @@ class RewardDelay:
             return reward
 
         if self.delay_type == 'fixed':
+            assert isinstance(self.steps, int)
             return self._fixed_delay(reward, self.steps)
         elif self.delay_type == 'random':
+            assert isinstance(self.steps, Sequence)
+            assert self.overlap is not None
             return self._random_delay(reward, self.steps, self.overlap)
         elif self.delay_type == 'interval':
+            assert self.overlap is not None
             return self._interval_delay(reward, self.steps, self.overlap)
+        else:
+            raise Exception(f'Invalid delay type: {self.delay_type}')
 
     def __call__(self, reward: float) -> float:
         return self.delay(reward)
@@ -703,7 +714,7 @@ class RewardDelay:
         """ Give a reward every `steps` steps. If `steps` is a tuple, then the time between each reward is chosen uniformly at random from the range `steps`. """
         self._buffer_idx -= 1
 
-        if type(steps) is int:
+        if isinstance(steps, int):
             min_steps = steps
             max_steps = steps
         else:
@@ -734,7 +745,7 @@ class RewardDelayedStart:
             delay_type: Literal[None, 'fixed', 'random'] = None,
             start_when: Union[int, Tuple[int,int]] = 0,
             units: Literal['steps', 'trials'] = 'steps',
-            rng: np.random.RandomState = None
+            rng: np.random.RandomState | None = None
         ):
         """ Wait a certain number of steps or trials before giving a reward.
         """
@@ -779,11 +790,13 @@ class RewardDelayedStart:
             return reward
 
         if self._units == 'steps':
+            assert isinstance(self._delay, int)
             if self._step_count > self._delay:
                 return reward
             else:
                 return 0
         elif self._units == 'trials':
+            assert isinstance(self._delay, int)
             if self._trial_count >= self._delay:
                 return reward
             else:
@@ -821,7 +834,7 @@ class GoalMultinomial(minigrid.core.world_object.Goal):
 
 
 class Room:
-    __slots__ = ['top', 'bottom', 'left', 'right']
+    __slots__ = ['top', 'bottom', 'left', 'right', 'doorways']
 
     def __init__(self,
             top: int,
@@ -833,6 +846,8 @@ class Room:
         self.bottom = bottom
         self.left = left
         self.right = right
+
+        self.doorways = []
 
     def __repr__(self):
         return 'Room(top={}, bottom={}, left={}, right={})'.format(
@@ -850,6 +865,14 @@ class Room:
     def height(self):
         return self.bottom - self.top + 1
 
+    def owns_wall(self, x, y) -> bool:
+        """ Returns True if (x,y) is a wall owned by this room. """
+        if x == self.left or x == self.bottom:
+            return y >= self.top or y <= self.bottom
+        if y == self.top or y == self.bottom:
+            return x >= self.left or x <= self.right
+        return False
+
 
 def room_is_valid(rooms, room, width, height):
     if room.left < 0 or room.right >= width or room.top < 0 or room.bottom >= height:
@@ -865,6 +888,228 @@ def room_is_valid(rooms, room, width, height):
             continue
         return False
     return True
+
+
+def _generate_room(rng: np.random.RandomState, rooms, idx, wall, min_size, max_size, width, height):
+    starting_room = rooms[idx]
+    new_room = Room(0,0,0,0)
+    if wall == 'left' or wall == 'right':
+        min_top = max(starting_room.top - max_size + 3, 0)
+        max_top = starting_room.bottom - 2
+        min_bottom = starting_room.top + 2
+        max_bottom = starting_room.bottom + max_size - 3
+        if wall == 'left':
+            #new_room.right = starting_room.left
+            min_right = starting_room.left
+            max_right = starting_room.left
+            min_left = max(starting_room.left - max_size + 1, 0)
+            max_left = starting_room.left - min_size + 1
+        else:
+            #new_room.left = starting_room.right
+            min_left = starting_room.right
+            max_left = starting_room.right
+            min_right = starting_room.right + min_size - 1
+            max_right = starting_room.right + max_size - 1
+    else:
+        min_left = max(starting_room.left - max_size + 3, 0)
+        max_left = starting_room.right - 2
+        min_right = starting_room.left + 2
+        max_right = starting_room.right + max_size - 3
+        if wall == 'top':
+            #new_room.bottom = starting_room.top
+            min_bottom = starting_room.top
+            max_bottom = starting_room.top
+            min_top = max(starting_room.top - max_size + 1, 0)
+            max_top = starting_room.top - min_size + 1
+        else:
+            #new_room.top = starting_room.bottom
+            min_top = starting_room.bottom
+            max_top = starting_room.bottom
+            min_bottom = starting_room.bottom + min_size - 1
+            max_bottom = starting_room.bottom + max_size - 1
+    possible_rooms = [
+        (t,b,l,r)
+        for t in range(min_top, max_top + 1)
+        for b in range(max(min_bottom,t+min_size-1), min(max_bottom + 1, t+max_size))
+        for l in range(min_left, max_left + 1)
+        for r in range(max(min_right,l+min_size-1), min(max_right + 1, l+max_size))
+    ]
+    rng.shuffle(possible_rooms)
+    for room in possible_rooms:
+        new_room.top = room[0]
+        new_room.bottom = room[1]
+        new_room.left = room[2]
+        new_room.right = room[3]
+        if room_is_valid(rooms, new_room, width, height):
+            return new_room
+    return None
+
+
+def gen_grid_multiroom(
+        rng: np.random.RandomState,
+        width: int,
+        height: int,
+        min_num_rooms: int,
+        max_num_rooms: int,
+        min_room_size: int,
+        max_room_size: int,
+        door_prob: float) -> dict:
+    room_list = []
+
+    # Choose a random number of rooms to generate
+    num_rooms = rng.choice(range(min_num_rooms, max_num_rooms+1))
+
+    # Create first room
+    room_height = rng.choice(range(min_room_size, max_room_size+1))
+    room_width = rng.choice(range(min_room_size, max_room_size+1))
+    top = rng.choice(range(1, height - room_height - 1))
+    left = rng.choice(range(1, width - room_width - 1))
+    room_list.append(Room(top, top + room_height - 1, left, left + room_width - 1))
+
+    # Keep a list of where new rooms can potentially be placed and remove them from the list when a new room is added there.
+    # List consists of a room index and the direction relative to that room.
+    new_room_openings = [ (0, 'left'), (0, 'right'), (0, 'top'), (0, 'bottom') ]
+    while len(room_list) < num_rooms:
+        if len(new_room_openings) == 0:
+            break
+
+        # Choose a random place to connect the new room to
+        r = rng.choice(len(new_room_openings))
+        starting_room_index, wall = new_room_openings[r]
+
+        temp_room = _generate_room(
+                rng,
+                room_list,
+                idx = starting_room_index,
+                wall = wall,
+                min_size = min_room_size,
+                max_size = max_room_size,
+                width = width,
+                height = height,
+        )
+        if temp_room is not None:
+            room_list.append(temp_room)
+            new_room_openings.append((len(room_list)-1, 'left'))
+            new_room_openings.append((len(room_list)-1, 'right'))
+            new_room_openings.append((len(room_list)-1, 'top'))
+            new_room_openings.append((len(room_list)-1, 'bottom'))
+        else:
+            new_room_openings.remove(new_room_openings[r])
+
+    grid = minigrid.core.grid.Grid(width, height)
+    doors = []
+    wall = minigrid.core.world_object.Wall()
+
+    for room in room_list:
+        # Look for overlapping walls
+        overlapping_walls = {
+            'top': [],
+            'bottom': [],
+            'left': [],
+            'right': [],
+        }
+        for i in range(room.left + 1, room.right):
+            if grid.get(i,room.top) == wall and grid.get(i,room.top+1) is None and grid.get(i,room.top-1) is None:
+                overlapping_walls['top'].append((i,room.top))
+            if grid.get(i,room.bottom) == wall and grid.get(i,room.bottom+1) is None and grid.get(i,room.bottom-1) is None:
+                overlapping_walls['bottom'].append((i,room.bottom))
+        for j in range(room.top + 1, room.bottom):
+            if grid.get(room.left,j) == wall and grid.get(room.left+1,j) is None and grid.get(room.left-1,j) is None:
+                overlapping_walls['left'].append((room.left,j))
+            if grid.get(room.right,j) == wall and grid.get(room.right+1,j) is None and grid.get(room.right-1,j) is None:
+                overlapping_walls['right'].append((room.right,j))
+
+        # Create room
+        # Top wall
+        for i in range(room.left, room.right + 1):
+            grid.set(i, room.top, wall)
+        # Bottom wall
+        for i in range(room.left, room.right + 1):
+            grid.set(i, room.bottom, wall)
+        # Left wall
+        for i in range(room.top, room.bottom + 1):
+            grid.set(room.left, i, wall)
+        # Right wall
+        for i in range(room.top, room.bottom + 1):
+            grid.set(room.right, i, wall)
+
+        # Create doorways between rooms
+        for ow in overlapping_walls.values():
+            if len(ow) == 0:
+                continue
+            opening = rng.choice(ow)
+            if rng.uniform() > door_prob:
+                grid.set(opening[0], opening[1], None)
+            else:
+                door = minigrid.core.world_object.Door(
+                    color = rng.choice(minigrid.core.constants.COLOR_NAMES)
+                )
+                grid.set(opening[0], opening[1], door)
+                doors.append(door)
+            # Store the doorways with the room object
+            for x in room_list:
+                x.doorways.append(opening)
+
+    return {
+        'grid': grid,
+        'doors': doors,
+        'rooms': room_list,
+    }
+
+
+def is_obstructive(pos: Tuple[int,int], grid, room):
+    # Return True if placing an object in position `pos` would be an obstruction.
+    # A space is reachable if the agent can be adjacent to it or in the space
+    # Only need to check the room that the object is placed in
+    reachable = {
+        (x,y):False
+        for x in range(room.left+1, room.right)
+        for y in range(room.top+1, room.bottom)
+    }
+    for x,y in room.doorways:
+        reachable[(x,y)] = False
+
+    def foo(x,y):
+        # Not a space we care about
+        if (x,y) not in reachable:
+            print('  a',x,y)
+            return
+        # Space has already been processed
+        if reachable[(x,y)]:
+            print('  b',x,y)
+            return
+        reachable[(x,y)] = True
+        # Check if there's an object in this space
+        obj = grid.get(x,y)
+        occupied = (obj is not None and not isinstance(obj, minigrid.core.world_object.Door)) or pos == (x,y)
+        # If it's occupied, then the adjacent spaces will not be reachable from here.
+        if occupied:
+            print('  c',x,y,grid.get(x,y),pos)
+            return
+        # Otherwise, we'll check the adjacent spaces
+        print('  d',x,y)
+        foo(x-1,y)
+        foo(x+1,y)
+        foo(x,y+1)
+        foo(x,y-1)
+
+    # Find first unoccupied space
+    if len(room.doorways) > 0:
+        foo(*room.doorways[0])
+    else:
+        x,y = None,None
+        for x,y in itertools.product(range(room.left+1, room.right),range(room.top+1, room.bottom)):
+            if grid.get(x, y) is not None:
+                continue
+            if pos == (x,y):
+                continue
+            break
+        if x is None or y is None:
+            return True
+        foo(x,y)
+    #if not all(reachable.values()):
+    #    breakpoint()
+    return not all(reachable.values())
 
 
 ##################################################
@@ -1291,8 +1536,8 @@ class MultiRoomEnv_v1(MiniGridEnv):
 
         # Fetch task
         target = self.objects[self._rand_int(0, len(self.objects))]
-        self.target_type = target.type
-        self.target_color = target.color
+        self._target_type = target.type
+        self._target_color = target.color
 
         # Bandit task
         if self.bandits_config is not None:
@@ -1532,7 +1777,7 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
         },
         task_randomization_prob: float = 0,
         max_steps_multiplier: float = 1.,
-        shaped_reward_config: dict = None,
+        shaped_reward_config: dict | None = None,
         reward_type: Literal['standard', 'pbrs'] = 'standard',
         seed = None,
         render_mode = 'rgb_array',
@@ -1724,8 +1969,8 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
 
         # Choose a random object to be picked up
         target = objs[self._rand_int(0, len(objs))]
-        self.target_type = target.type
-        self.target_color = target.color
+        self._target_type = target.type
+        self._target_color = target.color
         self.target_object = target # FIXME: This assumes no duplicates
 
         # Create goal state
@@ -1736,8 +1981,8 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
     def _randomize_task(self):
         """ Randomize the goal object/states """
         target = self.objects[self._rand_int(0, len(self.objects))]
-        self.target_type = target.type
-        self.target_color = target.color
+        self._target_type = target.type
+        self._target_color = target.color
 
     def _shaped_reward(self, config: dict):
         """ Return the shaped reward for the current state. """
@@ -1945,6 +2190,11 @@ class DelayedRewardEnv(MultiRoomEnv_v1):
 register(
     id='MiniGrid-Delayed-Reward-v0',
     entry_point=DelayedRewardEnv, # type: ignore
+)
+
+register(
+    id='MiniGrid-MultiRoom-v2',
+    entry_point='big_rl.minigrid.envs.env_v2:MultiRoomEnv_v2',
 )
 
 

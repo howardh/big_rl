@@ -635,6 +635,8 @@ if __name__ == '__main__':
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     elif args.optimizer == 'RMSprop':
         optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr)
+    elif args.optimizer == 'SGD':
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
     else:
         raise ValueError(f'Unknown optimizer: {args.optimizer}')
 

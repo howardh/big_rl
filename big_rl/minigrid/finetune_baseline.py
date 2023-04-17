@@ -563,6 +563,7 @@ def finetune(
     if checkpoint is not None:
         model.load_state_dict(checkpoint['model'], strict=False)
         if 'optimizer' in checkpoint and load_optimizer:
+            breakpoint()
             optimizer.load_state_dict(checkpoint['optimizer'])
         #if lr_scheduler is not None and 'lr_scheduler' in checkpoint:
         #    lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
