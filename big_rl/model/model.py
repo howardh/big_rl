@@ -2199,6 +2199,8 @@ class ModularPolicy5(torch.nn.Module):
         for k,module in self.input_modules.items():
             module_config = self._input_modules_config[k]
             if 'inputs' in module_config:
+                # Map multiple inputs to this module
+                # Only used if the module requires multiple inputs
                 input_mapping = module_config['inputs']
                 module_inputs = {}
                 for dest_key, src_key in input_mapping.items():
@@ -2384,6 +2386,8 @@ class ModularPolicy5LSTM(torch.nn.Module):
         for k,module in sorted(self.input_modules.items()):
             module_config = self._input_modules_config[k]
             if 'inputs' in module_config:
+                # Map multiple inputs to this module
+                # Only used if the module requires multiple inputs
                 input_mapping = module_config['inputs']
                 module_inputs = {}
                 for dest_key, src_key in input_mapping.items():
@@ -2396,14 +2400,26 @@ class ModularPolicy5LSTM(torch.nn.Module):
                     input_labels.append(k)
                     input_vals.append(y['value'])
             else:
-                if k not in inputs:
+                # Map other inputs to this module
+                # if multiple available inputs map to this module, include all of them
+                if 'input_mapping' in module_config:
+                    input_mapping = module_config['input_mapping']
+                    for alternate_key in input_mapping:
+                        if alternate_key not in inputs:
+                            continue
+                        y = module(inputs[alternate_key])
+                        input_labels.append(k)
+                        input_vals.append(y['value'])
+                elif k not in inputs:
                     # No data is provided, so fill with 0
                     y = torch.zeros([batch_size, self._input_modules_config[k].get('config',{}).get('value_size',self._value_size)], device=device) # XXX: not tested.
+                    input_labels.append(k)
+                    input_vals.append(y)
                 else:
                     module_inputs = inputs[k]
                     y = module(module_inputs)['value']
-                input_labels.append(k)
-                input_vals.append(y)
+                    input_labels.append(k)
+                    input_vals.append(y)
         self.last_input_labels = input_labels
 
         values = torch.cat([
@@ -2581,6 +2597,8 @@ class ModularPolicy7(torch.nn.Module):
         for k,module in self.input_modules.items():
             module_config = self._input_modules_config[k]
             if 'inputs' in module_config:
+                # Map multiple inputs to this module
+                # Only used if the module requires multiple inputs
                 input_mapping = module_config['inputs']
                 module_inputs = {}
                 for dest_key, src_key in input_mapping.items():

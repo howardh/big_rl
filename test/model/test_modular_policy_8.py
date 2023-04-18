@@ -79,3 +79,39 @@ def test_call(batch_size):
         'action': torch.randint(0, 5, (batch_size,)),
     }
     model(obs, hidden)
+
+
+@pytest.mark.parametrize('batch_size', [3])
+def test_input_mapping(batch_size):
+    """ Test the ability to remap inputs to different modules. """
+    model = _init_model(
+            inputs = {
+                'reward': {
+                    'type': 'ScalarInput',
+                    'input_mapping': ['reward', 'reward2'], # Specify that both 'reward' and 'reward2' should be mapped to this input module.
+                },
+            },
+            outputs = {
+                'action': {
+                    'type': 'LinearOutput',
+                    'config': {
+                        'output_size': 50,
+                    }
+                },
+            },
+    )
+
+    hidden = model.init_hidden(batch_size)
+
+    obs = {
+        'reward': torch.randn(batch_size, 1),
+    }
+    output1 = model(obs, hidden)
+
+    obs = {
+        'reward2': obs['reward'],
+    }
+    output2 = model(obs, hidden)
+
+    assert output1.keys() == output2.keys()
+    assert torch.allclose(output1['action'], output2['action'])

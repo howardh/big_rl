@@ -147,13 +147,25 @@ class ModularPolicy8(torch.nn.Module):
                     input_keys.append(y['key'].unsqueeze(0))
                     input_vals.append(y['value'].unsqueeze(0))
             else:
-                if k not in inputs:
+                if 'input_mapping' in module_config:
+                    # Map other inputs to this module
+                    # if multiple available inputs map to this module, include all of them
+                    input_mapping = module_config['input_mapping']
+                    for alternate_key in input_mapping:
+                        if alternate_key not in inputs:
+                            continue
+                        y = module(inputs[alternate_key])
+                        input_labels.append(k)
+                        input_keys.append(y['key'].unsqueeze(0))
+                        input_vals.append(y['value'].unsqueeze(0))
+                elif k in inputs:
+                    module_inputs = inputs[k]
+                    y = module(module_inputs)
+                    input_labels.append(k)
+                    input_keys.append(y['key'].unsqueeze(0))
+                    input_vals.append(y['value'].unsqueeze(0))
+                else:
                     continue # Skip this input module if no data is provided
-                module_inputs = inputs[k]
-                y = module(module_inputs)
-                input_labels.append(k)
-                input_keys.append(y['key'].unsqueeze(0))
-                input_vals.append(y['value'].unsqueeze(0))
         self.last_input_labels = input_labels
 
         keys = torch.cat([

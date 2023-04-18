@@ -43,6 +43,7 @@ def init_model(observation_space, action_space,
     if 'obs (shaped_reward)' in list(observation_space.keys()):
         inputs['obs (shaped_reward)'] = {
             'type': 'ScalarInput',
+            'input_mapping': ['obs (shaped_reward)', 'obs (pseudo_reward)'],
         }
     if 'action_map' in list(observation_space.keys()):
         inputs['action_map'] = {

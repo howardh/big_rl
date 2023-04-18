@@ -341,16 +341,17 @@ class TaskWrapper(Task):
 
 class RandomResetWrapper(TaskWrapper):
     def __init__(self, task, rng: np.random.RandomState, prob: float):
-        """ Randomly reset the environment with probability `prob`. """
+        """ Randomly reset the environment with probability `prob` at the end of each trial. """
         super().__init__(task, rng)
         self.prob = prob
     def step(self):
-        if self.rng.uniform() < self.prob:
+        output = self.task.step()
+        if output['trial_completed'] and self.rng.uniform() < self.prob:
             self.task.reset()
-        return self.task.step()
+        return output
 
 
-def init_tasks(env, rng, config) -> Task:
+def init_task(env, rng, config) -> Task:
     task_mapping = {
         'none': NoTask,
         'fetch': FetchTask,
@@ -360,7 +361,7 @@ def init_tasks(env, rng, config) -> Task:
     elif config['task'] == 'alternating':
         task = AlternatingTasks(
                 env, rng,
-                [init_tasks(env, rng, c) for c in config['args']['tasks']]
+                [init_task(env, rng, c) for c in config['args']['tasks']]
         )
     else:
         raise ValueError(f'Unknown task: {config["task"]}')
@@ -485,7 +486,7 @@ class MultiRoomEnv_v2(MiniGridEnv):
         else:
             self.pseudo_reward_transforms = []
 
-        self.tasks = init_tasks(self, self.np_random, task_config)
+        self.task = init_task(self, self.np_random, task_config)
 
         self._agent_pos_prev = None
 
@@ -833,7 +834,7 @@ class MultiRoomEnv_v2(MiniGridEnv):
 
     @property
     def goal_str(self):
-        return self.tasks.description
+        return self.task.description
 
     def reset(self, seed=None, options=None):
         obs, info = super().reset(seed=seed, options=options)
@@ -851,11 +852,11 @@ class MultiRoomEnv_v2(MiniGridEnv):
         self._agent_pos_prev = None
         info['reward'] = 0
 
-        self.tasks.reset()
+        self.task.reset()
         for transform in self.pseudo_reward_transforms:
             transform.reset()
         if self.pseudo_reward_config is not None:
-            obs['pseudo_reward'] = 0
+            obs['pseudo_reward'] = np.array([0], dtype=np.float32)
 
         return obs, info
 
@@ -865,7 +866,7 @@ class MultiRoomEnv_v2(MiniGridEnv):
         obs, reward, terminated, truncated, info = super().step(action)
 
         # Tasks
-        task_output = self.tasks.step()
+        task_output = self.task.step()
         reward = task_output['reward']
         if task_output['trial_completed']:
             self.trial_count += 1
@@ -876,7 +877,7 @@ class MultiRoomEnv_v2(MiniGridEnv):
             pseudo_reward = task_output['pseudo_reward']
             for transform in self.pseudo_reward_transforms:
                 pseudo_reward = transform(pseudo_reward)
-            obs['pseudo_reward'] = pseudo_reward
+            obs['pseudo_reward'] = np.array([pseudo_reward], dtype=np.float32)
 
         # Reset objects the agent picked up
         if self.carrying:

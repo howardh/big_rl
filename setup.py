@@ -10,6 +10,7 @@ setup(name='big_rl',
         'tqdm',
         'wandb',
         'scikit-learn',
+        'tabulate>=0.9.0',
 
         # Minigrid
         'minigrid',
