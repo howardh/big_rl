@@ -527,7 +527,7 @@ def env_config_presets():
                     },
                 }
             }, inherit='fetch-004')
-        for n in [10,20,50]:
+        for n in [10,20,50,100]:
             config.add(f'fetch-005-delayed_start_{n}_trials', {
                 'meta_config': {
                     'include_reward': False,
@@ -731,10 +731,12 @@ def env_config_presets():
         config.add('fetch2-002-shaped-noisy-debug', {
             'config': {
                 'task_config': {
+                    'pseudo_reward_config': {
+                        'noise': ('stop', 500, 'steps'),
+                    },
                     'args': {
                         'pseudo_reward_config': {
                             'type': 'adjacent to subtask',
-                            'noise': ('stop', 500, 'steps'),
                         },
                     }
                 }
@@ -803,11 +805,13 @@ def env_config_presets():
                     'include_reward': False,
                 },
                 'config': {
-                'task_config': {
+                    'pseudo_reward_config': {
+                        'noise': ('stop', cutoff, 'trials'),
+                    },
+                    'task_config': {
                         'args': {
                             'pseudo_reward_config': {
                                 'type': 'subtask',
-                                'noise': ('stop', cutoff, 'trials'),
                             },
                         }
                     }
@@ -821,12 +825,14 @@ def env_config_presets():
                     'num_objs': 2,
                     'num_obj_types': 1,
                     'num_obj_colors': 2,
+                    'pseudo_reward_config': {
+                        'noise': ('stop', cutoff, 'trials'),
+                    },
                     'task_config': {
                         'args': {
                             'fixed_target': ('key', 'green'),
                             'pseudo_reward_config': {
                                 'type': 'subtask',
-                                'noise': ('stop', cutoff, 'trials'),
                             },
                         }
                     }
@@ -840,12 +846,14 @@ def env_config_presets():
                     'num_objs': 2,
                     'num_obj_types': 1,
                     'num_obj_colors': 2,
-                'task_config': {
+                    'pseudo_reward_config': {
+                        'noise': ('stop', cutoff, 'trials'),
+                    },
+                    'task_config': {
                         'args': {
                             'fixed_target': ('key', 'blue'),
                             'pseudo_reward_config': {
                                 'type': 'subtask',
-                                'noise': ('stop', cutoff, 'trials'),
                             },
                         }
                     }
@@ -857,11 +865,13 @@ def env_config_presets():
                     'include_reward': False,
                 },
                 'config': {
-                'task_config': {
+                    'pseudo_reward_config': {
+                        'noise': ('zero', (x,x), 'cycle_trials'),
+                    },
+                    'task_config': {
                         'args': {
                             'pseudo_reward_config': {
                                 'type': 'subtask',
-                                'noise': ('zero', (x,x), 'cycle_trials'),
                             },
                         }
                     },
@@ -872,11 +882,13 @@ def env_config_presets():
                 'include_reward': False,
             },
             'config': {
+                'pseudo_reward_config': {
+                    'noise': ('dynamic_zero', 10, (0.8, 0.1)),
+                },
                 'task_config': {
                     'args': {
                         'pseudo_reward_config': {
                             'type': 'subtask',
-                            'noise': ('dynamic_zero', 10, (0.8, 0.1)),
                         },
                     }
                 },
@@ -887,11 +899,13 @@ def env_config_presets():
                 'include_reward': False,
             },
             'config': {
+                'pseudo_reward_config': {
+                    'noise': ('dynamic_zero', 10, (0.8, -float('inf'))), # Never resume after the reward is stopped.
+                },
                 'task_config': {
                     'args': {
                         'pseudo_reward_config': {
                             'type': 'subtask',
-                            'noise': ('dynamic_zero', 10, (0.8, -float('inf'))), # Never resume after the reward is stopped.
                         },
                     }
                 },
@@ -925,12 +939,14 @@ def env_config_presets():
                 'config': {
                     'min_room_size': 5,
                     'max_room_size': 12,
+                    'pseudo_reward_config': {
+                        'noise': ('stop', cutoff, 'steps'),
+                    },
                     'task_config': {
                         'task': 'fetch',
                         'args': {
                             'pseudo_reward_config': {
                                 'type': 'subtask',
-                                'noise': ('stop', cutoff, 'steps'),
                             },
                         }
                     },
@@ -944,13 +960,15 @@ def env_config_presets():
                     'config': {
                         'min_room_size': 5,
                         'max_room_size': 12,
+                        'pseudo_reward_config': {
+                            'noise': ('stop', cutoff, 'steps'),
+                            'delay': ('fixed', delay)
+                        },
                         'task_config': {
                             'task': 'fetch',
                             'args': {
                                 'pseudo_reward_config': {
                                     'type': 'subtask',
-                                    'noise': ('stop', cutoff, 'steps'),
-                                    'delay': ('fixed', delay)
                                 },
                             }
                         },
@@ -964,13 +982,15 @@ def env_config_presets():
                     'config': {
                         'min_room_size': 5,
                         'max_room_size': 12,
+                        'pseudo_reward_config': {
+                            'noise': ('stop', cutoff, 'steps'),
+                            'delay': ('random', delay[0], delay[1])
+                        },
                         'tasks': {
                             'task': 'fetch',
                             'args': {
                                 'pseudo_reward_config': {
                                     'type': 'subtask',
-                                    'noise': ('stop', cutoff, 'steps'),
-                                    'delay': ('random', delay[0], delay[1])
                                 },
                             }
                         },
@@ -984,12 +1004,14 @@ def env_config_presets():
                 'config': {
                     'min_room_size': 5,
                     'max_room_size': 12,
+                    'pseudo_reward_config': {
+                        'noise': ('stop', cutoff, 'trials'),
+                    },
                     'task_config': {
                         'task': 'fetch',
                         'args': {
                             'pseudo_reward_config': {
                                 'type': 'subtask',
-                                'noise': ('stop', cutoff, 'trials'),
                             },
                         }
                     },
@@ -1003,12 +1025,14 @@ def env_config_presets():
                 'config': {
                     'min_room_size': 5,
                     'max_room_size': 12,
+                    'pseudo_reward_config': {
+                        'noise': ('zero', (1,x), 'cycle_trials'),
+                    },
                     'task_config': {
                         'task': 'fetch',
                         'args': {
                             'pseudo_reward_config': {
                                 'type': 'subtask',
-                                'noise': ('zero', (1,x), 'cycle_trials'),
                             },
                         }
                     },
@@ -1022,12 +1046,14 @@ def env_config_presets():
                 'config': {
                     'min_room_size': 5,
                     'max_room_size': 12,
+                    'pseudo_reward_config': {
+                        'noise': ('zero', (x,x), 'cycle_trials'),
+                    },
                     'task_config': {
                         'task': 'fetch',
                         'args': {
                             'pseudo_reward_config': {
                                 'type': 'subtask',
-                                'noise': ('zero', (x,x), 'cycle_trials'),
                             },
                         }
                     },
@@ -1041,12 +1067,14 @@ def env_config_presets():
                 'config': {
                     'min_room_size': 5,
                     'max_room_size': 12,
+                    'pseudo_reward_config': {
+                        'noise': ('zero', (30,x), 'cycle_trials'),
+                    },
                     'task_config': {
                         'task': 'fetch',
                         'args': {
                             'pseudo_reward_config': {
                                 'type': 'subtask',
-                                'noise': ('zero', (30,x), 'cycle_trials'),
                             },
                         }
                     },
@@ -1072,12 +1100,14 @@ def env_config_presets():
                 'config': {
                     'min_room_size': 5,
                     'max_room_size': 12,
+                    'pseudo_reward_config': {
+                        'delay': ('random', (a, b), 'replace')
+                    },
                     'task_config': {
                         'task': 'fetch',
                         'args': {
                             'pseudo_reward_config': {
                                 'type': 'subtask',
-                                'delay': ('random', (a, b), 'replace')
                             },
                         }
                     },
@@ -1087,12 +1117,14 @@ def env_config_presets():
                 'config': {
                     'min_room_size': 5,
                     'max_room_size': 12,
+                    'pseudo_reward_config': {
+                        'delay': ('random', (a, b), 'replace')
+                    },
                     'task_config': {
                         'task': 'fetch',
                         'args': {
                             'pseudo_reward_config': {
                                 'type': 'subtask',
-                                'delay': ('random', (a, b), 'replace')
                             },
                         }
                     },
@@ -1106,18 +1138,20 @@ def env_config_presets():
                 'config': {
                     'min_room_size': 5,
                     'max_room_size': 12,
+                    'pseudo_reward_config': {
+                        'delayed_start': ('random', (a, b), 'trials')
+                    },
                     'task_config': {
                         'task': 'fetch',
                         'args': {
                             'pseudo_reward_config': {
                                 'type': 'subtask',
-                                'delayed_start': ('random', (a, b), 'trials')
                             },
                         }
                     },
                 }
             }, inherit='fetch2-004')
-        for n in [10,20,50]:
+        for n in [10,20,50,100]:
             config.add(f'fetch2-005-delayed_start_{n}_trials', {
                 'meta_config': {
                     'include_reward': False,
@@ -1125,12 +1159,14 @@ def env_config_presets():
                 'config': {
                     'min_room_size': 5,
                     'max_room_size': 12,
+                    'pseudo_reward_config': {
+                        'delayed_start': ('fixed', n, 'trials')
+                    },
                     'task_config': {
                         'task': 'fetch',
                         'args': {
                             'pseudo_reward_config': {
                                 'type': 'subtask',
-                                'delayed_start': ('fixed', n, 'trials')
                             },
                         }
                     },

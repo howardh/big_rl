@@ -222,11 +222,15 @@ class FetchTask(Task):
 
         if config is None:
             return None
+        config = config.copy()
 
-        reward_type = config['type'].lower()
+        reward_type = config.pop('type').lower()
         all_dests = self.objects # List of all possible destinations
 
         if reward_type == 'subtask': # Reward for subtasks. There is only one task here, so this is just the regular reward signal.
+            if len(config) != 0:
+                raise Exception(f'Unrecognized pseudo-reward arguments: {config.keys()}')
+
             obj = self.env.carrying
             if obj is not None:
                 if self._is_target_obj(obj):
@@ -236,6 +240,9 @@ class FetchTask(Task):
             return 0.0
 
         elif reward_type == 'inverse distance': # Distance-based reward bounded by 1
+            if len(config) != 0:
+                raise Exception(f'Unrecognized pseudo-reward arguments: {config.keys()}')
+
             dest = self._get_closest_dest()
 
             if dest is None:
@@ -248,12 +255,21 @@ class FetchTask(Task):
             return reward
 
         elif reward_type == 'zero': # Always 0. Use to test the agent's ability to handle having a pseudo-reward signal but the signal is constant.
+            if len(config) != 0:
+                raise Exception(f'Unrecognized pseudo-reward arguments: {config.keys()}')
+
             return 0
 
         elif reward_type == 'pbrs': # Same as inverse distance, but converted to a potential-based shaped reward
+            if len(config) != 0:
+                raise Exception(f'Unrecognized pseudo-reward arguments: {config.keys()}')
+
             raise NotImplementedError('Potential-based shaped reward not implemented')
 
         elif reward_type == 'adjacent to subtask':
+            if len(config) != 0:
+                raise Exception(f'Unrecognized pseudo-reward arguments: {config.keys()}')
+
             dest = self._get_closest_dest()
             if dest is None:
                 return 0
