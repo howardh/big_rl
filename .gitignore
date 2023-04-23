@@ -4,3 +4,8 @@ wandb
 *.egg-info
 MUJOCO_LOG.TXT
 Session.vim
+*.pt
+*.h5
+*.gif
+*.png
+*.webm

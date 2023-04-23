@@ -435,6 +435,7 @@ def train(
         lr_scheduler: Optional[torch.optim.lr_scheduler._LRScheduler], # XXX: Private class. This might break in the future.
         *,
         max_steps: int = 1000,
+        max_steps_total: int = -1,
         rollout_length: int = 128,
         obs_scale: Dict[str,float] = {},
         max_grad_norm: float = 0.5,
@@ -451,6 +452,10 @@ def train(
         start_step: int = 0,
         ):
     global_step_counter = [start_step, start_step]
+    if max_steps_total > 0 and start_step > max_steps_total:
+        print(f'Start step ({start_step}) is greater than max_steps_total ({max_steps_total}). Exiting.')
+        return
+
     trainers = [
         train_single_env(
             global_step_counter = global_step_counter,
@@ -476,6 +481,13 @@ def train(
     for _, losses in enumerate(zip(*trainers)):
         #env_steps = training_steps * rollout_length * sum(env.num_envs for env in envs)
         env_steps = global_step_counter[0]
+
+        if max_steps > 0 and env_steps-start_step >= max_steps:
+            print('Reached max steps')
+            break
+        if max_steps_total > 0 and env_steps >= max_steps_total:
+            print('Reached total max steps')
+            break
 
         mean_loss = torch.stack([x['loss'] for x in losses]).mean()
         optimizer.zero_grad()
@@ -534,10 +546,6 @@ def train(
                 elapsed_minutes = (elapsed_time % 3600) // 60
                 elapsed_seconds = (elapsed_time % 3600) % 60
                 print(f"Step {env_steps-start_step:,} \t {int(steps_per_sec):,} SPS \t Elapsed: {elapsed_hours:02d}:{elapsed_minutes:02d}:{elapsed_seconds:02d}")
-
-        if max_steps > 0 and env_steps-start_step >= max_steps:
-            print('Reached max steps')
-            break
 
 
 if __name__ == '__main__':
@@ -677,6 +685,7 @@ if __name__ == '__main__':
             optimizer = optimizer,
             lr_scheduler = lr_scheduler,
             max_steps = args.max_steps,
+            max_steps_total = args.max_steps_total,
             rollout_length = args.rollout_length,
             obs_scale = {'obs (image)': 1/255},
             discount = args.discount,
@@ -700,9 +709,13 @@ if __name__ == '__main__':
             # If the path is a directory, generate a unique filename
             raise NotImplementedError()
         while True:
-            x = {}
+            x = None
             for _,x in zip(range(args.checkpoint_interval), trainer):
                 pass
+            # If x is None, it means no training has occured
+            if x is None:
+                break
+            # Only save the model if training has occured
             torch_save({
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
@@ -710,19 +723,20 @@ if __name__ == '__main__':
             }, args.model_checkpoint)
             print(f'Saved checkpoint to {os.path.abspath(args.model_checkpoint)}')
     else:
-        x = {}
+        x = None
         try:
-            for _ in trainer:
+            for x in trainer:
                 pass
         except KeyboardInterrupt:
             print('Interrupted')
             pass
         # Sometimes, we run an experiment without intending to save the model, but then change our mind later.
-        print('Saving model')
-        tmp_checkpoint = f'./temp-checkpoint.pt'
-        torch_save({
-            'model': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            #'step': x['step'],
-        }, tmp_checkpoint)
-        print(f'Saved temporary checkpoint to {os.path.abspath(tmp_checkpoint)}')
+        if x is not None:
+            print('Saving model')
+            tmp_checkpoint = f'./temp-checkpoint.pt'
+            torch_save({
+                'model': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                #'step': x['step'],
+            }, tmp_checkpoint)
+            print(f'Saved temporary checkpoint to {os.path.abspath(tmp_checkpoint)}')

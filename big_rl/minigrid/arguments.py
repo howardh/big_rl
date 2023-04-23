@@ -2,7 +2,8 @@ from argparse import ArgumentParser
 
 
 def init_parser_trainer(parser: ArgumentParser):
-    parser.add_argument('--max-steps', type=int, default=0, help='Number of training steps to run. One step is one weight update.')
+    parser.add_argument('--max-steps', type=int, default=0, help='Number of transitions to train for. If 0, train forever.')
+    parser.add_argument('--max-steps-total', type=int, default=0, help='Number of transitions to train for. Unlike `--max-steps`, this takes into account all steps run on previous executions, so if an experiment was interrupted and resumed, then steps run before the interruption will also be counted towards this limit.')
 
     parser.add_argument('--optimizer', type=str, default='RMSprop', help='Optimizer', choices=['Adam', 'RMSprop', 'SGD'])
     parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate.')
