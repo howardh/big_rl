@@ -653,11 +653,13 @@ if __name__ == '__main__':
                         help='Number of training steps between checkpoints.')
     parser.add_argument('--ignore-checkpoint-optimizer', action='store_true',
                         help='If set, then the optimizer state is not loaded from the checkpoint.')
+    parser.add_argument('--sync-vector-env', action='store_true',
+                        help='If set, then the vectorized environments are synchronized. This is useful for debugging, but is likely slower, so it should not be used for training.')
 
     parser.add_argument('--slurm-split', action='store_true', help='Set this flag to let the script know it is running on a SLURM cluster with one job split across an array job. This ensures that the same checkpoint is used for each of these jobs.')
     parser.add_argument('--cuda', action='store_true', help='Use CUDA.')
     parser.add_argument('--wandb', action='store_true', help='Save results to W&B.')
-    parser.add_argument('--wandb-id', type=str, default='{RUN_ID}',
+    parser.add_argument('--wandb-id', type=str, default=None,
                         help='W&B run ID. Defaults to the run ID.')
 
     # Parse arguments
@@ -667,20 +669,26 @@ if __name__ == '__main__':
     # Note: Only non-string arguments and args.run_id can be used until the post-processing is done.
     if args.run_id is None:
         args.run_id = generate_id(slurm_split = args.slurm_split)
-    else:
-        assert '{' not in args.run_id and '}' not in args.run_id, 'Run ID cannot contain {} variables.'
-    print(f'Run ID: {args.run_id}')
 
+    substitutions = dict(
+        RUN_ID = args.run_id,
+        SLURM_JOB_ID = os.environ.get('SLURM_JOB_ID', None),
+        SLURM_ARRAY_JOB_ID = os.environ.get('SLURM_ARRAY_JOB_ID', None),
+        SLURM_ARRAY_TASK_ID = os.environ.get('SLURM_ARRAY_TASK_ID', None),
+    )
+    substitutions = {k:v.format(**substitutions) for k,v in substitutions.items() if v is not None} # Substitute values in `subsitutions` too in case they also have {} variables. None values are removed.
     for k,v in vars(args).items():
         if type(v) is str:
-            v = v.format(
-                RUN_ID = args.run_id,
-            )
+            v = v.format(**substitutions)
             setattr(args, k, v)
+
+    print(f'Run ID: {args.run_id}')
 
     # Initialize W&B
     if args.wandb:
-        if args.model_checkpoint is not None:
+        if args.wandb_id is not None:
+            wandb.init(project='ppo-multitask-minigrid', id=args.wandb_id, resume='allow')
+        elif args.model_checkpoint is not None: # XXX: Questionable decision. Maybe it should be explicitly specified as a CLI argument if we want to use the same W&B ID. This is causing more problems than it solves.
             wandb_id = os.path.basename(args.model_checkpoint).split('.')[0]
             wandb.init(project='ppo-multitask-minigrid', id=wandb_id, resume='allow')
         else:
@@ -692,14 +700,17 @@ if __name__ == '__main__':
         [ENV_CONFIG_PRESETS[e] for _ in range(n)]
         for e,n in zip(args.envs, args.num_envs)
     ]
+    VectorEnv = gymnasium.vector.SyncVectorEnv if args.sync_vector_env else gymnasium.vector.AsyncVectorEnv
     envs = [
-        gymnasium.vector.AsyncVectorEnv([lambda conf=conf: make_env(**conf) for conf in env_config]) # type: ignore (Why is `make_env` missing an argument?)
+        VectorEnv([lambda conf=conf: make_env(**conf) for conf in env_config]) # type: ignore (Why is `make_env` missing an argument?)
         for env_config in env_configs
     ]
 
     if args.cuda and torch.cuda.is_available():
+        print('Using CUDA')
         device = torch.device('cuda')
     else:
+        print('Using CPU')
         device = torch.device('cpu')
 
     # Initialize model
