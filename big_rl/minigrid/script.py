@@ -675,6 +675,7 @@ if __name__ == '__main__':
         SLURM_JOB_ID = os.environ.get('SLURM_JOB_ID', None),
         SLURM_ARRAY_JOB_ID = os.environ.get('SLURM_ARRAY_JOB_ID', None),
         SLURM_ARRAY_TASK_ID = os.environ.get('SLURM_ARRAY_TASK_ID', None),
+        SLURM_TASK_ID = os.environ.get('SLURM_PROCID', None),
     )
     substitutions = {k:v.format(**substitutions) for k,v in substitutions.items() if v is not None} # Substitute values in `subsitutions` too in case they also have {} variables. None values are removed.
     for k,v in vars(args).items():
@@ -682,7 +683,10 @@ if __name__ == '__main__':
             v = v.format(**substitutions)
             setattr(args, k, v)
 
+    print('-'*80)
     print(f'Run ID: {args.run_id}')
+    print(f'W&B ID: {args.wandb_id}')
+    print('-'*80)
 
     # Initialize W&B
     if args.wandb:
