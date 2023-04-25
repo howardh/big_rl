@@ -1,4 +1,5 @@
 import argparse
+from collections import defaultdict
 import itertools
 import os
 from typing import Tuple, Optional, Any
@@ -13,10 +14,12 @@ from fonts.ttf import Roboto # type: ignore
 from big_rl.minigrid.envs import make_env
 from big_rl.minigrid.arguments import init_parser_model
 from big_rl.minigrid.common import env_config_presets, init_model
+from big_rl.minigrid.hidden_info.train import TARGET_KEYS
 from big_rl.utils import merge_space
+from big_rl.minigrid.hidden_info.hidden_info import OBJECTS
 
 
-def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=False):
+def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, hidden_info_fn=None, verbose=False):
     env = make_env(**env_config)
 
     episode_reward = 0 # total reward for the current episode
@@ -29,12 +32,13 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
             'input_labels': [],
             'target': [], # Goal string
             'shaped_reward': [], # Predicted shaped reward
+            'hidden_info': None, # Last output of hidden_info_fn. No history is kept.
     }
 
     hidden = model.init_hidden(1) # type: ignore (???)
     steps_iterator = itertools.count()
     #steps_iterator = range(100+np.random.randint(50)); print('--- DEBUG MODE ---')
-    #steps_iterator = range(10); print('--- DEBUG MODE ---')
+    steps_iterator = range(10); print('--- DEBUG MODE ---')
     if verbose:
         steps_iterator = tqdm(steps_iterator)
 
@@ -70,6 +74,8 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=F
         results['input_labels'].append(model.last_input_labels)
         if hasattr(env, 'goal_str'):
             results['target'].append(env.goal_str) # type: ignore
+        if hidden_info_fn is not None:
+            results['hidden_info'] = hidden_info_fn(hidden)
 
         episode_reward += float(reward)
         episode_length += 1
@@ -129,6 +135,33 @@ def compute_shaped_reward(model):
     attention = torch.einsum('k,bik->b', query, key).softmax(0)
     output = torch.einsum('b,bik->k', attention, value)
     return output.cpu().detach()
+
+
+def make_hidden_info_fn(model_filenames): # FIXME: Lots of hard-coded values
+    from big_rl.minigrid.hidden_info.train import make_model, TARGET_KEYS
+
+    models = {}
+
+    def foo(hidden):
+        nonlocal models
+        with torch.no_grad():
+            hidden = torch.cat([h.flatten() for h in hidden])
+            if len(models) == 0:
+                for target_key in TARGET_KEYS:
+                    models[target_key] = make_model(
+                        target_key=target_key,
+                        input_size=hidden.shape[0],
+                    )
+                    models[target_key].load_state_dict(torch.load(model_filenames[target_key], map_location='cpu'))
+                    print(f'Loaded {model_filenames[target_key]} for hidden info')
+
+            return {
+                'target_idx': models['target_idx'](hidden).softmax(0).numpy(),
+                'target_pos': models['target_pos'](hidden).numpy(),
+                'wall_map': models['wall_map'](hidden).sigmoid().numpy(),
+            }
+    
+    return foo
 
 
 def concat_images(images, padding=0, direction='h', align=0):
@@ -321,6 +354,85 @@ def draw_observations(observations: dict):
     ]
     return concat_images(images, direction='v', align=-1)
 
+def draw_hidden_info(hidden_info: dict):
+    """ Draw a bar plot of what the agent believes the probability of each object being the target is. """
+
+    def draw_target_idx():
+        text_images = [
+                draw_text(f'{obj[0]} {obj[1]}')
+                for obj in OBJECTS
+        ]
+
+        bar_img_width = 100
+        bar_img_height = text_images[0].height
+        bar_height = bar_img_height - 4
+        bar_max_width = bar_img_width - 2
+        bar_images = []
+        for prob in hidden_info['target_idx']:
+            img = PIL.Image.new('RGB', (bar_img_width, bar_img_height), color=(255,255,255))
+            draw = PIL.ImageDraw.Draw(img)
+            draw.rectangle(
+                    (1, 2, 1 + int(bar_max_width*prob/hidden_info['target_idx'].max()), 2 + bar_height),
+                    fill=(0,0,0)
+            )
+            bar_images.append(img)
+
+        return concat_images(
+                [
+                    concat_images([text_images[i], bar_images[i]], direction='h', align=-1)
+                    for i in range(len(text_images))
+                ],
+                direction='v',
+                align=1,
+        )
+
+    def draw_map():
+        square_size = 10
+        padding = 1
+        img = PIL.Image.new('RGB',
+                (square_size*25 + padding*26, square_size*25 + padding*26),
+                color=(255,255,255))
+        draw = PIL.ImageDraw.Draw(img)
+
+        # Walls
+        wall_probs = np.array(hidden_info['wall_map']).reshape(25,25)
+        for i in range(25):
+            for j in range(25):
+                x = i*(square_size+padding) + padding
+                y = j*(square_size+padding) + padding
+                c = int(255*(1-wall_probs[i,j]))
+                draw.rectangle(
+                        (x,y,x+square_size,y+square_size),
+                        fill=(c,c,c)
+                )
+
+        # Target object location
+        target_pos = hidden_info['target_pos']
+        x = (target_pos[0]+25/2)*(square_size+padding) + padding
+        y = (target_pos[1]+25/2)*(square_size+padding) + padding
+        draw.line(
+                (x-square_size/2, y-square_size/2, x+square_size/2, y+square_size/2),
+                fill=(255,0,0),
+                width=2,
+        )
+        draw.line(
+                (x-square_size/2, y+square_size/2, x+square_size/2, y-square_size/2),
+                fill=(255,0,0),
+                width=2,
+        )
+
+        return img
+
+    return concat_images(
+            [
+                draw_text('Wall Map'),
+                draw_map(),
+                draw_text('Target Probabilities'),
+                draw_target_idx(),
+            ],
+            direction='v',
+            align=0,
+    )
 
 class VideoCallback:
     def __init__(self, filename: str, 
@@ -374,6 +486,7 @@ class VideoCallback:
                 ],
                 env.goal_str
         )
+        hidden_info_img = draw_hidden_info(results['hidden_info'])
         frame_and_attn = concat_images(
             [
                 concat_images(
@@ -392,10 +505,16 @@ class VideoCallback:
             direction = 'v',
             align = 0,
         )
+        final_img = concat_images(
+                [frame_and_attn, hidden_info_img],
+                padding = 5,
+                direction='h',
+                align=0,
+        )
 
-        frame_and_attn = np.array(frame_and_attn)[:,:,::-1]
-        video_writer = self.get_video_writer(frame_and_attn)
-        video_writer.write(frame_and_attn)
+        final_img = np.array(final_img)[:,:,::-1]
+        video_writer = self.get_video_writer(final_img)
+        video_writer.write(final_img)
 
     def close(self):
         if self._video_writer is not None:
@@ -477,8 +596,12 @@ if __name__ == '__main__':
     else:
         video_callback = VideoCallback(video_filename)
 
+    hidden_info_fn = make_hidden_info_fn({
+        k: f'./debug-model-{k}.pt' for k in TARGET_KEYS
+    })
+
     test_results = [
-            test(model, env_config, preprocess_obs, video_callback_fn=video_callback, verbose=args.verbose)
+            test(model, env_config, preprocess_obs, video_callback_fn=video_callback, hidden_info_fn=hidden_info_fn, verbose=args.verbose)
             for _ in tqdm(range(args.num_episodes))
     ]
 
