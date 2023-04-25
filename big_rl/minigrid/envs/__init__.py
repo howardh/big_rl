@@ -54,7 +54,8 @@ class MinigridPreprocessing(gym.Wrapper):
         with_mission = False,
     ):
         super().__init__(env)
-        assert ( cv2 is not None ), 'opencv-python package not installed!'
+        if cv2 is None:
+            raise Exception('opencv-python package not installed!')
 
         if rgb:
             self.env = minigrid.wrappers.RGBImgPartialObsWrapper(env)

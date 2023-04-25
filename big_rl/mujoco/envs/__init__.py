@@ -63,7 +63,8 @@ class NormalizeDictObservation(gym.Wrapper[dict, ActionType]):
             epsilon: A stability parameter that is used when scaling the observations.
         """
         super().__init__(env)
-        assert isinstance(self.observation_space, gym.spaces.Dict), "This wrapper only works with Dict observation spaces."
+        if not isinstance(self.observation_space, gym.spaces.Dict):
+            raise TypeError("This wrapper only works with Dict observation spaces.")
         self.num_envs = getattr(env, "num_envs", 1)
         self.is_vector_env = getattr(env, "is_vector_env", False)
         if self.is_vector_env:

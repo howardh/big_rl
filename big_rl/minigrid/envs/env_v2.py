@@ -274,7 +274,8 @@ class FetchTask(Task):
             if dest is None:
                 return 0
 
-            assert self.env.agent_pos is not None
+            if self.env.agent_pos is None:
+                raise Exception('Agent position is not set. Reset the environment to start an episode first.')
             if self._agent_pos_prev is None:
                 return 0
 
@@ -448,9 +449,12 @@ class MultiRoomEnv_v2(MiniGridEnv):
                 Tasks output a pseudo-reward on each step, which is summed up and returned by the environment in the observation dict. If this is set to None, the pseudo-reward will be omitted from the observation. If set to an empty dict, the pseudo-reward will simply be summed up with no transformations applied.
             seed (int): random seed.
         """
-        assert min_num_rooms > 0
-        assert max_num_rooms >= min_num_rooms
-        assert max_room_size >= 4
+        if min_num_rooms <= 0:
+            raise ValueError(f'min_num_rooms must be positive, got {min_num_rooms}')
+        if max_num_rooms < min_num_rooms:
+            raise ValueError(f'max_num_rooms must be >= min_num_rooms, got {max_num_rooms} < {min_num_rooms}')
+        if max_room_size < 4:
+            raise ValueError(f'max_room_size must be >= 4, got {max_room_size}')
 
         self.min_num_rooms = min_num_rooms
         self.max_num_rooms = max_num_rooms

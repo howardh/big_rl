@@ -29,7 +29,8 @@ def merge_space(*spaces):
     for space in spaces:
         for k,v in space.items():
             if k in new_space:
-                assert new_space[k] == v, f"Space mismatch for key {k}: {new_space[k]} != {v}"
+                if new_space[k] != v:
+                    raise ValueError(f"Space mismatch for key {k}: {new_space[k]} != {v}")
             else:
                 new_space[k] = v
     return gymnasium.spaces.Dict(new_space)
@@ -238,7 +239,8 @@ class ConfigReplace:
 
 class ConfigMerge:
     def __init__(self, value):
-        assert isinstance(value,dict)
+        if not isinstance(value,dict):
+            raise Exception('ConfigMerge can only be used with dicts')
         self.value = value
 
 

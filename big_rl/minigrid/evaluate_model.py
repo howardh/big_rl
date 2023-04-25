@@ -438,7 +438,8 @@ class VideoCallback:
     def __init__(self, filename: str, 
                  size: Optional[Tuple[int,int]] = None,
                  fps: int = 30):
-        assert filename.endswith('.webm')
+        if not filename.endswith('.webm'):
+            raise ValueError('filename must end with .webm')
         os.makedirs(os.path.dirname(filename), exist_ok=True)
 
         self.filename = filename
