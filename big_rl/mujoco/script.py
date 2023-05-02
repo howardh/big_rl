@@ -605,7 +605,7 @@ if __name__ == '__main__':
     # Initialize W&B
     if args.wandb:
         if args.wandb_id is not None:
-            wandb.init(project='ppo-multitask-minigrid', id=args.wandb_id, resume='allow')
+            wandb.init(project='big_rl-mujoco', id=args.wandb_id, resume='allow')
         elif args.model_checkpoint is not None:
             wandb_id = os.path.basename(args.model_checkpoint).split('.')[0]
             wandb.init(project='big_rl-mujoco', id=wandb_id, resume='allow')

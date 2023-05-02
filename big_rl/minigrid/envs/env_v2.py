@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import os
 from typing import Sequence, TypedDict, Literal, Tuple
 
 import numpy as np
@@ -12,6 +13,7 @@ import minigrid.core.grid
 import minigrid.core.constants
 import minigrid.core.world_object
 from minigrid.minigrid_env import MiniGridEnv, MissionSpace
+from minigrid.core.constants import COLOR_NAMES
 
 from big_rl.minigrid.envs import init_rng, Room, room_is_valid
 from big_rl.minigrid.envs import PotentialBasedReward, RewardNoise, RewardDelay, RewardDelayedStart
@@ -96,6 +98,13 @@ class FetchTask(Task):
         self.env = env
         self.rng = rng
 
+        if num_targets > env.num_objs:
+            raise ValueError(f'Cannot have more targets than there are objects in the environment. There are {env.num_objs} objects, but {num_targets} targets were requested.')
+        if num_targets < 0:
+            raise ValueError(f'Cannot have a negative number of targets. {num_targets} targets were requested.')
+        if reward_flip_prob < 0 or reward_flip_prob > 1:
+            raise ValueError(f'`reward_flip_prob` must be in [0,1]. {reward_flip_prob} was provided.')
+
         self.num_targets = num_targets
         self.reward_correct = reward_correct
         self.reward_incorrect = reward_incorrect
@@ -119,7 +128,8 @@ class FetchTask(Task):
         if self.fixed_target is None:
             self.target_objs = self.rng.choice(self.env.objects, replace=False, size=self.num_targets)
         else:
-            self.target_objs = [obj for obj in self.env.objects if obj.color == self.fixed_target[1] and obj.type == self.fixed_target[0]]
+            target_type, target_color = self.fixed_target
+            self.target_objs = [obj for obj in self.env.objects if obj.color == target_color and obj.type == target_type]
 
         # Choose an order to cycle through the targets
         if self.cycle_targets:
@@ -418,6 +428,7 @@ class MultiRoomEnv_v2(MiniGridEnv):
         num_obj_types: int = 2,
         num_obj_colors: int = 6,
         unique_objs: bool = True,
+        required_objs: Sequence[Tuple[str,str]] = [],
         # Other environment stuff
         num_goals: int = 0,
         num_lava: int = 0,
@@ -440,6 +451,7 @@ class MultiRoomEnv_v2(MiniGridEnv):
             num_obj_types (int): number of object types. Available types are 'key' and 'ball', so max value is 2.
             num_obj_colors (int): number of object colors. Max value is 6.
             unique_objs (bool): if True, then each object will be unique. If False, then there may be multiple objects of the same type and color.
+            required_objs (list of tuples): list of (type, color) tuples specifying which objects must be placed in the environment. If empty, then no objects are required.
             num_goals (int): number of goals to place in the environment. Goals are visually represented by a green square.
             num_lava (int): number of lava squares to place in the environment.
             task_config (dict): configuration for the task. See the documentation for the Task class for more details.
@@ -462,10 +474,19 @@ class MultiRoomEnv_v2(MiniGridEnv):
         self.max_room_size = max_room_size
         self.door_prob = door_prob
 
+        if len(required_objs) > num_objs:
+            raise ValueError(f'len(required_objs) must be <= num_objs, got {len(required_objs)} > {num_objs}')
+        for obj_type, obj_color in required_objs:
+            if obj_type not in ['key', 'ball']:
+                raise ValueError(f'Invalid object type: {obj_type}')
+            if obj_color not in COLOR_NAMES:
+                raise ValueError(f'Invalid object color: {obj_color}')
+
         self.num_objs = num_objs
         self.num_obj_types = num_obj_types
         self.num_obj_colors = num_obj_colors
         self.unique_objs = unique_objs
+        self.required_objs = required_objs
 
         self.num_goals = num_goals
         self.num_lava = num_lava
@@ -620,7 +641,7 @@ class MultiRoomEnv_v2(MiniGridEnv):
         if self.max_steps < 0:
             self.max_steps = float('inf')
 
-    def _init_objects(self, num_objs, num_obj_types, num_obj_colors, unique_objs, num_goals, num_lava):
+    def _init_objects(self, num_objs, num_obj_types, num_obj_colors, unique_objs, num_goals, num_lava, required_objs):
         # Goals and lava
         # Generate these first because they don't move, so they need to be positioned unobstructively
         self.goals = [
@@ -639,12 +660,16 @@ class MultiRoomEnv_v2(MiniGridEnv):
         colors = minigrid.core.constants.COLOR_NAMES[:num_obj_colors]
 
         type_color_pairs = [(t,c) for t in types for c in colors]
+        required_objs = [*required_objs]
 
         objs = []
 
         # For each object to be generated
         while len(objs) < num_objs:
-            obj_type, obj_color = self._rand_elem(type_color_pairs)
+            if len(required_objs) > 0:
+                obj_type, obj_color = required_objs.pop()
+            else:
+                obj_type, obj_color = self._rand_elem(type_color_pairs)
             if unique_objs:
                 type_color_pairs.remove((obj_type, obj_color))
 
@@ -857,6 +882,11 @@ class MultiRoomEnv_v2(MiniGridEnv):
         return self.task.description
 
     def reset(self, seed=None, options=None):
+        if seed is None:
+            # Use the OS RNG to get a random seed
+            # This ensures that the seed will be different each time this is run regardless of whether it's the same process or not.
+            # Relies on the OS providing a good RNG, which is true for modern Unix-like operating systems
+            seed = int.from_bytes(os.urandom(4), byteorder='little')
         obs, info = super().reset(seed=seed, options=options)
 
         self._init_objects(
@@ -866,6 +896,7 @@ class MultiRoomEnv_v2(MiniGridEnv):
             unique_objs = self.unique_objs,
             num_goals = self.num_goals,
             num_lava = self.num_lava,
+            required_objs = self.required_objs,
         )
 
         self.trial_count = 0
@@ -877,6 +908,8 @@ class MultiRoomEnv_v2(MiniGridEnv):
             transform.reset()
         if self.pseudo_reward_config is not None:
             obs['pseudo_reward'] = np.array([0], dtype=np.float32)
+
+        #print([(o.type, o.color) for o in self.objects])
 
         return obs, info
 

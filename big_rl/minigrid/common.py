@@ -1,4 +1,7 @@
+import itertools
+
 import torch
+from minigrid.core.constants import COLOR_NAMES
 
 from big_rl.model.model import ModularPolicy2, ModularPolicy4, ModularPolicy5, ModularPolicy5LSTM, ModularPolicy7
 from big_rl.model.modular_policy_8 import ModularPolicy8
@@ -859,6 +862,31 @@ def env_config_presets():
                     }
                 }
             }, inherit='fetch2-004')
+
+            # Same as above, but the target object can be paired with any other object
+            for obj_color, obj_type in itertools.product(COLOR_NAMES, ['ball', 'key']):
+                config.add(f'fetch2-004-stop_{cutoff}_trials-{obj_color}_{obj_type}-2', {
+                    'meta_config': {
+                        'include_reward': False,
+                    },
+                    'config': {
+                        'num_objs': 2,
+                        'num_obj_types': 2,
+                        'num_obj_colors': 6,
+                        'required_objs': [(obj_type, obj_color)],
+                        'pseudo_reward_config': {
+                            'noise': ('stop', cutoff, 'trials'),
+                        },
+                        'task_config': {
+                            'args': {
+                                'fixed_target': (obj_type, obj_color),
+                                'pseudo_reward_config': {
+                                    'type': 'subtask',
+                                },
+                            }
+                        }
+                    }
+                }, inherit='fetch2-004')
         for x in range(2,51):
             config.add(f'fetch2-004-zero_{x}_{x}_trials', {
                 'meta_config': {

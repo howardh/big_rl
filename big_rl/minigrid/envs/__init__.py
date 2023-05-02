@@ -264,7 +264,7 @@ class MetaWrapper(gym.Wrapper):
                 self._regret.append(regret)
                 info['regret'] = self._regret
 
-            if self.episode_count >= self.episode_stack: # Episode count starts at 1
+            if self.episode_count+1 >= self.episode_stack: # Episode count starts at 0
                 self.episode_count = 0
                 return obs, reward, terminated, truncated, info
             else:

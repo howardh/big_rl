@@ -11,6 +11,7 @@ setup(name='big_rl',
         'wandb',
         'scikit-learn',
         'tabulate>=0.9.0',
+        'tensordict>=0.1.0',
 
         # Minigrid
         'minigrid',

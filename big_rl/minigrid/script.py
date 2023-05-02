@@ -683,6 +683,7 @@ if __name__ == '__main__':
             v = v.format(**substitutions)
             setattr(args, k, v)
 
+    print(substitutions)
     print('-'*80)
     print(f'Run ID: {args.run_id}')
     print(f'W&B ID: {args.wandb_id}')

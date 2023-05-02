@@ -152,8 +152,8 @@ def make_hidden_info_fn(model_filenames): # FIXME: Lots of hard-coded values
                         target_key=target_key,
                         input_size=hidden.shape[0],
                     )
-                    models[target_key].load_state_dict(torch.load(model_filenames[target_key], map_location='cpu'))
-                    print(f'Loaded {model_filenames[target_key]} for hidden info')
+                    #models[target_key].load_state_dict(torch.load(model_filenames[target_key], map_location='cpu'))
+                    #print(f'Loaded {model_filenames[target_key]} for hidden info')
 
             return {
                 'target_idx': models['target_idx'](hidden).softmax(0).numpy(),
@@ -406,18 +406,30 @@ def draw_hidden_info(hidden_info: dict):
                         fill=(c,c,c)
                 )
 
+        # Draw agent in the center as a triangle
+        x = (25*(square_size+padding) + padding) // 2
+        y = (25*(square_size+padding) + padding) // 2
+        draw.polygon(
+                [
+                    (x, y-square_size//2),
+                    (x-square_size//2, y+square_size//2),
+                    (x+square_size//2, y+square_size//2),
+                ],
+                fill=(255,0,0)
+        )
+
         # Target object location
         target_pos = hidden_info['target_pos']
         x = (target_pos[0]+25/2)*(square_size+padding) + padding
         y = (target_pos[1]+25/2)*(square_size+padding) + padding
         draw.line(
                 (x-square_size/2, y-square_size/2, x+square_size/2, y+square_size/2),
-                fill=(255,0,0),
+                fill=(0,255,0),
                 width=2,
         )
         draw.line(
                 (x-square_size/2, y+square_size/2, x+square_size/2, y-square_size/2),
-                fill=(255,0,0),
+                fill=(0,255,0),
                 width=2,
         )
 

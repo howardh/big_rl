@@ -180,11 +180,11 @@ def log_episode_end(done, info, episode_reward, episode_true_reward, episode_ste
         done2 = done & (env_ids == env_id)
         if not done2.any():
             continue
-        fi = info['_final_info']
-        unsupervised_trials = np.array([x['unsupervised_trials'] for x in info['final_info'][fi]])
-        supervised_trials = np.array([x['supervised_trials'] for x in info['final_info'][fi]])
-        unsupervised_reward = np.array([x['unsupervised_reward'] for x in info['final_info'][fi]])
-        supervised_reward = np.array([x['supervised_reward'] for x in info['final_info'][fi]])
+        #fi = info['_final_info']
+        #unsupervised_trials = np.array([x['unsupervised_trials'] for x in info['final_info'][fi]])
+        #supervised_trials = np.array([x['supervised_trials'] for x in info['final_info'][fi]])
+        #unsupervised_reward = np.array([x['unsupervised_reward'] for x in info['final_info'][fi]])
+        #supervised_reward = np.array([x['supervised_reward'] for x in info['final_info'][fi]])
         #rewards_by_trial = np.array([x['episode_rewards'] for x in info['final_info'][done2 & fi]]).mean(0, keepdims=True)
         if wandb.run is not None:
             data = {
@@ -195,12 +195,12 @@ def log_episode_end(done, info, episode_reward, episode_true_reward, episode_ste
                     'step': global_step_counter[0]-global_step_counter[1],
                     'step_total': global_step_counter[0],
             }
-            data[f'unsupervised_trials/{env_label}'] = unsupervised_trials[done2[fi]].mean().item()
-            data[f'supervised_trials/{env_label}'] = supervised_trials[done2[fi]].mean().item()
-            if unsupervised_trials[done2[fi]].mean() > 0:
-                data[f'unsupervised_reward/{env_label}'] = unsupervised_reward[done2[fi]].mean().item()
-            if supervised_trials[done2[fi]].mean() > 0:
-                data[f'supervised_reward/{env_label}'] = supervised_reward[done2[fi]].mean().item()
+            #data[f'unsupervised_trials/{env_label}'] = unsupervised_trials[done2[fi]].mean().item()
+            #data[f'supervised_trials/{env_label}'] = supervised_trials[done2[fi]].mean().item()
+            #if unsupervised_trials[done2[fi]].mean() > 0:
+            #    data[f'unsupervised_reward/{env_label}'] = unsupervised_reward[done2[fi]].mean().item()
+            #if supervised_trials[done2[fi]].mean() > 0:
+            #    data[f'supervised_reward/{env_label}'] = supervised_reward[done2[fi]].mean().item()
             wandb.log(data, step = global_step_counter[0])
         print(f'  reward: {episode_reward[done].mean():.2f}\t len: {episode_steps[done].mean()} \t env: {env_label} ({done2.sum().item()})')
 
@@ -584,8 +584,8 @@ if __name__ == '__main__':
     parser.add_argument('--slurm-split', action='store_true', help='Set this flag to let the script know it is running on a SLURM cluster with one job split across an array job. This ensures that the same checkpoint is used for each of these jobs.')
     parser.add_argument('--cuda', action='store_true', help='Use CUDA.')
     parser.add_argument('--wandb', action='store_true', help='Save results to W&B.')
-    parser.add_argument('--wandb-id', type=str, default='{RUN_ID}',
-                        help='W&B run ID. Defaults to the run ID.')
+    parser.add_argument('--wandb-id', type=str, default=None,
+                        help='W&B run ID.')
 
     # Parse arguments
     args = parser.parse_args()
@@ -594,26 +594,32 @@ if __name__ == '__main__':
     # Note: Only non-string arguments and args.run_id can be used until the post-processing is done.
     if args.run_id is None:
         args.run_id = generate_id(slurm_split = args.slurm_split)
-    else:
-        assert '{' not in args.run_id and '}' not in args.run_id, 'Run ID cannot contain {} variables.'
-    print(f'Run ID: {args.run_id}')
 
+    substitutions = dict(
+        RUN_ID = args.run_id,
+        SLURM_JOB_ID = os.environ.get('SLURM_JOB_ID', None),
+        SLURM_ARRAY_JOB_ID = os.environ.get('SLURM_ARRAY_JOB_ID', None),
+        SLURM_ARRAY_TASK_ID = os.environ.get('SLURM_ARRAY_TASK_ID', None),
+        step = '{step}',
+    )
+    substitutions = {k:v.format(**substitutions) for k,v in substitutions.items() if v is not None} # Substitute values in `subsitutions` too in case they also have {} variables. None values are removed.
     for k,v in vars(args).items():
         if type(v) is str:
-            v = v.format(
-                RUN_ID = args.run_id,
-                step = '{step}', # Keep {step} as a placeholder for the step number.
-            )
+            v = v.format(**substitutions)
             setattr(args, k, v)
+
+    print(f'Run ID: {args.run_id}')
 
     # Initialize W&B
     if args.wandb:
-        if args.model_checkpoint is not None:
-            wandb_id = os.path.basename(args.model_checkpoint).split('.')[0]
-            wandb.init(project='ppo-multitask-minigrid', id=wandb_id, resume='allow')
+        if args.wandb_id is not None and args.wandb_id != '':
+            wandb.init(project='ppo-multitask-minigrid', id=args.wandb_id, resume='allow')
+        #elif args.model_checkpoint is not None:
+        #    wandb_id = os.path.basename(args.model_checkpoint).split('.')[0]
+        #    wandb.init(project='ppo-multitask-minigrid', id=wandb_id, resume='allow')
         else:
             wandb.init(project='ppo-multitask-minigrid')
-        wandb.config.update(args)
+        wandb.config.update(args, allow_val_change=True)
 
     ENV_CONFIG_PRESETS = env_config_presets()
     env_configs = [
