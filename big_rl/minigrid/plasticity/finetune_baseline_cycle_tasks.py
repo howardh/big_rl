@@ -1,3 +1,10 @@
+"""
+A script to evaluate the plasticity loss in the baseline setup.
+This is done by training the model on multiple tasks in sequence, and observing the peak performance each time a task is revisited.
+
+The script is a little complicated because it was copied from the main training script with some things removed, but not reorganized.
+"""
+
 import itertools
 from typing import Optional, Generator, Dict, List, Any, Callable
 import time
@@ -12,6 +19,7 @@ import torch.nn.utils
 from tensordict import TensorDict
 import numpy as np
 import wandb
+from minigrid.core.constants import COLOR_NAMES
 
 from frankenstein.buffer.vec_history import VecHistoryBuffer
 from frankenstein.advantage.gae import generalized_advantage_estimate 
@@ -175,40 +183,12 @@ def compute_ppo_losses(
                 break
 
 
-def log_episode_end(done, info, episode_reward, episode_true_reward, episode_steps, env_ids, env_label_to_id, global_step_counter):
-    for env_label, env_id in env_label_to_id.items():
-        done2 = done & (env_ids == env_id)
-        if not done2.any():
-            continue
-        #fi = info['_final_info']
-        #unsupervised_trials = np.array([x['unsupervised_trials'] for x in info['final_info'][fi]])
-        #supervised_trials = np.array([x['supervised_trials'] for x in info['final_info'][fi]])
-        #unsupervised_reward = np.array([x['unsupervised_reward'] for x in info['final_info'][fi]])
-        #supervised_reward = np.array([x['supervised_reward'] for x in info['final_info'][fi]])
-        #rewards_by_trial = np.array([x['episode_rewards'] for x in info['final_info'][done2 & fi]]).mean(0, keepdims=True)
-        if wandb.run is not None:
-            data = {
-                    f'reward/{env_label}': episode_reward[done2].mean().item(),
-                    f'true_reward/{env_label}': episode_true_reward[done2].mean().item(),
-                    f'episode_length/{env_label}': episode_steps[done2].mean().item(),
-                    'step': global_step_counter[0]-global_step_counter[1],
-                    'step_total': global_step_counter[0],
-            }
-            #data[f'unsupervised_trials/{env_label}'] = unsupervised_trials[done2[fi]].mean().item()
-            #data[f'supervised_trials/{env_label}'] = supervised_trials[done2[fi]].mean().item()
-            #if unsupervised_trials[done2[fi]].mean() > 0:
-            #    data[f'unsupervised_reward/{env_label}'] = unsupervised_reward[done2[fi]].mean().item()
-            #if supervised_trials[done2[fi]].mean() > 0:
-            #    data[f'supervised_reward/{env_label}'] = supervised_reward[done2[fi]].mean().item()
-            wandb.log(data, step = global_step_counter[0])
-        print(f'  reward: {episode_reward[done].mean():.2f}\t len: {episode_steps[done].mean()} \t env: {env_label} ({done2.sum().item()})')
-
-
 def train_single_env(
-        global_step_counter: List[int],
+        step_counter: Dict[str,int],
         model: torch.nn.Module,
         env: gymnasium.vector.VectorEnv,
-        env_labels: List[str],
+        env_label: str,
+        env_index: int,
         *,
         obs_scale: Dict[str,float] = {},
         obs_ignore: List[str] = ['obs (mission)'],
@@ -233,9 +213,6 @@ def train_single_env(
         env: `gym.vector.VectorEnv`
     """
     num_envs = env.num_envs
-
-    env_label_to_id = {label: i for i,label in enumerate(set(env_labels))}
-    env_ids = np.array([env_label_to_id[label] for label in env_labels])
 
     device = next(model.parameters()).device
     observation_space = env.single_observation_space
@@ -269,7 +246,8 @@ def train_single_env(
         state_values = [] # For logging purposes
         entropies = [] # For logging purposes
         for _ in range(rollout_length):
-            global_step_counter[0] += num_envs
+            step_counter[env_label] += num_envs
+            step_counter['total'] += num_envs
 
             # Select action
             with torch.no_grad():
@@ -304,27 +282,27 @@ def train_single_env(
             )
 
             if done.any():
-                print(f'Episode finished ({step * num_envs * rollout_length:,} -- {global_step_counter[0]:,})')
-                log_episode_end(
-                        done = done,
-                        info = info,
-                        episode_reward = episode_reward,
-                        episode_true_reward = episode_true_reward,
-                        episode_steps = episode_steps,
-                        env_ids = env_ids,
-                        env_label_to_id = env_label_to_id,
-                        global_step_counter = global_step_counter,
-                )
+                print(f'Episode finished ({step * num_envs * rollout_length:,} -- {step_counter["total"]:,})')
+                if wandb.run is not None:
+                    data = {
+                            f'reward': episode_reward[done].mean().item(),
+                            f'reward/{env_label}': episode_reward[done].mean().item(),
+                            f'reward/by_index/{env_index}': episode_reward[done].mean().item(),
+                            f'true_reward': episode_true_reward[done].mean().item(),
+                            f'true_reward/{env_label}': episode_true_reward[done].mean().item(),
+                            f'true_reward/by_index/{env_index}': episode_true_reward[done].mean().item(),
+                            f'episode_length/{env_label}': episode_steps[done].mean().item(),
+                            f'episode_length/by_index/{env_index}': episode_steps[done].mean().item(),
+                            f'env_step/{env_label}': step_counter[env_label],
+                            f'env_step/by_index/{env_index}': step_counter[env_label],
+                            'step_total': step_counter['total'],
+                    }
+                    wandb.log(data, step = step_counter['total'])
+                print(f'  reward: {episode_reward[done].mean():.2f}\t len: {episode_steps[done].mean()} \t env: {env_label} ({done.sum().item()})')
                 # Reset episode stats
                 episode_reward[done] = 0
                 episode_true_reward[done] = 0
                 episode_steps[done] = 0
-                # Only do one episode
-                if done[0]:
-                    yield {
-                        'episode_rewards': info['final_info'][0]['episode_rewards']
-                    }
-                    return
 
         # Train
         losses = compute_ppo_losses(
@@ -361,13 +339,12 @@ def train_single_env(
 
 def train(
         model: torch.nn.Module,
-        envs: List[gymnasium.vector.VectorEnv],
-        env_labels: List[List[str]],
-        env_group_labels: List[str],
+        env: gymnasium.vector.VectorEnv,
+        env_label: str,
+        env_index: int,
         optimizer: torch.optim.Optimizer,
         lr_scheduler: Optional[torch.optim.lr_scheduler._LRScheduler], # XXX: Private class. This might break in the future.
         *,
-        max_steps: int = 1000,
         rollout_length: int = 128,
         obs_scale: Dict[str,float] = {},
         reward_scale: float = 1.0,
@@ -382,46 +359,39 @@ def train(
         minibatch_size: int = 32,
         target_kl: Optional[float] = None,
         norm_adv: bool = True,
-        start_step: int = 0,
+        step_counter: Dict[str,int] = {},
         ):
-    global_step_counter = [start_step, start_step]
-    trainers = [
-        train_single_env(
-            global_step_counter = global_step_counter,
-            model = model,
-            env = env,
-            env_labels = labels,
-            obs_scale = obs_scale,
-            rollout_length = rollout_length,
-            reward_scale = reward_scale,
-            reward_clip = reward_clip,
-            discount = discount,
-            gae_lambda = gae_lambda,
-            clip_vf_loss = clip_vf_loss,
-            entropy_loss_coeff = entropy_loss_coeff,
-            vf_loss_coeff = vf_loss_coeff,
-            minibatch_size = minibatch_size,
-            num_minibatches = num_minibatches,
-            target_kl = target_kl,
-            norm_adv = norm_adv,
-        )
-        for env,labels in zip(envs, env_labels)
-    ]
+    trainer = train_single_env(
+        step_counter = step_counter,
+        model = model,
+        env = env,
+        env_label = env_label,
+        env_index = env_index,
+        obs_scale = obs_scale,
+        rollout_length = rollout_length,
+        reward_scale = reward_scale,
+        reward_clip = reward_clip,
+        discount = discount,
+        gae_lambda = gae_lambda,
+        clip_vf_loss = clip_vf_loss,
+        entropy_loss_coeff = entropy_loss_coeff,
+        vf_loss_coeff = vf_loss_coeff,
+        minibatch_size = minibatch_size,
+        num_minibatches = num_minibatches,
+        target_kl = target_kl,
+        norm_adv = norm_adv,
+    )
 
-    start_time = time.time()
-    for _, losses in enumerate(zip(*trainers)):
-        if 'loss' not in losses[0]:
+    for _, loss in enumerate(trainer):
+        if 'loss' not in loss:
             yield {
-                'step': global_step_counter[0],
-                'episode_rewards': losses[0]['episode_rewards'],
+                'step': step_counter['total'],
+                'episode_rewards': loss['episode_rewards'],
             }
             return
-        #env_steps = training_steps * rollout_length * sum(env.num_envs for env in envs)
-        env_steps = global_step_counter[0]
 
-        mean_loss = torch.stack([x['loss'] for x in losses]).mean()
         optimizer.zero_grad()
-        mean_loss.backward()
+        loss['loss'].backward()
         if max_grad_norm is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm) # type: ignore
         for p in model.parameters(): # XXX: Debugging code
@@ -433,57 +403,34 @@ def train(
         optimizer.step()
 
         if wandb.run is not None:
-            for label,x in zip(env_group_labels, losses):
-                data = {
-                    f'loss/pi/{label}': x['loss_pi'].item(),
-                    f'loss/v/{label}': x['loss_vf'].item(),
-                    f'loss/entropy/{label}': x['loss_entropy'].item(),
-                    f'loss/total/{label}': x['loss'].item(),
-                    f'approx_kl/{label}': x['approx_kl'].item(),
-                    f'state_value/{label}': x['log']['state_value'].mean().item(),
-                    f'entropy/{label}': x['log']['entropy'].mean().item(),
-                    #last_approx_kl=approx_kl.item(),
-                    #'learning_rate': lr_scheduler.get_lr()[0],
-                    'step': global_step_counter[0]-global_step_counter[1],
-                    'step_total': global_step_counter[0],
-                }
-                if 'attention max' in x['log']:
-                    for k,v in x['log']['attention max'].items():
-                        data[f'attention max/{k}'] = v
-                wandb.log(data, step = global_step_counter[0])
+            data = {
+                f'loss/pi/{env_label}': loss['loss_pi'].item(),
+                f'loss/v/{env_label}': loss['loss_vf'].item(),
+                f'loss/entropy/{env_label}': loss['loss_entropy'].item(),
+                f'loss/total/{env_label}': loss['loss'].item(),
+                f'approx_kl/{env_label}': loss['approx_kl'].item(),
+                f'state_value/{env_label}': loss['log']['state_value'].mean().item(),
+                f'entropy/{env_label}': loss['log']['entropy'].mean().item(),
+                #last_approx_kl=approx_kl.item(),
+                #'learning_rate': lr_scheduler.get_lr()[0],
+                f'env_step/{env_label}': step_counter[env_label],
+                f'env_step/by_index/{env_index}': step_counter[env_label],
+                'step_total': step_counter['total'],
+            }
+            wandb.log(data, step = step_counter['total'])
 
         yield {
-            'step': global_step_counter[0],
+            #'step': global_step_counter[0],
         }
 
         # Update learning rate
         if lr_scheduler is not None:
             lr_scheduler.step()
 
-        # Timing
-        if env_steps > 0:
-            elapsed_time = time.time() - start_time
-            steps_per_sec = (env_steps - start_step) / elapsed_time
-            if max_steps > 0:
-                remaining_time = int((max_steps - (env_steps-start_step)) / steps_per_sec)
-                remaining_hours = remaining_time // 3600
-                remaining_minutes = (remaining_time % 3600) // 60
-                remaining_seconds = (remaining_time % 3600) % 60
-                print(f"Step {env_steps-start_step:,}/{max_steps:,} \t {int(steps_per_sec):,} SPS \t Remaining: {remaining_hours:02d}:{remaining_minutes:02d}:{remaining_seconds:02d}")
-            else:
-                elapsed_time = int(elapsed_time)
-                elapsed_hours = elapsed_time // 3600
-                elapsed_minutes = (elapsed_time % 3600) // 60
-                elapsed_seconds = (elapsed_time % 3600) % 60
-                print(f"Step {env_steps-start_step:,} \t {int(steps_per_sec):,} SPS \t Elapsed: {elapsed_hours:02d}:{elapsed_minutes:02d}:{elapsed_seconds:02d}")
-
-        if max_steps > 0 and env_steps-start_step >= max_steps:
-            print('Reached max steps')
-            break
-
 
 def finetune(
-        env_config_name: str,
+        env_config_names: List[str],
+        env_labels: List[str],
         num_envs: int,
         checkpoint_filename: str,
         model_type: str,
@@ -507,20 +454,25 @@ def finetune(
         max_grad_norm: float = 0.5,
         cuda: bool = True,
         load_optimizer: bool = False,
+        # Plasticity experiment config
+        steps_per_env: int = 1_000,
+        num_cycles: int = 10,
+        cycle_task_stop_index: Optional[int] = None,
+        num_tasks: Optional[int] = None,
         # Override configs
         num_trials: Optional[int] = None,
         room_size: Optional[int] = None,
     ):
     ENV_CONFIG_PRESETS = env_config_presets()
-    env_config = ENV_CONFIG_PRESETS[env_config_name]
-    if num_trials is not None:
-        env_config['config']['num_trials'] = num_trials
-    if room_size is not None:
-        env_config['config']['min_room_size'] = room_size
-        env_config['config']['max_room_size'] = room_size
-    envs = [
-        gymnasium.vector.SyncVectorEnv([lambda: make_env(**env_config) for _ in range(num_envs)])
-    ]
+    envs = {}
+    for config_name,label in zip(env_config_names,env_labels):
+        env_config = ENV_CONFIG_PRESETS[config_name]
+        if num_trials is not None:
+            env_config['config']['num_trials'] = num_trials
+        if room_size is not None:
+            env_config['config']['min_room_size'] = room_size
+            env_config['config']['max_room_size'] = room_size
+        envs[label] = gymnasium.vector.SyncVectorEnv([lambda: make_env(**env_config) for _ in range(num_envs)])
 
     if cuda and torch.cuda.is_available():
         device = torch.device('cuda')
@@ -529,8 +481,8 @@ def finetune(
 
     # Initialize model
     model = init_model(
-            observation_space = merge_space(*[env.single_observation_space for env in envs]),
-            action_space = envs[0].single_action_space, # Assume the same action space for all environments
+            observation_space = merge_space(*[env.single_observation_space for env in envs.values()]),
+            action_space = next(iter(envs.values())).single_action_space, # Assume the same action space for all environments
             model_type = model_type,
             recurrence_type = None,
             architecture = model_architecture,
@@ -552,12 +504,13 @@ def finetune(
     lr_scheduler = None # TODO
 
     # Load checkpoint
-    start_step = 0
     checkpoint = None
 
-    assert checkpoint_filename is not None
-    checkpoint = torch.load(checkpoint_filename, map_location=device)
-    print(f'Loading model from {checkpoint_filename}')
+    if checkpoint_filename is not None:
+        checkpoint = torch.load(checkpoint_filename, map_location=device)
+        print(f'Loading model from {checkpoint_filename}')
+    else:
+        print('No checkpoint specified. Using random weights.')
 
     if checkpoint is not None:
         model.load_state_dict(checkpoint['model'], strict=False)
@@ -569,48 +522,78 @@ def finetune(
         start_step = checkpoint.get('step', 0)
         print(f'Loaded checkpoint from {checkpoint_filename} at step {start_step}')
 
+    # Random order
+    env_order = list(envs.keys())
+    np.random.shuffle(env_order)
+    if num_tasks is not None:
+        env_order = env_order[:num_tasks]
+    print(f'Environment order: {env_order}')
+
+    step_counter = { k: 0 for k in envs.keys() }
+    step_counter['total'] = 0
+
     # Initialize trainer
-    trainer = train(
-            model = model,
-            envs = envs, # type: ignore (??? AsyncVectorEnv is not a subtype of VectorEnv ???)
-            env_labels = [[env_config_name]*num_envs],
-            env_group_labels = [env_config_name],
-            optimizer = optimizer,
-            lr_scheduler = lr_scheduler,
-            max_steps = max_steps,
-            rollout_length = rollout_length,
-            obs_scale = {'obs (image)': 1.0/255.0},
-            reward_clip = reward_clip,
-            reward_scale = reward_scale,
-            discount = discount,
-            gae_lambda = gae_lambda,
-            norm_adv = norm_adv,
-            clip_vf_loss = clip_vf_loss,
-            vf_loss_coeff = vf_loss_coeff,
-            entropy_loss_coeff = entropy_loss_coeff,
-            target_kl = target_kl,
-            minibatch_size = minibatch_size,
-            num_minibatches = num_minibatches,
-            max_grad_norm = max_grad_norm,
-            start_step = start_step,
-    )
+    start_time = time.time()
+    for c in range(num_cycles):
+        for task_idx, env_key in enumerate(env_order):
+            print('-'*80)
+            print(f'Environment: {env_key}')
+            print('-'*80)
 
-    # Run training loop
-    start_weights = torch.nn.utils.parameters_to_vector(model.parameters()).detach().clone()
-    x = {}
-    for x in trainer:
-        pass
-    end_weights = torch.nn.utils.parameters_to_vector(model.parameters()).detach().clone()
+            trainer = train(
+                    model = model,
+                    env = envs[env_key],
+                    env_label = env_key,
+                    env_index = task_idx,
+                    optimizer = optimizer,
+                    lr_scheduler = lr_scheduler,
+                    rollout_length = rollout_length,
+                    obs_scale = {'obs (image)': 1.0/255.0},
+                    reward_clip = reward_clip,
+                    reward_scale = reward_scale,
+                    discount = discount,
+                    gae_lambda = gae_lambda,
+                    norm_adv = norm_adv,
+                    clip_vf_loss = clip_vf_loss,
+                    vf_loss_coeff = vf_loss_coeff,
+                    entropy_loss_coeff = entropy_loss_coeff,
+                    target_kl = target_kl,
+                    minibatch_size = minibatch_size,
+                    num_minibatches = num_minibatches,
+                    max_grad_norm = max_grad_norm,
+                    step_counter = step_counter,
+            )
 
-    print('-'*80)
-    print(f'Episode rewards: {x["episode_rewards"]}')
-    print(f'Episode rewards total: {sum(x["episode_rewards"])}') # type: ignore
-    print(f'Weight change: {torch.norm(end_weights - start_weights)}')
-    print('-'*80)
-    breakpoint()
+            # Run training loop
+            for i,_ in enumerate(trainer):
+                if i >= steps_per_env:
+                    # If the `cycle_task_stop_index` is specified, it means we want to stop cycling at that task index on the last cycle and keep training forever on that task.
+                    if cycle_task_stop_index is not None and c >= num_cycles-1 and task_idx == cycle_task_stop_index:
+                        pass
+                    else:
+                        break
+                # Timing
+                steps = step_counter['total']
+                if steps > 0:
+                    elapsed_time = time.time() - start_time
+                    steps_per_sec = steps / elapsed_time
+                    if max_steps > 0:
+                        remaining_time = int((max_steps - steps) / steps_per_sec)
+                        remaining_hours = remaining_time // 3600
+                        remaining_minutes = (remaining_time % 3600) // 60
+                        remaining_seconds = (remaining_time % 3600) % 60
+                        print(f"Step {steps:,}/{max_steps:,} \t {int(steps_per_sec):,} SPS \t Remaining: {remaining_hours:02d}:{remaining_minutes:02d}:{remaining_seconds:02d}")
+                    else:
+                        elapsed_time = int(elapsed_time)
+                        elapsed_hours = elapsed_time // 3600
+                        elapsed_minutes = (elapsed_time % 3600) // 60
+                        elapsed_seconds = (elapsed_time % 3600) % 60
+                        print(f"Step {steps:,} \t {int(steps_per_sec):,} SPS \t Elapsed: {elapsed_hours:02d}:{elapsed_minutes:02d}:{elapsed_seconds:02d}")
+
+            print(f'Done. {step_counter[env_key]:,} steps on {env_key}.')
 
     return {
-        'episode_rewards': x['episode_rewards'],
+        #'episode_rewards': x['episode_rewards'],
     }
 
 
@@ -624,10 +607,26 @@ if __name__ == '__main__':
     parser.add_argument('--run-id', type=str, default=None,
                         help='Identifier for the current experiment. This value is used for setting the "{RUN_ID}" variable. If not specified, then either a slurm job ID is used, or the current date and time, depending on what is available. Note that the time-based ID has a resolution of 1 second, so if two runs are started within less than a second of each other, they may end up with the same ID.')
 
-    parser.add_argument('--envs', type=str, default=['fetch-001'], nargs='*', help='Environments to train on')
-    parser.add_argument('--num-envs', type=int, default=[16], nargs='*',
-            help='Number of environments to train on. If a single number is specified, it will be used for all environments. If a list of numbers is specified, it must have the same length as --env.')
-    parser.add_argument('--env-labels', type=str, default=None, nargs='*', help='')
+    parser.add_argument('--envs', type=str,
+            default=[
+                f'fetch2-004-stop_100_trials-{obj_color}_{obj_type}-2'
+                for obj_color, obj_type in itertools.product(COLOR_NAMES, ['ball', 'key'])
+            ],
+            nargs='*',
+            help='Environments to train on. Each environment will run for a fixed number of steps before cycling to the next in a random order.')
+    parser.add_argument('--num-envs', type=int, default=16,
+            help='Number of environments to train on.')
+    parser.add_argument('--steps-per-env', type=int, default=1_000,
+            help='Number of training steps before cycling to the next environment.')
+    parser.add_argument('--env-labels', type=str,
+            default=[f'{obj_color}_{obj_type}' for obj_color, obj_type in itertools.product(COLOR_NAMES, ['ball', 'key'])],
+            nargs='*', help='')
+    parser.add_argument('--num-cycles', type=int, default=10,
+                        help='Number of times to train on each environment')
+    parser.add_argument('--cycle-task-stop-index', type=int, default=None,
+                        help='The index of the task on which the training loop will stop on. The training loop cycles through each environment `--num-cycles` times. If `--cycle-task-stop-index` is specified, then on the last cycle once this task is reached, the training loop will stay on this task and continue training until the process is killed.')
+    parser.add_argument('--num-tasks', type=int, default=None,
+                        help='Number of tasks to train on. If specified, this many tasks will be selected from the list of tasks provided in --envs.')
 
     init_parser_trainer(parser)
     init_parser_model(parser)
@@ -637,8 +636,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--cuda', action='store_true', help='Use CUDA.')
     parser.add_argument('--wandb', action='store_true', help='Save results to W&B.')
-    parser.add_argument('--wandb-id', type=str, default='{RUN_ID}',
-                        help='W&B run ID. Defaults to the run ID.')
+    parser.add_argument('--wandb-id', type=str, default=None,
+                        help='W&B run ID.')
 
     # Override configs
     parser.add_argument('--load-optimizer', action='store_true', help='Load optimizer state from checkpoint.')
@@ -648,109 +647,20 @@ if __name__ == '__main__':
     # Parse arguments
     args = parser.parse_args()
 
-    #ENV_CONFIG_PRESETS = env_config_presets()
-    #env_config = ENV_CONFIG_PRESETS[args.envs[0]]
-    #if args.num_trials is not None:
-    #    env_config['config']['num_trials'] = args.num_trials
-    #if args.room_size is not None:
-    #    env_config['config']['min_room_size'] = args.room_size
-    #    env_config['config']['max_room_size'] = args.room_size
-    #envs = [
-    #    gymnasium.vector.SyncVectorEnv([lambda: make_env(**env_config) for _ in range(args.num_envs[0])])
-    #]
+    if len(args.envs) != len(args.env_labels):
+        raise ValueError('Must specify the same number of envs and env labels')
 
-    #if args.cuda and torch.cuda.is_available():
-    #    device = torch.device('cuda')
-    #else:
-    #    device = torch.device('cpu')
-
-    ## Initialize model
-    #model = init_model(
-    #        observation_space = merge_space(*[env.single_observation_space for env in envs]),
-    #        action_space = envs[0].single_action_space, # Assume the same action space for all environments
-    #        model_type = args.model_type,
-    #        recurrence_type = args.recurrence_type,
-    #        architecture = args.architecture,
-    #        ff_size = args.ff_size,
-    #        hidden_size = args.hidden_size,
-    #        device = device,
-    #)
-    #model.to(device)
-
-    ## Initialize optimizer
-    #if args.optimizer == 'Adam':
-    #    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    #elif args.optimizer == 'RMSprop':
-    #    optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr)
-    #elif args.optimizer == 'SGD':
-    #    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
-    #else:
-    #    raise ValueError(f'Unknown optimizer: {args.optimizer}')
-
-    ## Initialize learning rate scheduler
-    #lr_scheduler = None # TODO
-
-    ## Load checkpoint
-    #start_step = 0
-    #checkpoint = None
-
-    #assert args.starting_model is not None
-    #checkpoint = torch.load(args.starting_model, map_location=device)
-    #print(f'Loading model from {args.starting_model}')
-
-    #if checkpoint is not None:
-    #    model.load_state_dict(checkpoint['model'], strict=False)
-    #    if 'optimizer' in checkpoint and args.load_optimizer:
-    #        optimizer.load_state_dict(checkpoint['optimizer'])
-    #    #if lr_scheduler is not None and 'lr_scheduler' in checkpoint:
-    #    #    lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-    #    start_step = checkpoint.get('step', 0)
-    #    print(f'Loaded checkpoint from {args.starting_model}')
-
-    ## Initialize trainer
-    #trainer = train(
-    #        model = model,
-    #        envs = envs, # type: ignore (??? AsyncVectorEnv is not a subtype of VectorEnv ???)
-    #        env_labels = [[e]*n for e,n in zip(args.envs, args.num_envs)],
-    #        env_group_labels = args.envs,
-    #        optimizer = optimizer,
-    #        lr_scheduler = lr_scheduler,
-    #        max_steps = args.max_steps,
-    #        rollout_length = args.rollout_length,
-    #        obs_scale = {'obs (image)': 1.0/255.0},
-    #        reward_clip = args.reward_clip,
-    #        reward_scale = args.reward_scale,
-    #        discount = args.discount,
-    #        gae_lambda = args.gae_lambda,
-    #        norm_adv = args.norm_adv,
-    #        clip_vf_loss = args.clip_vf_loss,
-    #        vf_loss_coeff = args.vf_loss_coeff,
-    #        entropy_loss_coeff = args.entropy_loss_coeff,
-    #        target_kl = args.target_kl,
-    #        minibatch_size = args.minibatch_size,
-    #        num_minibatches = args.num_minibatches,
-    #        max_grad_norm = args.max_grad_norm,
-    #        warmup_steps = args.warmup_steps,
-    #        start_step = start_step,
-    #)
-
-    ## Run training loop
-    #start_weights = torch.nn.utils.parameters_to_vector(model.parameters()).detach().clone()
-    #x = {}
-    #for x in trainer:
-    #    pass
-    #end_weights = torch.nn.utils.parameters_to_vector(model.parameters()).detach().clone()
-
-    #print('-'*80)
-    #print(f'Episode rewards: {x["episode_rewards"]}')
-    #print(f'Episode rewards total: {sum(x["episode_rewards"])}') # type: ignore
-    #print(f'Weight change: {torch.norm(end_weights - start_weights)}')
-    #print('-'*80)
-    #breakpoint()
+    if args.wandb:
+        if args.wandb_id is not None:
+            wandb.init(project='big_rl-mtft-plasticity', id=args.wandb_id, resume='allow')
+        else:
+            wandb.init(project='big_rl-mtft-plasticity')
+        wandb.config.update(args, allow_val_change=True)
 
     results = finetune(
-            env_config_name = args.envs[0],
-            num_envs = args.num_envs[0],
+            env_config_names = args.envs,
+            env_labels = args.env_labels,
+            num_envs = args.num_envs,
             checkpoint_filename = args.starting_model,
             model_type=args.model_type,
             model_architecture=args.architecture,
@@ -773,6 +683,11 @@ if __name__ == '__main__':
             max_grad_norm=args.max_grad_norm,
             cuda=args.cuda,
             load_optimizer=args.load_optimizer,
+            # Plasticity experiment config
+            steps_per_env = args.steps_per_env,
+            num_cycles = args.num_cycles,
+            cycle_task_stop_index = args.cycle_task_stop_index,
+            num_tasks = args.num_tasks,
             # Override configs
             num_trials=args.num_trials,
             room_size=args.room_size,

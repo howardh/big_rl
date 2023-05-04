@@ -1,6 +1,7 @@
 import argparse
 
 import torch
+import numpy as np
 
 from big_rl.minigrid.envs import make_env
 from big_rl.minigrid.arguments import init_parser_model
@@ -48,6 +49,34 @@ def equivalent_GRU(num_parameters, input_size):
     return gru
 
 
+def equivalent_linear(num_parameters, input_size, num_layers):
+    if num_layers == 1:
+        # Number of parameters in a single linear layer is input_size * output_size + output_size
+        # For a single linear layer, we want in*out+out = p, so out = (p / (in+1))
+        linear = [
+            torch.nn.Linear(
+                in_features = input_size,
+                out_features = num_parameters // (input_size + 1),
+            )
+        ]
+    else:
+        # For n linear layers, we want in*out+out + (n-1)*(out*out+out) = p
+        # (n-1)*out*out + (n+in)*out - p = 0
+        # out = (-n-in +- sqrt((n+in)^2 - 4*(n-1)*(-p))) / (2*(n-1))
+        size = int((-num_layers - input_size + np.sqrt((num_layers + input_size) ** 2 - 4 * (num_layers - 1) * (-num_parameters))) / (2 * (num_layers - 1)))
+        linear = [
+            torch.nn.Linear(
+                in_features = in_size,
+                out_features = out_size,
+            )
+            for in_size, out_size in zip(
+                [input_size] + [size] * (num_layers - 1),
+                [size] * num_layers,
+            )
+        ]
+    return torch.nn.Sequential(*linear)
+
+
 if __name__ == '__main__':
     # Parse arguments
     parser = argparse.ArgumentParser()
@@ -89,17 +118,22 @@ if __name__ == '__main__':
     print(f'\tInput modules')
     for k,v in model.input_modules.items():
         print(f'\t\t{k}: {count_parameters(v.parameters()):,}')
-    print(f'\tCore modules: {count_parameters(model.attention.parameters()):,}')
+    num_parameters_core = None
+    if args.model_type == 'ModularPolicy5LSTM':
+        num_parameters_core = count_parameters(model.lstm.parameters()) # type: ignore
+    else:
+        num_parameters_core = count_parameters(model.attention.parameters()) # type: ignore
+    print(f'\tCore modules: {num_parameters_core}')
     print(f'\tOutput modules')
     for k,v in model.output_modules.items():
         print(f'\t\t{k}: {count_parameters(v.parameters()):,}')
-    print(f'\tHidden size: {sum(p.numel() for p in model.init_hidden(1)):,}')
+    print(f'\tHidden size: {sum(p.numel() for p in model.init_hidden(1)):,}') # type: ignore
 
     print('-' * 80)
 
     print('LSTM (with full input)')
     lstm = equivalent_LSTM(
-            num_parameters = count_parameters(model.attention.parameters()),
+            num_parameters = num_parameters_core,
             input_size = 512 * len(model.input_modules)
     )
     print(f'\tSize of an equivalent LSTM: {count_parameters(lstm.parameters()):,}')
@@ -108,7 +142,7 @@ if __name__ == '__main__':
 
     print('LSTM (with simplified input)')
     lstm = equivalent_LSTM(
-            num_parameters = count_parameters(model.attention.parameters()),
+            num_parameters = num_parameters_core,
             input_size = sum(1 if k in ['reward', 'obs (shaped_reward)'] else 512 for k in model.input_modules.keys())
     )
     print(f'\tSize of an equivalent LSTM: {count_parameters(lstm.parameters()):,}')
@@ -117,12 +151,22 @@ if __name__ == '__main__':
 
     print('GRU (with full input)')
     gru = equivalent_GRU(
-            num_parameters = count_parameters(model.attention.parameters()),
+            num_parameters = num_parameters_core,
             input_size = 512 * len(model.input_modules)
     )
     print(f'\tSize of an equivalent GRU: {count_parameters(gru.parameters()):,}')
     print(f'\tInput size: {lstm.input_size}')
     print(f'\tHidden size: {gru.hidden_size}')
+
+    print('Linear (with simplified input)')
+    linear = equivalent_linear(
+            num_parameters = num_parameters_core,
+            input_size = sum(1 if k in ['reward', 'obs (shaped_reward)'] else 512 for k in model.input_modules.keys()),
+            num_layers = 3, # Modify this to change the number of layers
+    )
+    print(f'\tSize of an equivalent linear model: {count_parameters(linear.parameters()):,}')
+    print(f'\tInput size: {linear[0].in_features}')
+    print(f'\tLayer size: {[l.out_features for l in linear]}')
 
     print()
 

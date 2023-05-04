@@ -539,7 +539,7 @@ def train(
             elapsed_time = time.time() - start_time
             steps_per_sec = (env_steps - start_step) / elapsed_time
             if max_steps > 0:
-                remaining_time = int((max_steps - env_steps) / steps_per_sec)
+                remaining_time = int((max_steps - (env_steps - start_step)) / steps_per_sec)
                 remaining_hours = remaining_time // 3600
                 remaining_minutes = (remaining_time % 3600) // 60
                 remaining_seconds = (remaining_time % 3600) % 60
