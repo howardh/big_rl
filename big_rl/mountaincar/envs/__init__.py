@@ -1,10 +1,25 @@
-import gym 
-env = gym.make('MountainCar-v0')
+import gym
+from gym import wrappers
+import numpy as np
+import matplotlib.pyplot as plt
 
-observation = env.reset()
-print(observation)
-for t in range(5):
-    action = env.action_space.sample()
-    next_state, reward, terminated, truncated , info = env.step(action)
-    print(next_state, reward, terminated, truncated , info)
+# global variables
+NUM_EPISODES = 1000
+
+
+env = gym.make("MountainCar-v0", render_mode="human")
+
+
+for _ in range(NUM_EPISODES):
+   env.reset()
+   while True:
+      env.render()
+      action = env.action_space.sample()  # agent policy that uses the observation and info
+      observation, reward, terminated, truncated, info = env.step(action)
+      print(observation, reward, terminated, truncated, info)
+
+      if terminated or truncated:
+         break
+
 env.close()
+
