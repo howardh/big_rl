@@ -12,7 +12,9 @@ setup(name='big_rl',
         'scikit-learn',
         'tabulate>=0.9.0',
         'tensordict>=0.1.0',
-
+        'h5py',
+        'tensorflow',
+        
         # Minigrid
         'minigrid',
         'opencv-python',
@@ -20,6 +22,8 @@ setup(name='big_rl',
         'scipy',
         'font-roboto==0.0.1',
         'fonts==0.0.3',
+
+        # MountainCar
 
         # Mujoco
         'beautifulsoup4', # Needed for manipulating MJCF files
