@@ -1,4 +1,4 @@
-import gym
+import gymnasium as gym
 import numpy as np
 import matplotlib.pyplot as plt
 import argparse
@@ -8,7 +8,7 @@ from stable_baselines3 import DQN
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.evaluation import evaluate_policy
 
-
+# TODO: compare the total returns obtained with each model (uniform random, randomly initalized untrained, model trained on minigrid)
 
 # =====[ PARSER ]===== #
 parser = argparse.ArgumentParser()
