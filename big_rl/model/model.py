@@ -8,6 +8,11 @@ from torch.utils.data.dataloader import default_collate
 
 #from big_rl.model.recurrent_attention_16 import RecurrentAttention16 # XXX: Causes circular imports
 
+try:
+    import big_rl_cpp
+except ImportError:
+    big_rl_cpp = None
+
 # Recurrences
 
 class RecurrentAttention(torch.nn.Module):
@@ -1046,12 +1051,24 @@ class NonBatchLinear(torch.nn.Module):
             return self.forward_unbatched(x)
     
     def forward_unbatched(self, x):
+        if len(x.shape) != 2:
+            raise ValueError("Expected 2D input (batch_size, input_size)")
+        if x.size(1) != self.linear[0].in_features:
+            raise ValueError(f"Expected dimension 1 of x to be equal to the input size of the linear modules ({self.linear[0].in_features}), got {x.size(2)}")
+
         return torch.stack([
             self.forward_module(x, module)
             for module in self.linear
         ])
 
     def forward_batch(self, batched_x):
+        if len(batched_x.shape) != 3:
+            raise ValueError("Expected 3D input (num_modules, batch_size, input_size)")
+        if batched_x.size(0) != len(self.linear):
+            raise ValueError(f"Expected dimension 0 of batched_x to be equal to the number of linear modules ({len(self.linear)}), got {batched_x.size(0)}")
+        if batched_x.size(2) != self.linear[0].in_features:
+            raise ValueError(f"Expected dimension 2 of batched_x to be equal to the input size of the linear modules ({self.linear[0].in_features}), got {batched_x.size(2)}")
+
         return torch.stack([
             self.forward_module(x, module)
             for x,module in zip(batched_x,self.linear)
@@ -1089,6 +1106,53 @@ class BatchLinear(torch.nn.Module):
 
     def forward_batch(self, batched_x):
         output = batched_x @ self.weight + self.bias
+
+        return output
+
+    def to_linear_modules(self) -> List[torch.nn.Linear]:
+        num_modules, input_size, output_size= self.weight.shape
+        modules = [torch.nn.Linear(input_size, output_size) for _ in range(num_modules)]
+        for module, w, b in zip(modules, self.weight.permute(0,2,1), self.bias):
+            module.weight = torch.nn.Parameter(w)
+            module.bias = torch.nn.Parameter(b.squeeze(0))
+        return modules
+
+
+class BatchLinearCpp(torch.nn.Module):
+    def __init__(self, modules: List[torch.nn.Linear], default_batch=False):
+        super(BatchLinearCpp, self).__init__()
+
+        if big_rl_cpp is None:
+            raise RuntimeError("big_rl_cpp not available")
+
+        self.default_batch = default_batch
+
+        self.weight = torch.nn.Parameter(
+            torch.stack([l.weight for l in modules]).permute(0,2,1).detach()
+        )
+        self.bias = torch.nn.Parameter(
+            torch.stack([l.bias for l in modules]).unsqueeze(1).detach()
+        )
+
+    def forward(self, x, batched=None):
+        if batched is None:
+            batched = self.default_batch
+        if batched:
+            return self.forward_batch(x)
+        else:
+            return self.forward_unbatched(x)
+
+    def forward_unbatched(self, x):
+        assert big_rl_cpp is not None, "big_rl_cpp not available. This should've been checked in the constructor."
+
+        output = big_rl_cpp.batch_linear(x, self.weight, self.bias)
+
+        return output
+
+    def forward_batch(self, batched_x):
+        assert big_rl_cpp is not None, "big_rl_cpp not available. This should've been checked in the constructor."
+
+        output = big_rl_cpp.batch_linear(batched_x, self.weight, self.bias)
 
         return output
 
@@ -1159,6 +1223,33 @@ class ImageInput56(torch.nn.Module):
         }
 
 
+class ImageInput84(torch.nn.Module):
+    def __init__(self, key_size: int, value_size: int, in_channels: int, scale: float = 1.0):
+        super().__init__()
+        self.scale = scale
+        self.conv = torch.nn.Sequential(
+            torch.nn.Conv2d(
+                in_channels=in_channels,out_channels=32,kernel_size=8,stride=4),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(
+                in_channels=32,out_channels=64,kernel_size=4,stride=2),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(
+                in_channels=64,out_channels=64,kernel_size=3,stride=1),
+            torch.nn.ReLU(),
+            torch.nn.Linear(in_features=64*7*7,out_features=512),
+            torch.nn.ReLU(),
+        )
+        self.fc_key = torch.nn.Linear(in_features=512, out_features=key_size)
+        self.fc_value = torch.nn.Linear(in_features=512, out_features=value_size)
+    def forward(self, x: TensorType['batch_size','channels','height','width',float]):
+        x = self.conv(x.float() * self.scale)
+        return {
+            'key': self.fc_key(x),
+            'value': self.fc_value(x),
+        }
+
+
 class ScalarInput(torch.nn.Module):
     def __init__(self, key_size: int, value_size: int):
         super().__init__()
@@ -1185,14 +1276,18 @@ class LinearInput(torch.nn.Module):
             shared_key: If set to True, the same key will be used regardless of input. If set to False, the key will be computed as a linear function of the input.
         """
         super().__init__()
+        self._input_size = input_size
         self._shared_key = shared_key
         self.ff_value = torch.nn.Linear(in_features=input_size, out_features=value_size)
         if shared_key:
             self.key = torch.nn.Parameter(torch.rand([key_size])-0.5)
         else:
             self.ff_key = torch.nn.Linear(in_features=input_size, out_features=key_size)
-    def forward(self, x: TensorType['batch_size',float]):
+    def forward(self, x: TensorType['batch_size','input_size',float]):
         batch_size = x.shape[0]
+        input_size = x.shape[1]
+        if input_size != self._input_size:
+            raise ValueError(f'Expected input of size {self._input_size} but got {input_size}.')
         return {
             'key': self.ff_key(x) if not self._shared_key else self.key.expand(batch_size, -1),
             'value': self.ff_value(x)
@@ -1219,7 +1314,10 @@ class DiscreteInput(torch.nn.Module):
     def forward(self, x: TensorType['batch_size',int]):
         batch_size = int(torch.tensor(x.shape).prod().item())
         batch_shape = x.shape
-        assert len(batch_shape) == 1, 'Input to DiscreteInput has to be a 1D tensor.'
+        if len(batch_shape) != 1:
+            raise ValueError('Input to DiscreteInput has to be a 1D tensor.')
+        if x.min() < 0 or x.max() >= self._input_size:
+            raise ValueError(f'Input to DiscreteInput has to be in range [0, {self._input_size}).')
         x = x.long().flatten()
         return {
             'key': self.key.expand(batch_size, -1).view(*batch_shape, -1) if self._shared_key else self.key[x,:].view(*batch_shape, -1),
@@ -1496,6 +1594,7 @@ class ModularPolicy2(torch.nn.Module):
                 for cls in [
                     GreyscaleImageInput,
                     ImageInput56,
+                    ImageInput84,
                     ScalarInput,
                     DiscreteInput,
                     LinearInput,
@@ -1641,6 +1740,7 @@ class ModularPolicy3(torch.nn.Module): # TODO
                 for cls in [
                     GreyscaleImageInput,
                     ImageInput56,
+                    ImageInput84,
                     ScalarInput,
                     DiscreteInput,
                     LinearInput,
@@ -1821,6 +1921,7 @@ class ModularPolicy4(torch.nn.Module):
                 for cls in [
                     GreyscaleImageInput,
                     ImageInput56,
+                    ImageInput84,
                     ScalarInput,
                     DiscreteInput,
                     LinearInput,
@@ -2116,6 +2217,7 @@ class ModularPolicy5(torch.nn.Module):
                 for cls in [
                     GreyscaleImageInput,
                     ImageInput56,
+                    ImageInput84,
                     ScalarInput,
                     DiscreteInput,
                     LinearInput,
@@ -2335,6 +2437,7 @@ class ModularPolicy5LSTM(torch.nn.Module):
                 for cls in [
                     GreyscaleImageInput,
                     ImageInput56,
+                    ImageInput84,
                     ScalarInput,
                     DiscreteInput,
                     LinearInput,
@@ -2522,6 +2625,7 @@ class ModularPolicy7(torch.nn.Module):
                 for cls in [
                     GreyscaleImageInput,
                     ImageInput56,
+                    ImageInput84,
                     ScalarInput,
                     DiscreteInput,
                     LinearInput,

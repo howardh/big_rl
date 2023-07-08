@@ -726,7 +726,7 @@ if __name__ == '__main__':
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'step': x['step'],
-                }, args.model_checkpoint.format(step=f"{x['step']:,}"))
+            }, args.model_checkpoint.format(step=f"{x['step']:,}"))
             print(f'Saved checkpoint to {os.path.abspath(args.model_checkpoint)}')
     else:
         x = {}

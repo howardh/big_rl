@@ -8,6 +8,7 @@ import yaml
 import gymnasium
 import gymnasium.spaces
 import gymnasium.vector
+from gymnasium.wrappers import AtariPreprocessing, FrameStack
 import torch
 from torch.utils.data.dataloader import default_collate
 import torch.nn
@@ -20,10 +21,28 @@ from frankenstein.buffer.vec_history import VecHistoryBuffer
 from frankenstein.advantage.gae import generalized_advantage_estimate 
 from frankenstein.loss.policy_gradient import clipped_advantage_policy_gradient_loss
 
-from big_rl.minigrid.envs import make_env
+from big_rl.minigrid.envs import MetaWrapper, ActionShuffle
 from big_rl.utils import torch_save, zip2, merge_space, generate_id
-from big_rl.minigrid.common import init_model, env_config_presets
+from big_rl.atari.common import init_model, env_config_presets
 from big_rl.model import factory as model_factory
+
+
+WANDB_PROJECT_NAME = 'ppo-multitask-atari'
+
+
+def make_env(env_name: str,
+        config={},
+        atari_preprocessing={},
+        meta_config=None,
+        action_shuffle=False) -> gymnasium.Env:
+    env = gymnasium.make(env_name, render_mode='rgb_array', **config)
+    env = AtariPreprocessing(env, **atari_preprocessing)
+    env = FrameStack(env, 1)
+    if meta_config is not None:
+        env = MetaWrapper(env, **meta_config)
+    if action_shuffle:
+        env = ActionShuffle(env)
+    return env
 
 
 def compute_ppo_losses(
@@ -197,10 +216,10 @@ def log_episode_end(done, info, episode_reward, episode_true_reward, episode_ste
         if not done2.any():
             continue
         fi = info['_final_info']
-        unsupervised_trials = np.array([x['unsupervised_trials'] for x in info['final_info'][fi]])
-        supervised_trials = np.array([x['supervised_trials'] for x in info['final_info'][fi]])
-        unsupervised_reward = np.array([x['unsupervised_reward'] for x in info['final_info'][fi]])
-        supervised_reward = np.array([x['supervised_reward'] for x in info['final_info'][fi]])
+        #unsupervised_trials = np.array([x['unsupervised_trials'] for x in info['final_info'][fi]])
+        #supervised_trials = np.array([x['supervised_trials'] for x in info['final_info'][fi]])
+        #unsupervised_reward = np.array([x['unsupervised_reward'] for x in info['final_info'][fi]])
+        #supervised_reward = np.array([x['supervised_reward'] for x in info['final_info'][fi]])
         if wandb.run is not None:
             data = {
                     f'reward/{env_label}': episode_reward[done2].mean().item(),
@@ -209,12 +228,12 @@ def log_episode_end(done, info, episode_reward, episode_true_reward, episode_ste
                     'step': global_step_counter[0]-global_step_counter[1],
                     'step_total': global_step_counter[0],
             }
-            data[f'unsupervised_trials/{env_label}'] = unsupervised_trials[done2[fi]].mean().item()
-            data[f'supervised_trials/{env_label}'] = supervised_trials[done2[fi]].mean().item()
-            if unsupervised_trials[done2[fi]].mean() > 0:
-                data[f'unsupervised_reward/{env_label}'] = unsupervised_reward[done2[fi]].mean().item()
-            if supervised_trials[done2[fi]].mean() > 0:
-                data[f'supervised_reward/{env_label}'] = supervised_reward[done2[fi]].mean().item()
+            #data[f'unsupervised_trials/{env_label}'] = unsupervised_trials[done2[fi]].mean().item()
+            #data[f'supervised_trials/{env_label}'] = supervised_trials[done2[fi]].mean().item()
+            #if unsupervised_trials[done2[fi]].mean() > 0:
+            #    data[f'unsupervised_reward/{env_label}'] = unsupervised_reward[done2[fi]].mean().item()
+            #if supervised_trials[done2[fi]].mean() > 0:
+            #    data[f'supervised_reward/{env_label}'] = supervised_reward[done2[fi]].mean().item()
             wandb.log(data, step = global_step_counter[0])
         print(f'  reward: {episode_reward[done].mean():.2f}\t len: {episode_steps[done].mean()} \t env: {env_label} ({done2.sum().item()})')
 
@@ -639,7 +658,7 @@ if __name__ == '__main__':
     parser.add_argument('--run-id', type=str, default=None,
                         help='Identifier for the current experiment. This value is used for setting the "{RUN_ID}" variable. If not specified, then either a slurm job ID is used, or the current date and time, depending on what is available. Note that the time-based ID has a resolution of 1 second, so if two runs are started within less than a second of each other, they may end up with the same ID.')
 
-    parser.add_argument('--envs', type=str, default=['fetch-001'], nargs='*', help='Environments to train on')
+    parser.add_argument('--envs', type=str, default=['ALE/Pong-v5'], nargs='*', help='Environments to train on')
     parser.add_argument('--num-envs', type=int, default=[16], nargs='*',
             help='Number of environments to train on. If a single number is specified, it will be used for all environments. If a list of numbers is specified, it must have the same length as --env.')
     parser.add_argument('--env-labels', type=str, default=None, nargs='*', help='')
@@ -694,12 +713,12 @@ if __name__ == '__main__':
     # Initialize W&B
     if args.wandb:
         if args.wandb_id is not None:
-            wandb.init(project='ppo-multitask-minigrid', id=args.wandb_id, resume='allow')
+            wandb.init(project=WANDB_PROJECT_NAME, id=args.wandb_id, resume='allow')
         elif args.model_checkpoint is not None: # XXX: Questionable decision. Maybe it should be explicitly specified as a CLI argument if we want to use the same W&B ID. This is causing more problems than it solves.
             wandb_id = os.path.basename(args.model_checkpoint).split('.')[0]
-            wandb.init(project='ppo-multitask-minigrid', id=wandb_id, resume='allow')
+            wandb.init(project=WANDB_PROJECT_NAME, id=wandb_id, resume='allow')
         else:
-            wandb.init(project='ppo-multitask-minigrid')
+            wandb.init(project=WANDB_PROJECT_NAME)
         wandb.config.update(args)
 
     ENV_CONFIG_PRESETS = env_config_presets()
@@ -722,7 +741,10 @@ if __name__ == '__main__':
 
     # Initialize model
     if args.model_config is not None:
-        model_config = yaml.safe_load(args.model_config)
+        with open(args.model_config, 'r') as f:
+            model_config = yaml.safe_load(f)
+        if wandb.run is not None:
+            wandb.config.update({'model_config': model_config}, allow_val_change=True)
         model = model_factory.create_model(
             model_config,
             observation_space = merge_space(*[env.single_observation_space for env in envs]),

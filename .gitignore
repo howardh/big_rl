@@ -1,5 +1,6 @@
 pyrightconfig.json
 __pycache__
+_cache
 wandb
 *.egg-info
 MUJOCO_LOG.TXT
@@ -9,3 +10,4 @@ Session.vim
 *.gif
 *.png
 *.webm
+*.so

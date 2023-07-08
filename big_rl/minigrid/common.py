@@ -1243,6 +1243,33 @@ def env_config_presets():
             }
         }, inherit='fetch2-004')
 
+        # Multiple noise types together
+        # Use to compare training everything together in one environment versus separately
+        config.add(f'fetch2-006', {
+            'meta_config': {
+                'include_reward': False,
+            },
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+                'task_config': {
+                    'task': 'fetch',
+                    'args': {
+                        'pseudo_reward_config': {
+                            'type': 'subtask',
+                            'delay': ('random', (1, 5), 'replace'),
+                        },
+                    },
+                    'wrappers': [{
+                        'type': 'random_reset',
+                        'args': {
+                            'prob': 0.02,
+                        },
+                    }]
+                },
+            }
+        }, inherit='fetch2-004')
+
     init_fetch()
     init_delayed()
     init_fetch2()

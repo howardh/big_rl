@@ -2,11 +2,14 @@ import os
 from typing import List, Tuple, Literal
 from collections import defaultdict
 import logging
+import json
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
+from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 import wandb
 
 
@@ -15,7 +18,81 @@ log.setLevel(logging.DEBUG)
 logging.basicConfig(level=logging.WARNING)
 
 
-def get_data_by_index(run):
+def get_wandb_history(run, cache_dir=None):
+    """ Get the history of a wandb run, either from cache or from wandb.
+    The data is cached in line-delimited json format.
+    """
+
+    if  cache_dir is None:
+        for row in run.scan_history():
+            yield row
+        return
+
+    cache_path = os.path.join(cache_dir, f'{run.entity}__{run.project}__{run.name}.jsonl')
+    min_step = 0
+    if os.path.exists(cache_path):
+        log.info(f'Loading history from cache: {cache_path}')
+        with open(cache_path, 'r') as f:
+            for line in f.readlines():
+                x = json.loads(line)
+                yield x
+                min_step = int(x['_step'])
+    log.info(f'Loading history from wandb: {run.name}')
+    history = run.scan_history(min_step=min_step)
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    with open(cache_path, 'a') as f:
+        for row in history:
+            if row['_step'] == min_step and min_step > 0:
+                # If `min_step` is set, it means we've already loaded data from the cache
+                # If we set `min_step` when loading from wandb, it will start with the step that is equal to `min_step`
+                # This will be a duplicate, so we skip it.
+                # XXX: I think this won't work if we saved exactly one step to the cache at _step=0
+                continue
+            f.write(json.dumps(row) + '\n')
+            yield row
+
+
+def get_data_by_index(run, cache_dir=None):
+    keys = list(filter(
+            lambda k: k.startswith('env_step/by_index/') or k.startswith('reward/by_index/'),
+            run.summary.keys(),
+    ))
+    #history = run.scan_history(page_size=100, keys=keys)
+    #history = run.scan_history(keys=keys)
+    #history = run.scan_history(min_step=100_000)
+    #history = run.scan_history()
+    history = get_wandb_history(run, cache_dir=cache_dir)
+
+    data = defaultdict(list)
+    last_obj = None
+    step_key = None
+    reward_key = None
+    try:
+        with logging_redirect_tqdm():
+            for i,row in tqdm(enumerate(history)):
+                #if i > 100:
+                #    break
+                if row.get(step_key) is None:
+                    #print(step_key)
+                    for k in row.keys():
+                        if row.get(k) is None:
+                            continue
+                        if k.startswith('env_step/by_index/'):
+                            last_obj = k.split('/')[-1]
+                            step_key = f'env_step/by_index/{last_obj}'
+                            reward_key = f'reward/by_index/{last_obj}'
+                            break
+                if step_key not in row:
+                    raise ValueError(f'No {step_key} in {row}')
+                if reward_key in row:
+                    data[last_obj].append([row[step_key], row[reward_key]])
+    except KeyboardInterrupt:
+        pass
+
+    return data
+
+
+def get_data_by_index2(run):
     history = run.history(pandas=False)
 
     data = defaultdict(list)
@@ -142,10 +219,11 @@ if __name__ == '__main__':
         try:
             log.info(f'Getting data for {run_id}')
             run = api.run(run_id)
-            data[run_id] = get_data_by_index(run)
+            data[run_id] = get_data_by_index(run, cache_dir='./_cache')
         except:
             log.info(f'Failed to get data for {run_id}')
             run_ids.remove(run_id)
+            raise
 
     # Resample so they have the same x values
     log.info('Resampling data')
@@ -188,7 +266,7 @@ if __name__ == '__main__':
             plt.plot(*zip(*v), label=k)
     # Draw a vertical line at the end of each task
     if args.steps_per_task is not None:
-        for x in range(0, max(all_x), args.steps_per_task):
+        for x in range(0, int(max(all_x)+1), args.steps_per_task):
             plt.axvline(x=x, color='k', linestyle='--')
     plt.legend()
     plt.grid()

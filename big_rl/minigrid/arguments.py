@@ -46,3 +46,5 @@ def init_parser_model(parser: ArgumentParser):
                         help='Size of the model\'s hidden state. Only applies to LSTM models.')
     parser.add_argument('--ff-size', type=int, nargs='*', default=[1024],
                         help='Size of the model\'s fully connected feedforward layers. Only applies to attention models.')
+    parser.add_argument('--model-config', type=str, default=None,
+                        help='Path to a model config file (yaml format). If specified, all other model arguments are ignored.')

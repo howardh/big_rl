@@ -4,7 +4,7 @@ from typing_extensions import Protocol # Needed for python<=3.7. Can import from
 import torch
 from torchtyping.tensor_type import TensorType
 
-from big_rl.model.model import GreyscaleImageInput, ImageInput56, ScalarInput, DiscreteInput, LinearInput, MatrixInput, LinearOutput, StateIndependentOutput
+from big_rl.model.model import GreyscaleImageInput, ImageInput56, ImageInput84, ScalarInput, DiscreteInput, LinearInput, MatrixInput, LinearOutput, StateIndependentOutput
 from big_rl.model.recurrent_attention_16 import RecurrentAttention16
 
 
@@ -62,6 +62,7 @@ class ModularPolicy8(torch.nn.Module):
                 for cls in [
                     GreyscaleImageInput,
                     ImageInput56,
+                    ImageInput84,
                     ScalarInput,
                     DiscreteInput,
                     LinearInput,

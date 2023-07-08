@@ -1,4 +1,5 @@
 from setuptools import setup, find_packages
+from torch.utils import cpp_extension
 
 setup(name='big_rl',
     version='0.0.1',
@@ -22,6 +23,7 @@ setup(name='big_rl',
         'fonts==0.0.3',
 
         # Mujoco
+        'gymnasium[mujoco]',
         'beautifulsoup4', # Needed for manipulating MJCF files
         'lxml',
 
@@ -38,5 +40,17 @@ setup(name='big_rl',
         #'big_rl': ['big_rl/mujoco/envs/assets/*.xml']
         'big_rl.mujoco.envs.assets': ['*.xml']
         #'big_rl': ['*.xml']
-    }
+    },
+    ext_modules=[
+        cpp_extension.CppExtension(
+            name='big_rl_cpp',
+            sources=['big_rl/model/cpp/batch_linear.cpp'],
+            extra_compile_args=[
+                # Use lines below if we need to specify include paths. Replace the ??? with the correct path.
+                #'-I???/torch/include',
+                #'-I???/torch/include/torch/csrc/api/include',
+            ],
+        )
+    ],
+    cmdclass={'build_ext': cpp_extension.BuildExtension},
 )
