@@ -241,6 +241,11 @@ def train_single_env(
             for k,v in obs.items() if k not in obs_ignore
         }
 
+    assert isinstance(env.observation_space, gymnasium.spaces.Dict)
+    for k in obs_scale.keys():
+        if k not in dict(env.observation_space):
+            raise ValueError(f'observation space does not contain key {k}')
+
     history = VecHistoryBuffer(
             num_envs = num_envs,
             max_len=rollout_length+1,
@@ -748,7 +753,7 @@ if __name__ == '__main__':
             max_steps = args.max_steps,
             max_steps_total = args.max_steps_total,
             rollout_length = args.rollout_length,
-            obs_scale = {'obs (image)': 1.0/255.0},
+            obs_scale = {'obs': 1.0/255.0},
             reward_clip = args.reward_clip,
             reward_scale = args.reward_scale,
             discount = args.discount,
