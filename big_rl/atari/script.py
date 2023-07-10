@@ -171,45 +171,6 @@ def compute_ppo_losses(
                 break
 
 
-class MultitaskDynamicWeight:
-    def __init__(self, max_score, random_score, temperature=1.0, ema_weight=0.99):
-        self._max_score = np.array(max_score)
-        self._random_score = np.array(random_score)
-        self._temperature = temperature
-        self._ema_weight = ema_weight
-
-        self._score = np.array(random_score)
-
-    def step(self, scores: Iterable[Iterable[float]]):
-        for i,task_scores in enumerate(scores):
-            for s in task_scores:
-                self._score[i] = self._score[i] * self._ema_weight + s * (1 - self._ema_weight)
-
-    @property
-    def weight(self):
-        relative_score = -(self._score - self._random_score) / (self._max_score - self._random_score)
-        x = np.exp(relative_score / self._temperature)
-        return x / x.sum()
-
-
-class MultitaskStaticWeight:
-    def __init__(self, weight):
-        for w in weight:
-            assert w >= 0, 'weight must be non-negative'
-        if isinstance(weight, torch.Tensor):
-            self._weight = weight.clone() / weight.sum()
-        else:
-            self._weight = torch.tensor(weight, dtype=torch.float)
-            self._weight /= self._weight.sum()
-
-    def step(self, scores: Iterable[Iterable[float]]):
-        ...
-
-    @property
-    def weight(self):
-        return self._weight
-
-
 def log_episode_end(done, info, episode_reward, episode_true_reward, episode_steps, env_ids, env_label_to_id, global_step_counter):
     for env_label, env_id in env_label_to_id.items():
         done2 = done & (env_ids == env_id)
@@ -546,24 +507,6 @@ def train(
         for env,labels in zip(envs, env_labels)
     ]
 
-    multitask_weight = None
-    if use_multitask_dynamic_weighting:
-        assert multitask_static_weight is None
-        assert env_random_score is not None
-        assert env_max_score is not None
-        assert len(env_random_score) == len(env_max_score)
-        assert len(env_random_score) == len(envs)
-        multitask_weight = MultitaskDynamicWeight(
-            max_score = env_max_score,
-            random_score = env_random_score,
-            temperature = multitask_dynamic_weight_temperature,
-        )
-    elif multitask_static_weight is not None:
-        assert len(multitask_static_weight) == len(envs)
-        multitask_weight = MultitaskStaticWeight(
-                multitask_static_weight
-        )
-
     start_time = time.time()
     for _, losses in enumerate(zip(*trainers)):
         #env_steps = training_steps * rollout_length * sum(env.num_envs for env in envs)
@@ -576,20 +519,7 @@ def train(
             print('Reached total max steps')
             break
 
-        if multitask_weight is not None:
-            multitask_weight.step(
-                [x['episode_rewards'] for x in losses]
-            )
-            all_losses = torch.stack([x['loss'] for x in losses])
-            weight = torch.tensor(multitask_weight.weight, device=device)
-            mean_loss = (all_losses * weight).sum()
-            if wandb.run is not None:
-                wandb.log({
-                    f'multitask_dynamic_weight/{env_label}': w
-                    for w, env_label in zip(weight, env_group_labels)
-                }, step = global_step_counter[0])
-        else:
-            mean_loss = torch.stack([x['loss'] for x in losses]).mean()
+        mean_loss = torch.stack([x['loss'] for x in losses]).mean()
         optimizer.zero_grad()
         mean_loss.backward()
         if max_grad_norm is not None:
@@ -719,7 +649,13 @@ if __name__ == '__main__':
             wandb.init(project=WANDB_PROJECT_NAME, id=wandb_id, resume='allow')
         else:
             wandb.init(project=WANDB_PROJECT_NAME)
-        wandb.config.update(args)
+        wandb.config.update({k:v for k,v in args.__dict__.items() if k != 'model_config'}) # 
+
+    if len(args.envs) != len(args.num_envs):
+        if len(args.num_envs) == 1:
+            args.num_envs = args.num_envs * len(args.envs)
+        else:
+            raise ValueError('The number of environments must match the number of environment labels.')
 
     ENV_CONFIG_PRESETS = env_config_presets()
     env_configs = [
@@ -835,27 +771,30 @@ if __name__ == '__main__':
     )
 
     # Run training loop
+    x = None
+    def save_checkpoint(filename=args.model_checkpoint): # Make this a separate function in case we end up here with the debugger and want to manually save a checkpoint
+        assert isinstance(x,dict)
+        torch_save({
+            'model': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'step': x['step'],
+        }, filename)
+        print(f'Saved checkpoint to {os.path.abspath(filename)}')
+
     if args.model_checkpoint is not None:
         os.makedirs(os.path.dirname(args.model_checkpoint), exist_ok=True)
         if not args.model_checkpoint.endswith('.pt'):
             # If the path is a directory, generate a unique filename
             raise NotImplementedError()
         while True:
-            x = None
             for _,x in zip(range(args.checkpoint_interval), trainer):
                 pass
             # If x is None, it means no training has occured
             if x is None:
                 break
             # Only save the model if training has occured
-            torch_save({
-                'model': model.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'step': x['step'],
-            }, args.model_checkpoint)
-            print(f'Saved checkpoint to {os.path.abspath(args.model_checkpoint)}')
+            save_checkpoint(args.model_checkpoint)
     else:
-        x = None
         try:
             for x in trainer:
                 pass
@@ -866,9 +805,4 @@ if __name__ == '__main__':
         if x is not None:
             print('Saving model')
             tmp_checkpoint = f'./temp-checkpoint.pt'
-            torch_save({
-                'model': model.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'step': x['step'],
-            }, tmp_checkpoint)
-            print(f'Saved temporary checkpoint to {os.path.abspath(tmp_checkpoint)}')
+            save_checkpoint(tmp_checkpoint)

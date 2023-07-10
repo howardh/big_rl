@@ -154,12 +154,17 @@ def env_config_presets():
         ENV_NAMES = [
             'ALE/Boxing-v5',
             'ALE/VideoPinball-v5',
+            'ALE/Breakout-v5',
+            'ALE/StarGunner-v5',
+            'ALE/Robotank-v5',
+            'ALE/Atlantis-v5',
         ]
         for env_name in ENV_NAMES:
             config.add(env_name, {
                 'env_name': env_name,
                 'config': {
                     'frameskip': 1,
+                    'full_action_space': True,
                 },
                 'atari_preprocessing': {
                     'screen_size': 84,
