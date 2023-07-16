@@ -19,6 +19,38 @@ from big_rl.model.core_module.recurrent_attention_17 import RecurrentAttention17
 logger = logging.getLogger(__name__)
 
 
+def init_weights(module, weight_config, strict=True):
+    if weight_config is None:
+        return
+    if 'filename' in weight_config:
+        key_prefix = weight_config.get('key_prefix')
+        if key_prefix is None:
+            raise ValueError('Must specify a key prefix if you want to load weights from a file')
+        state_dict = torch.load(weight_config['filename'],
+                                map_location=torch.device('cpu'))
+        state_dict = state_dict['model']
+
+        # Filter keys
+        if key_prefix == '':
+            filtered_state_dict = state_dict
+        else:
+            filtered_keys = [k for k in state_dict.keys() if k.startswith(key_prefix)]
+            if len(filtered_keys) == 0:
+                raise ValueError(f'Key prefix "{key_prefix}" not found in state dict')
+            filtered_state_dict = {
+                    k[len(key_prefix)+1:]:v
+                    for k,v in state_dict.items() if k in filtered_keys
+            }
+        # Load weights
+        module.load_state_dict(filtered_state_dict, strict=strict)
+
+
+    # Freeze weights if requested
+    if weight_config.get('freeze', False):
+        for param in module.parameters():
+            param.requires_grad = False
+
+
 def create_model(config, observation_space=None, action_space=None):
     model_type = config.get('type')
     key_size = config.get('key_size', 512)
@@ -63,33 +95,18 @@ def create_model(config, observation_space=None, action_space=None):
 
         # Intialize weights
         # This needs to be done separately in case we want to load weights for the entire model and then overwrite the weights of some constituent modules
-        def init_weights(module, weight_config):
-            if 'filename' in weight_config:
-                key_prefix = weight_config.get('key_prefix')
-                if key_prefix is None:
-                    raise ValueError('Must specify a key prefix if you want to load weights from a file')
-                state_dict = torch.load(weight_config['filename'])
-
-                # Filter keys
-                filtered_keys = [k for k in state_dict.keys() if k.startswith(key_prefix)]
-                if len(filtered_keys) == 0:
-                    raise ValueError(f'Key prefix "{key_prefix}" not found in state dict')
-                filtered_state_dict = {
-                        k[len(key_prefix)+1:]:v
-                        for k,v in state_dict.items() if k in filtered_keys
-                }
-                # Load weights
-                model.load_state_dict(filtered_state_dict)
-
-            # Freeze weights if requested
-            if weight_config.get('freeze', False):
-                for param in model.parameters():
-                    param.requires_grad = False
-
-        init_weights(model, config)
-        init_weights(model.input_modules, config.get('input_weights', {}))
-        init_weights(model.core_modules, config.get('core_weights', {}))
-        init_weights(model.output_modules, config.get('output_weights', {}))
+        init_weights(model, config.get('weight_config'), strict=False)
+        for k,m in model.input_modules.input_modules.items():
+            init_weights(m, config['input_modules'][k].get('weight_config'))
+        for k,m in model.output_modules.output_modules.items():
+            init_weights(m, config['output_modules'][k].get('weight_config'))
+        def init_core_weights(module, config):
+            if 'weight_config' in config:
+                init_weights(module, config['weight_config'])
+            if isinstance(module, CoreModuleContainer):
+                for m,c in zip(module.core_modules, config['modules']):
+                    init_core_weights(m, c)
+        init_core_weights(model.core_modules, config['core_modules'])
 
         return model
     else:
@@ -137,29 +154,30 @@ def create_input_modules(config: Dict[str,Dict], key_size: int | None = None, va
         )
         
         # Weight config
-        weight_config = module_config.get('weight_config', {})
+        #init_weights()
+        #weight_config = module_config.get('weight_config', {})
 
-        # Load weights if requested
-        if 'filename' in weight_config:
-            key_prefix = weight_config.get('key_prefix')
-            if key_prefix is None:
-                raise ValueError('Must specify a key prefix if you want to load weights from a file')
-            state_dict = torch.load(weight_config['filename'])
-            # Filter keys
-            filtered_keys = [k for k in state_dict.keys() if k.startswith(key_prefix)]
-            if len(filtered_keys) == 0:
-                raise ValueError(f'Key prefix "{key_prefix}" not found in state dict')
-            filtered_state_dict = {
-                    k[len(key_prefix)+1:]:v
-                    for k,v in state_dict.items() if k in filtered_keys
-            }
-            # Load weights
-            input_modules[module_name].load_state_dict(filtered_state_dict)
+        ## Load weights if requested
+        #if 'filename' in weight_config:
+        #    key_prefix = weight_config.get('key_prefix')
+        #    if key_prefix is None:
+        #        raise ValueError('Must specify a key prefix if you want to load weights from a file')
+        #    state_dict = torch.load(weight_config['filename'])
+        #    # Filter keys
+        #    filtered_keys = [k for k in state_dict.keys() if k.startswith(key_prefix)]
+        #    if len(filtered_keys) == 0:
+        #        raise ValueError(f'Key prefix "{key_prefix}" not found in state dict')
+        #    filtered_state_dict = {
+        #            k[len(key_prefix)+1:]:v
+        #            for k,v in state_dict.items() if k in filtered_keys
+        #    }
+        #    # Load weights
+        #    input_modules[module_name].load_state_dict(filtered_state_dict)
 
-        # Freeze weights if requested
-        if weight_config.get('freeze', False):
-            for param in input_modules[module_name].parameters():
-                param.requires_grad = False
+        ## Freeze weights if requested
+        #if weight_config.get('freeze', False):
+        #    for param in input_modules[module_name].parameters():
+        #        param.requires_grad = False
 
     return torch.nn.ModuleDict(input_modules)
 

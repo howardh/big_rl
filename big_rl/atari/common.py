@@ -168,6 +168,7 @@ def env_config_presets():
                 },
                 'atari_preprocessing': {
                     'screen_size': 84,
+                    #'screen_size': 56,
                 },
                 'meta_config': {
                     'episode_stack': 1,

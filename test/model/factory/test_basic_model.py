@@ -94,12 +94,16 @@ def test_full_model(batch_size):
         output = model({}, hidden)
         hidden = output['hidden']
     for _ in range(10): # With inputs included
-        output = model({'foo': torch.zeros(batch_size, 1)}, hidden)
+        output = model({'foo_scalar': torch.zeros(batch_size, 1)}, hidden)
         hidden = output['hidden']
+
+    # It should error if it receives an input that isn't handled
+    with pytest.raises(Exception):
+        model({'this is an invalid key': torch.zeros(batch_size, 1)}, hidden)
 
 
 @pytest.mark.parametrize('batch_size', [1])
-def test_loading_weights_full_model(batch_size, tmpdir):
+def test_loading_input_weights(batch_size, tmpdir):
     """ """
 
     config = {
@@ -128,7 +132,7 @@ def test_loading_weights_full_model(batch_size, tmpdir):
     model2 = create_model(config)
 
     filename = str(tmpdir.join('model.pt'))
-    torch.save(model1.state_dict(), filename)
+    torch.save({'model': model1.state_dict()}, filename)
 
     config = {
         'type': 'ModularModel1',
@@ -165,6 +169,221 @@ def test_loading_weights_full_model(batch_size, tmpdir):
     # Model3 should have the same weights as model1, and therefore should produce the same output
     assert torch.equal(y1['key'], y3['key'])
     assert torch.equal(y1['value'], y3['value'])
+
+
+@pytest.mark.parametrize('batch_size', [1])
+def test_loading_full_model_weights(batch_size, tmpdir):
+    """ """
+
+    config = {
+        'type': 'ModularModel1',
+        'input_modules': {
+            'foo_linear': {
+                'type': 'LinearInput',
+                'kwargs': {
+                    'input_size': 3,
+                },
+            },
+            'foo_discrete': {
+                'type': 'DiscreteInput',
+                'kwargs': {
+                    'input_size': 3,
+                },
+            }
+        },
+        'output_modules': {
+            'some_output': {
+                'type': 'LinearOutput',
+                'kwargs': {
+                    'output_size': 3,
+                },
+            },
+        },
+        'core_modules': {
+            'type': 'RecurrentAttention17',
+        },
+    }
+
+    model1 = create_model(config)
+    model2 = create_model(config)
+
+    filename = str(tmpdir.join('model.pt'))
+    torch.save({'model': model1.state_dict()}, filename)
+
+    config = {
+        'weight_config': {
+            'filename': filename,
+            'key_prefix': '',
+        },
+        **config,
+    }
+
+    model3 = create_model(config)
+
+    x = {
+        'foo_linear': torch.zeros(batch_size, 3),
+        'foo_discrete': torch.zeros(batch_size),
+    }
+    h = model1.init_hidden(batch_size)
+
+    y1 = model1(x, h)
+    y2 = model2(x, h)
+    y3 = model3(x, h)
+
+    # The two models created without specifying the weights should be different
+    assert not torch.equal(y1['some_output'], y2['some_output'])
+
+    # Model3 should have the same weights as model1, and therefore should produce the same output
+    assert torch.equal(y1['some_output'], y3['some_output'])
+
+
+@pytest.mark.parametrize('batch_size', [1])
+def test_loading_full_model_weights_plus_submodule(batch_size, tmpdir):
+    """ """
+
+    config = {
+        'type': 'ModularModel1',
+        'input_modules': {
+            'foo_linear': {
+                'type': 'LinearInput',
+                'kwargs': {
+                    'input_size': 3,
+                },
+            },
+            'foo_discrete': {
+                'type': 'DiscreteInput',
+                'kwargs': {
+                    'input_size': 3,
+                },
+            }
+        },
+        'output_modules': {
+            'some_output': {
+                'type': 'LinearOutput',
+                'kwargs': {
+                    'output_size': 3,
+                },
+            },
+        },
+        'core_modules': {
+            'type': 'RecurrentAttention17',
+        },
+    }
+
+    model1 = create_model(config)
+    model2 = create_model(config)
+
+    filename = str(tmpdir.join('model.pt'))
+    torch.save({'model': model1.state_dict()}, filename)
+
+    config = {
+        **config,
+        'weight_config': {
+            'filename': filename,
+            'key_prefix': '',
+        },
+        'core_modules': {
+            'type': 'RecurrentAttention17',
+            'weight_config': {
+                'filename': filename,
+                'key_prefix': 'core_modules',
+            }
+        },
+    }
+
+    model3 = create_model(config)
+
+    x = {
+        'foo_linear': torch.zeros(batch_size, 3),
+        'foo_discrete': torch.zeros(batch_size),
+    }
+    h = model1.init_hidden(batch_size)
+
+    y1 = model1(x, h)
+    y2 = model2(x, h)
+    y3 = model3(x, h)
+
+    # The two models created without specifying the weights should be different
+    assert not torch.equal(y1['some_output'], y2['some_output'])
+
+    # Model3 should have the same weights as model1, and therefore should produce the same output
+    assert torch.equal(y1['some_output'], y3['some_output'])
+
+
+@pytest.mark.parametrize('batch_size', [1])
+def test_loading_full_model_weights_rearranged_core_modules(batch_size, tmpdir):
+    """ """
+
+    config = {
+        'type': 'ModularModel1',
+        'input_modules': {
+            'foo_linear': {
+                'type': 'LinearInput',
+                'kwargs': {
+                    'input_size': 3,
+                },
+            },
+            'foo_discrete': {
+                'type': 'DiscreteInput',
+                'kwargs': {
+                    'input_size': 3,
+                },
+            }
+        },
+        'output_modules': {
+            'some_output': {
+                'type': 'LinearOutput',
+                'kwargs': {
+                    'output_size': 3,
+                },
+            },
+        },
+        'core_modules': {
+            'type': 'RecurrentAttention17',
+        },
+    }
+
+    model1 = create_model(config)
+    model2 = create_model(config)
+
+    filename = str(tmpdir.join('model.pt'))
+    torch.save({'model': model1.state_dict()}, filename)
+
+    config = {
+        **config,
+        'weight_config': {
+            'filename': filename,
+            'key_prefix': '',
+        },
+        'core_modules': {
+            'container': 'parallel',
+            'modules': [{
+                'type': 'RecurrentAttention17',
+                'weight_config': {
+                    'filename': filename,
+                    'key_prefix': 'core_modules',
+                }
+            }]
+        },
+    }
+
+    model3 = create_model(config)
+
+    x = {
+        'foo_linear': torch.zeros(batch_size, 3),
+        'foo_discrete': torch.zeros(batch_size),
+    }
+    h = model1.init_hidden(batch_size)
+
+    y1 = model1(x, h)
+    y2 = model2(x, h)
+    y3 = model3(x, h)
+
+    # The two models created without specifying the weights should be different
+    assert not torch.equal(y1['some_output'], y2['some_output'])
+
+    # Model3 should have the same weights as model1, and therefore should produce the same output
+    assert torch.equal(y1['some_output'], y3['some_output'])
 
 
 @pytest.mark.parametrize('batch_size', [1, 2])
