@@ -119,6 +119,7 @@ def create_model(config, observation_space=None, action_space=None):
 
 
 def create_input_modules(config: Dict[str,Dict], key_size: int | None = None, value_size: int | None = None, observation_space=None, action_space=None) -> torch.nn.ModuleDict:
+    config = copy.deepcopy(config)
     valid_modules = {
             cls.__name__: cls
             for cls in [
@@ -188,6 +189,7 @@ def create_input_modules(config: Dict[str,Dict], key_size: int | None = None, va
 
 
 def create_output_modules(config, key_size: int | None = None, value_size: int | None = None, num_heads: int | None = None, observation_space=None, action_space=None):
+    config = copy.deepcopy(config)
     valid_modules = {
             cls.__name__: cls
             for cls in [

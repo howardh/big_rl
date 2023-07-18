@@ -2,6 +2,7 @@ pyrightconfig.json
 __pycache__
 _cache
 wandb
+build
 *.egg-info
 MUJOCO_LOG.TXT
 Session.vim
