@@ -37,7 +37,7 @@ def test_1_trial_delay():
 
 
 def test_1_to_3_step_delay():
-    transform = RewardDelayedStart(delay_type='random', start_when=(1,3), units='steps')
+    transform = RewardDelayedStart(delay_type='random', start_when=(1, 3), units='steps')
 
     reward = np.random.uniform()
     assert transform(reward) == 0

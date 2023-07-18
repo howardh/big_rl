@@ -51,6 +51,6 @@ def test_convert_to_mha_parameters_unchanged(batch_mha_cls):
     batch_mha1 = batch_mha_cls(modules, num_heads=3, key_size=6, default_batch=True)
     batch_mha2 = batch_mha_cls(batch_mha1.to_multihead_attention_modules(), num_heads=3, key_size=6, default_batch=True)
 
-    for p1,p2 in zip(batch_mha1.parameters(), batch_mha2.parameters()):
+    for p1, p2 in zip(batch_mha1.parameters(), batch_mha2.parameters()):
         assert p1.shape == p2.shape
         assert (p1 == p2).all()

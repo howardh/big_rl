@@ -11,32 +11,35 @@ class DummyCoreModule(CoreModule):
         self.key_size = key_size
         self.value_size = value_size
         self.num_outputs = num_outputs
-        self.hidden = torch.nn.ParameterList([ torch.randn(1, size) for size in hidden_shapes ])
+        self.hidden = torch.nn.ParameterList([torch.randn(1, size) for size in hidden_shapes])
+
     def forward(self, key, value, hidden):
         batch_size = key.shape[1]
 
         # Verify that the hidden state is sent to the correct module.
         # We randomly generate a different hidden state for each module and they never change, so we can check this by comparing the values to `self.hidden`
         assert len(hidden) == len(self.hidden)
-        for h1,h2 in zip(hidden, self.hidden):
+        for h1, h2 in zip(hidden, self.hidden):
             assert torch.all(torch.eq(h1, h2))
 
         return {
-                'key': torch.ones([self.num_outputs, batch_size, self.key_size]),
-                'value': torch.ones([self.num_outputs, batch_size, self.value_size]),
-                'hidden': hidden,
+            'key': torch.ones([self.num_outputs, batch_size, self.key_size]),
+            'value': torch.ones([self.num_outputs, batch_size, self.value_size]),
+            'hidden': hidden,
         }
+
     def init_hidden(self, batch_size):
         return tuple([
-            h.view(1,-1).expand(batch_size, -1)
+            h.view(1, -1).expand(batch_size, -1)
             for h in self.hidden
         ])
+
     @property
     def n_hidden(self):
         return len(self.hidden)
 
 
-@pytest.mark.parametrize('num_inputs', [1,2])
+@pytest.mark.parametrize('num_inputs', [1, 2])
 @pytest.mark.parametrize('batch_size', [1, 2, 3])
 def test_dummy_module(num_inputs, batch_size):
     """ Make sure the dummy module used for testing works as expected. """
@@ -50,7 +53,7 @@ def test_dummy_module(num_inputs, batch_size):
         hidden = output['hidden']
 
 
-@pytest.mark.parametrize('num_inputs', [1,2])
+@pytest.mark.parametrize('num_inputs', [1, 2])
 def test_parallel(num_inputs):
     """ Test that parallel core modules work. """
     batch_size = 1
@@ -66,7 +69,7 @@ def test_parallel(num_inputs):
         hidden = output['hidden']
 
 
-@pytest.mark.parametrize('num_inputs', [1,2])
+@pytest.mark.parametrize('num_inputs', [1, 2])
 def test_series(num_inputs):
     """ Test that series core modules work. """
     batch_size = 1
@@ -88,15 +91,15 @@ def test_parallel_hidden_state(batch_size):
     num_inputs = 1
     model = CoreModuleParallel([
         DummyCoreModule(hidden_shapes=[3]),
-        DummyCoreModule(hidden_shapes=[7,11]),
-        DummyCoreModule(hidden_shapes=[13,17,19]),
+        DummyCoreModule(hidden_shapes=[7, 11]),
+        DummyCoreModule(hidden_shapes=[13, 17, 19]),
     ])
 
     hidden = model.init_hidden(batch_size)
 
     # Type checking: hidden state should be a tuple of tensors
     assert isinstance(hidden, tuple)
-    assert all([ isinstance(h, torch.Tensor) for h in hidden ])
+    assert all([isinstance(h, torch.Tensor) for h in hidden])
 
     # Check length
     assert len(hidden) == model.n_hidden
@@ -109,7 +112,7 @@ def test_parallel_hidden_state(batch_size):
 
         # Type checking: hidden state should be a tuple of tensors
         assert isinstance(hidden, tuple)
-        assert all([ isinstance(h, torch.Tensor) for h in hidden ])
+        assert all([isinstance(h, torch.Tensor) for h in hidden])
 
         # Check length
         assert len(hidden) == model.n_hidden
@@ -126,15 +129,15 @@ def test_series_hidden_state():
     num_inputs = 1
     model = CoreModuleSeries([
         DummyCoreModule(hidden_shapes=[3]),
-        DummyCoreModule(hidden_shapes=[7,11]),
-        DummyCoreModule(hidden_shapes=[13,17,19]),
+        DummyCoreModule(hidden_shapes=[7, 11]),
+        DummyCoreModule(hidden_shapes=[13, 17, 19]),
     ])
 
     hidden = model.init_hidden(batch_size)
 
     # Type checking: hidden state should be a tuple of tensors
     assert isinstance(hidden, tuple)
-    assert all([ isinstance(h, torch.Tensor) for h in hidden ])
+    assert all([isinstance(h, torch.Tensor) for h in hidden])
 
     # Check length
     assert len(hidden) == model.n_hidden
@@ -147,7 +150,7 @@ def test_series_hidden_state():
 
         # Type checking: hidden state should be a tuple of tensors
         assert isinstance(hidden, tuple)
-        assert all([ isinstance(h, torch.Tensor) for h in hidden ])
+        assert all([isinstance(h, torch.Tensor) for h in hidden])
 
         # Check length
         assert len(hidden) == model.n_hidden
@@ -166,8 +169,8 @@ def test_parallel_output_size(batch_size, num_modules):
 
     modules: list[CoreModule] = [
         DummyCoreModule(hidden_shapes=[3]),
-        DummyCoreModule(hidden_shapes=[7,11]),
-        DummyCoreModule(hidden_shapes=[13,17,19]),
+        DummyCoreModule(hidden_shapes=[7, 11]),
+        DummyCoreModule(hidden_shapes=[13, 17, 19]),
     ]
 
     model = CoreModuleParallel(modules[:num_modules])
@@ -178,7 +181,7 @@ def test_parallel_output_size(batch_size, num_modules):
     for _ in range(3):
         output = model(key, value, hidden)
         hidden = output['hidden']
-        
+
         assert output['key'].shape == (num_modules, batch_size, 16)
         assert output['value'].shape == (num_modules, batch_size, 16)
 
@@ -190,8 +193,8 @@ def test_series_output_size(batch_size, num_modules):
 
     modules: list[CoreModule] = [
         DummyCoreModule(hidden_shapes=[3]),
-        DummyCoreModule(hidden_shapes=[7,11]),
-        DummyCoreModule(hidden_shapes=[13,17,19]),
+        DummyCoreModule(hidden_shapes=[7, 11]),
+        DummyCoreModule(hidden_shapes=[13, 17, 19]),
     ]
 
     model = CoreModuleSeries(modules[:num_modules])
@@ -202,7 +205,7 @@ def test_series_output_size(batch_size, num_modules):
     for _ in range(3):
         output = model(key, value, hidden)
         hidden = output['hidden']
-        
+
         assert output['key'].shape == (1, batch_size, 16)
         assert output['value'].shape == (1, batch_size, 16)
 
@@ -214,8 +217,8 @@ def test_nested_modules(batch_size):
 
     modules: list[CoreModule] = [
         DummyCoreModule(hidden_shapes=[3]),
-        DummyCoreModule(hidden_shapes=[7,11]),
-        DummyCoreModule(hidden_shapes=[13,17,19]),
+        DummyCoreModule(hidden_shapes=[7, 11]),
+        DummyCoreModule(hidden_shapes=[13, 17, 19]),
     ]
 
     model = CoreModuleParallel([
@@ -230,7 +233,7 @@ def test_nested_modules(batch_size):
     for _ in range(3):
         output = model(key, value, hidden)
         hidden = output['hidden']
-        
+
         # 3 parallel modules, each produce 1 output, so there should be 3 outputs total (dim 1)
         assert output['key'].shape == (3, batch_size, 16)
         assert output['value'].shape == (3, batch_size, 16)
@@ -244,14 +247,14 @@ def test_nested_modules_multiple_outputs(batch_size):
 
     modules: list[CoreModule] = [
         DummyCoreModule(hidden_shapes=[3], num_outputs=1),
-        DummyCoreModule(hidden_shapes=[7,11], num_outputs=3),
-        DummyCoreModule(hidden_shapes=[13,17,19], num_outputs=2),
+        DummyCoreModule(hidden_shapes=[7, 11], num_outputs=3),
+        DummyCoreModule(hidden_shapes=[13, 17, 19], num_outputs=2),
     ]
 
     model = CoreModuleParallel([
-        CoreModuleSeries(modules[:1]), # 1 output
-        CoreModuleSeries(modules), # 2 outputs
-        DummyCoreModule(hidden_shapes=[3]), # 1 output
+        CoreModuleSeries(modules[:1]),  # 1 output
+        CoreModuleSeries(modules),  # 2 outputs
+        DummyCoreModule(hidden_shapes=[3]),  # 1 output
     ])
 
     hidden = model.init_hidden(batch_size)
@@ -260,7 +263,7 @@ def test_nested_modules_multiple_outputs(batch_size):
     for _ in range(3):
         output = model(key, value, hidden)
         hidden = output['hidden']
-        
+
         assert output['key'].shape == (4, batch_size, 16)
         assert output['value'].shape == (4, batch_size, 16)
 
@@ -273,8 +276,8 @@ def test_deeper_nested_modules(batch_size):
 
     modules: list[CoreModule] = [
         DummyCoreModule(hidden_shapes=[3]),
-        DummyCoreModule(hidden_shapes=[7,11]),
-        DummyCoreModule(hidden_shapes=[13,17,19]),
+        DummyCoreModule(hidden_shapes=[7, 11]),
+        DummyCoreModule(hidden_shapes=[13, 17, 19]),
     ]
 
     model = CoreModuleParallel([
@@ -285,12 +288,12 @@ def test_deeper_nested_modules(batch_size):
                 CoreModuleSeries(modules),
             ]),
             DummyCoreModule(hidden_shapes=[3]),
-        ]), # 1 output
+        ]),  # 1 output
         CoreModuleSeries([
             CoreModuleSeries(modules[:1]),
             CoreModuleSeries(modules[:1]),
-        ]), # 1 output
-        DummyCoreModule(hidden_shapes=[3]), # 1 output
+        ]),  # 1 output
+        DummyCoreModule(hidden_shapes=[3]),  # 1 output
     ])
 
     hidden = model.init_hidden(batch_size)
@@ -299,7 +302,7 @@ def test_deeper_nested_modules(batch_size):
     for _ in range(3):
         output = model(key, value, hidden)
         hidden = output['hidden']
-        
+
         assert output['key'].shape == (3, batch_size, 16)
         assert output['value'].shape == (3, batch_size, 16)
 

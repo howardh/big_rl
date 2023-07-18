@@ -27,7 +27,7 @@ def _create_file_non_atomic(directory):
             index += 1
             filename = os.path.join(directory, f'{name}-{index}.{extension}')
             continue
-        os.open(filename,  os.O_CREAT)
+        os.open(filename, os.O_CREAT)
         return filename
 
 

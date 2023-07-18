@@ -54,8 +54,5 @@ def test_atari_with_wrappers():
     for _ in range(5):
         action = env.action_space.sample()
         obs, _, _, _, _ = env.step(action)
-        
-        assert obs.shape == (29,29)
 
-
-
+        assert obs.shape == (29, 29)

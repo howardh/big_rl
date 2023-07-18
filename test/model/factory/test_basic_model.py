@@ -5,6 +5,7 @@ import gymnasium
 
 from big_rl.model.factory import create_model
 
+
 @pytest.mark.parametrize('batch_size', [1, 2])
 def test_no_peripheral_modules(batch_size):
     """ Create a model with no input/output modules. Verify that it can run. """
@@ -44,10 +45,10 @@ def test_no_output_modules(batch_size):
 
     # Verify that the model can run without errors
     hidden = model.init_hidden(batch_size)
-    for _ in range(10): # With inputs omitted
+    for _ in range(10):  # With inputs omitted
         output = model({}, hidden)
         hidden = output['hidden']
-    for _ in range(10): # With inputs included
+    for _ in range(10):  # With inputs included
         output = model({'foo': torch.zeros(batch_size, 1)}, hidden)
         hidden = output['hidden']
 
@@ -90,10 +91,10 @@ def test_full_model(batch_size):
 
     # Verify that the model can run without errors
     hidden = model.init_hidden(batch_size)
-    for _ in range(10): # With inputs omitted
+    for _ in range(10):  # With inputs omitted
         output = model({}, hidden)
         hidden = output['hidden']
-    for _ in range(10): # With inputs included
+    for _ in range(10):  # With inputs included
         output = model({'foo_scalar': torch.zeros(batch_size, 1)}, hidden)
         hidden = output['hidden']
 
@@ -417,9 +418,9 @@ def test_args_from_obs_or_action_space(batch_size):
         },
     }
     model = create_model(
-            config,
-            observation_space=gymnasium.spaces.Box(low=-1, high=1, shape=(3,5,1)),
-            action_space=gymnasium.spaces.Discrete(2),
+        config,
+        observation_space=gymnasium.spaces.Box(low=-1, high=1, shape=(3, 5, 1)),
+        action_space=gymnasium.spaces.Discrete(2),
     )
 
     # Verify that the model can run without errors
@@ -508,11 +509,11 @@ def test_freeze_weights__all_frozen(batch_size, tmpdir):
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     loss = torch.sum(y['some_output'])
     with pytest.raises(Exception):
-        loss.backward() # Should error because all weights are frozen? I don't know if this is expected behaviour, but it's what I'm seeing and it makes sense, so I'll assume it's correct until proven otherwise.
+        loss.backward()  # Should error because all weights are frozen? I don't know if this is expected behaviour, but it's what I'm seeing and it makes sense, so I'll assume it's correct until proven otherwise.
         optimizer.step()
 
     # Check that none of the weights changed
-    for p1,p2 in zip(model.parameters(), old_model.parameters()):
+    for p1, p2 in zip(model.parameters(), old_model.parameters()):
         assert torch.equal(p1, p2)
 
 
@@ -573,13 +574,13 @@ def test_freeze_weights__partially_frozen(batch_size, tmpdir):
     optimizer.step()
 
     # Check that none of the weights changed
-    for p1,p2 in zip(model.core_modules.parameters(), old_model.core_modules.parameters()):
+    for p1, p2 in zip(model.core_modules.parameters(), old_model.core_modules.parameters()):
         assert torch.equal(p1, p2)
-    for p1,p2 in zip(model.output_modules.parameters(), old_model.output_modules.parameters()):
+    for p1, p2 in zip(model.output_modules.parameters(), old_model.output_modules.parameters()):
         assert torch.equal(p1, p2)
-    for p1,p2 in zip(model.input_modules.input_modules['foo_linear'].parameters(), old_model.input_modules.input_modules['foo_linear'].parameters()):
+    for p1, p2 in zip(model.input_modules.input_modules['foo_linear'].parameters(), old_model.input_modules.input_modules['foo_linear'].parameters()):
         assert torch.equal(p1, p2)
 
     # Check that the weights in the discrete input module did change
-    for p1,p2 in zip(model.input_modules.input_modules['foo_discrete'].parameters(), old_model.input_modules.input_modules['foo_discrete'].parameters()):
+    for p1, p2 in zip(model.input_modules.input_modules['foo_discrete'].parameters(), old_model.input_modules.input_modules['foo_discrete'].parameters()):
         assert not torch.equal(p1, p2)

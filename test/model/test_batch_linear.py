@@ -47,6 +47,6 @@ def test_convert_to_linear_parameters_unchanged():
     batch_linear1 = BatchLinear(modules)
     batch_linear2 = BatchLinear(batch_linear1.to_linear_modules())
 
-    for p1,p2 in zip(batch_linear1.parameters(), batch_linear2.parameters()):
+    for p1, p2 in zip(batch_linear1.parameters(), batch_linear2.parameters()):
         assert p1.shape == p2.shape
         assert (p1 == p2).all()

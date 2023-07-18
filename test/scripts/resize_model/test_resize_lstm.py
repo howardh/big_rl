@@ -13,17 +13,17 @@ def test_resize_no_outputs():
         },
     }
     model_small = ModularPolicy5LSTM(
-        inputs = inputs,
-        outputs = {},
-        value_size = 5,
-        hidden_size = 8,
+        inputs=inputs,
+        outputs={},
+        value_size=5,
+        hidden_size=8,
     )
     state_dict = resize(model_small, hidden_size=9).state_dict()
     model_big = ModularPolicy5LSTM(
-        inputs = inputs,
-        outputs = {},
-        value_size = 5,
-        hidden_size = 9,
+        inputs=inputs,
+        outputs={},
+        value_size=5,
+        hidden_size=9,
     )
     model_big.load_state_dict(state_dict)
 
@@ -47,16 +47,16 @@ def test_resize_with_outputs():
         },
     }
     model_small = ModularPolicy5LSTM(
-        inputs = inputs,
-        outputs = outputs,
-        value_size = 5,
-        hidden_size = 8,
+        inputs=inputs,
+        outputs=outputs,
+        value_size=5,
+        hidden_size=8,
     )
     state_dict = resize(model_small, hidden_size=9).state_dict()
     model_big = ModularPolicy5LSTM(
-        inputs = inputs,
-        outputs = outputs,
-        value_size = 5,
-        hidden_size = 9,
+        inputs=inputs,
+        outputs=outputs,
+        value_size=5,
+        hidden_size=9,
     )
     model_big.load_state_dict(state_dict)

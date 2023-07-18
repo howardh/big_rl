@@ -67,7 +67,7 @@ def test_fixed_delay_3():
 
 @pytest.mark.parametrize('overlap', ['replace', 'sum'])
 def test_random_delay_0(overlap):
-    delay = RewardDelay('random', steps=(0,0), overlap=overlap)
+    delay = RewardDelay('random', steps=(0, 0), overlap=overlap)
 
     assert delay(1) == 1
     assert delay(12.3) == 12.3
@@ -76,7 +76,7 @@ def test_random_delay_0(overlap):
 
 @pytest.mark.parametrize('overlap', ['replace', 'sum'])
 def test_random_delay_1(overlap):
-    delay = RewardDelay('random', steps=(1,1), overlap=overlap)
+    delay = RewardDelay('random', steps=(1, 1), overlap=overlap)
 
     assert delay(1) == 0
 
@@ -86,7 +86,7 @@ def test_random_delay_1(overlap):
 
 @pytest.mark.parametrize('overlap', ['replace', 'sum'])
 def test_random_delay_3(overlap):
-    delay = RewardDelay('random', steps=(3,3), overlap=overlap)
+    delay = RewardDelay('random', steps=(3, 3), overlap=overlap)
 
     # 3 steps delay
     assert delay(1) == 0
@@ -111,7 +111,7 @@ def test_random_delay_3(overlap):
 
 
 def test_random_delay_0_to_1_replace():
-    delay = RewardDelay('random', steps=(0,1), overlap='replace')
+    delay = RewardDelay('random', steps=(0, 1), overlap='replace')
 
     assert delay(1) in (0, 1)
     assert delay(12.3) in (0, 1, 12.3)
@@ -119,7 +119,7 @@ def test_random_delay_0_to_1_replace():
 
 
 def test_random_delay_2_to_3_replace():
-    delay = RewardDelay('random', steps=(2,3), overlap='replace')
+    delay = RewardDelay('random', steps=(2, 3), overlap='replace')
 
     for _ in range(n_repeats):
         delay.reset()
@@ -137,7 +137,7 @@ def test_random_delay_2_to_3_replace():
 
 
 def test_random_delay_2_to_4_replace():
-    delay = RewardDelay('random', steps=(2,4), overlap='replace')
+    delay = RewardDelay('random', steps=(2, 4), overlap='replace')
 
     for _ in range(n_repeats):
         delay.reset()
@@ -156,7 +156,7 @@ def test_random_delay_2_to_4_replace():
 
 
 def test_random_delay_0_to_1_sum():
-    delay = RewardDelay('random', steps=(0,1), overlap='sum')
+    delay = RewardDelay('random', steps=(0, 1), overlap='sum')
 
     assert delay(1) in (0, 1)
     for _ in range(n_repeats):
@@ -168,7 +168,7 @@ def test_random_delay_0_to_1_sum():
 
 
 def test_random_delay_0_to_1_sum_clipped():
-    delay = RewardDelay('random', steps=(0,1), overlap='sum_clipped')
+    delay = RewardDelay('random', steps=(0, 1), overlap='sum_clipped')
 
     assert delay(1) in (0, 1)
     for _ in range(n_repeats):
@@ -220,7 +220,7 @@ def test_interval_delay_2_replace():
     assert delay(4) == 4
     assert delay(5) == 0
     assert delay(6) == 6
-    
+
 
 def test_interval_delay_3_replace():
     delay = RewardDelay('interval', steps=3, overlap='replace')
@@ -237,11 +237,11 @@ def test_interval_delay_2_sum():
     delay = RewardDelay('interval', steps=2, overlap='sum')
 
     assert delay(1) == 0
-    assert delay(2) == 1+2
+    assert delay(2) == 1 + 2
     assert delay(3) == 0
-    assert delay(4) == 3+4
+    assert delay(4) == 3 + 4
     assert delay(5) == 0
-    assert delay(6) == 5+6
+    assert delay(6) == 5 + 6
 
 
 def test_interval_delay_3_sum():
@@ -249,10 +249,10 @@ def test_interval_delay_3_sum():
 
     assert delay(1) == 0
     assert delay(2) == 0
-    assert delay(3) == 1+2+3
+    assert delay(3) == 1 + 2 + 3
     assert delay(4) == 0
     assert delay(5) == 0
-    assert delay(6) == 4+5+6
+    assert delay(6) == 4 + 5 + 6
 
 
 def test_interval_delay_3_sum_clipped():

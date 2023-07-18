@@ -36,21 +36,21 @@ def test_remapped_input_same_output():
     }
     input_modules = create_input_modules(config, KEY_SIZE, VALUE_SIZE)
     module_container_1 = InputModuleContainer(
-            input_modules,
+        input_modules,
     )
     module_container_2 = InputModuleContainer(
-            input_modules,
-            input_mapping = [
-                ('b', 'a'),
-            ]
+        input_modules,
+        input_mapping=[
+            ('b', 'a'),
+        ]
     )
 
-    output_1 = module_container_1({ 'a': torch.zeros(1, 4) })
-    output_2 = module_container_2({ 'b': torch.zeros(1, 4) })
+    output_1 = module_container_1({'a': torch.zeros(1, 4)})
+    output_2 = module_container_2({'b': torch.zeros(1, 4)})
 
-    for a,b in zip(output_1['key'], output_2['key']):
+    for a, b in zip(output_1['key'], output_2['key']):
         assert torch.all(torch.eq(a, b))
-    for a,b in zip(output_1['value'], output_2['value']):
+    for a, b in zip(output_1['value'], output_2['value']):
         assert torch.all(torch.eq(a, b))
 
 
@@ -72,14 +72,14 @@ def test_map_to_multiple_modules():
     }
     input_modules = create_input_modules(config, KEY_SIZE, VALUE_SIZE)
     module_container = InputModuleContainer(
-            input_modules,
-            input_mapping = [
-                ('x', 'a'),
-                ('x', 'b'),
-            ]
+        input_modules,
+        input_mapping=[
+            ('x', 'a'),
+            ('x', 'b'),
+        ]
     )
 
-    output = module_container({ 'x': torch.zeros(1, 4) })
+    output = module_container({'x': torch.zeros(1, 4)})
 
     assert len(output['key']) == 2
     assert len(output['value']) == 2
@@ -104,13 +104,13 @@ def test_mixed_remap_and_default_mapping():
     }
     input_modules = create_input_modules(config, KEY_SIZE, VALUE_SIZE)
     module_container = InputModuleContainer(
-            input_modules,
-            input_mapping = [
-                ('x', 'a'),
-            ]
+        input_modules,
+        input_mapping=[
+            ('x', 'a'),
+        ]
     )
 
-    output = module_container({ 'x': torch.zeros(1, 4), 'b': torch.zeros(1, 4) })
+    output = module_container({'x': torch.zeros(1, 4), 'b': torch.zeros(1, 4)})
 
     assert len(output['key']) == 2
     assert len(output['value']) == 2
@@ -136,14 +136,14 @@ def test_mixed_remap_and_default_mapping_2():
     }
     input_modules = create_input_modules(config, KEY_SIZE, VALUE_SIZE)
     module_container = InputModuleContainer(
-            input_modules,
-            input_mapping = [
-                ('x', 'a'),
-                ('x', 'b'),
-            ]
+        input_modules,
+        input_mapping=[
+            ('x', 'a'),
+            ('x', 'b'),
+        ]
     )
 
-    output = module_container({ 'x': torch.zeros(1, 4), 'b': torch.zeros(1, 4) })
+    output = module_container({'x': torch.zeros(1, 4), 'b': torch.zeros(1, 4)})
 
     assert len(output['key']) == 3
     assert len(output['value']) == 3
@@ -167,10 +167,10 @@ def test_input_with_no_corresponding_module():
     }
     input_modules = create_input_modules(config, KEY_SIZE, VALUE_SIZE)
     module_container = InputModuleContainer(
-            input_modules,
+        input_modules,
     )
 
-    output = module_container({ 'x': torch.zeros(1, 4) })
+    output = module_container({'x': torch.zeros(1, 4)})
 
     assert len(output['key']) == 0
     assert len(output['value']) == 0
@@ -196,6 +196,6 @@ def test_invalid_module_name():
 
     with pytest.raises(ValueError):
         InputModuleContainer(
-                input_modules,
-                input_mapping = [ ('x', 'c') ]
+            input_modules,
+            input_mapping=[('x', 'c')]
         )

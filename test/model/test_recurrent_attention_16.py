@@ -18,7 +18,7 @@ def assert_same_output(output1, output2):
         assert k in output1
         assert k in output2
         assert torch.allclose(output1[k], output2[k], atol=1e-7)
-    for x,y in zip(output1['state'], output2['state']):
+    for x, y in zip(output1['state'], output2['state']):
         assert torch.allclose(x, y, atol=1e-7)
 
 
@@ -44,7 +44,7 @@ def test_convert_to_batched_same_output(batched_cls):
         key_size=8,
         value_size=8,
         num_heads=4,
-        ff_size=[3,7],
+        ff_size=[3, 7],
         num_modules=2,
     )
     batched_module = batched_cls.from_nonbatched(nonbatched_module)
@@ -73,7 +73,7 @@ def test_convert_to_nonbatched_same_output(batched_cls):
         key_size=8,
         value_size=8,
         num_heads=4,
-        ff_size=[3,7],
+        ff_size=[3, 7],
         num_modules=2,
     )
     nonbatched_module = batched_module.to_nonbatched()
@@ -102,7 +102,7 @@ def test_convert_to_batched_independence(batched_cls):
         key_size=8,
         value_size=8,
         num_heads=4,
-        ff_size=[3,7],
+        ff_size=[3, 7],
         num_modules=2,
     )
     batched_module = batched_cls.from_nonbatched(nonbatched_module)
@@ -138,7 +138,7 @@ def test_convert_to_nonbatched_independence(batched_cls):
         key_size=8,
         value_size=8,
         num_heads=4,
-        ff_size=[3,7],
+        ff_size=[3, 7],
         num_modules=2,
     )
     nonbatched_module = batched_module.to_nonbatched()
@@ -175,7 +175,7 @@ def test_same_gradients_after_conversion(batched_cls):
         key_size=8,
         value_size=8,
         num_heads=4,
-        ff_size=[3,7],
+        ff_size=[3, 7],
         num_modules=2,
     )
     nonbatched_module = batched_module.to_nonbatched()
@@ -211,7 +211,7 @@ def test_remove_modules_no_removals():
         key_size=8,
         value_size=8,
         num_heads=4,
-        ff_size=[3,7],
+        ff_size=[3, 7],
         num_modules=2,
     )
 
@@ -237,7 +237,7 @@ def test_remove_modules_2_to_1():
         key_size=8,
         value_size=8,
         num_heads=4,
-        ff_size=[3,7],
+        ff_size=[3, 7],
         num_modules=2,
     )
 
@@ -261,7 +261,7 @@ def test_merge_modules_no_error():
         key_size=8,
         value_size=8,
         num_heads=4,
-        ff_size=[3,7],
+        ff_size=[3, 7],
         num_modules=2,
     )
     module2 = NonBatchRecurrentAttention16Layer(
@@ -269,7 +269,7 @@ def test_merge_modules_no_error():
         key_size=8,
         value_size=8,
         num_heads=4,
-        ff_size=[3,7],
+        ff_size=[3, 7],
         num_modules=3,
     )
 
@@ -289,7 +289,7 @@ def test_merge_and_remove_roundtrip():
         key_size=8,
         value_size=8,
         num_heads=4,
-        ff_size=[3,7],
+        ff_size=[3, 7],
         num_modules=2,
     )
     module2 = NonBatchRecurrentAttention16Layer(
@@ -297,7 +297,7 @@ def test_merge_and_remove_roundtrip():
         key_size=8,
         value_size=8,
         num_heads=4,
-        ff_size=[3,7],
+        ff_size=[3, 7],
         num_modules=3,
     )
 
@@ -327,7 +327,7 @@ def test_merge_and_remove_roundtrip_interleaved():
         key_size=8,
         value_size=8,
         num_heads=4,
-        ff_size=[3,7],
+        ff_size=[3, 7],
         num_modules=2,
     )
     module2 = NonBatchRecurrentAttention16Layer(
@@ -335,7 +335,7 @@ def test_merge_and_remove_roundtrip_interleaved():
         key_size=8,
         value_size=8,
         num_heads=4,
-        ff_size=[3,7],
+        ff_size=[3, 7],
         num_modules=3,
     )
 
@@ -361,7 +361,7 @@ def test_merge_and_remove_roundtrip_interleaved():
 
 # misc
 
-@pytest.mark.parametrize('architecture', [[1], [1,1], [1,2]])
+@pytest.mark.parametrize('architecture', [[1], [1, 1], [1, 2]])
 def test_state_shape(architecture):
     # Check that the number of tensors in the state matches `state_size`.
     module = RecurrentAttention16(
@@ -369,7 +369,7 @@ def test_state_shape(architecture):
         key_size=8,
         value_size=8,
         num_heads=4,
-        ff_size=[3,7],
+        ff_size=[3, 7],
         architecture=architecture,
     )
 
