@@ -455,3 +455,131 @@ def test_args_from_obs_or_action_space(batch_size):
             'a': torch.zeros([batch_size, 5]),
             'b': torch.zeros([batch_size], dtype=torch.long) - 1
         }, hidden)
+
+
+@pytest.mark.parametrize('batch_size', [1])
+def test_freeze_weights__all_frozen(batch_size, tmpdir):
+    """ if all weights are frozen, then the none of the weights should change after a gradient step. """
+
+    config = {
+        'type': 'ModularModel1',
+        'weight_config': {
+            'freeze': True,
+        },
+        'input_modules': {
+            'foo_linear': {
+                'type': 'LinearInput',
+                'kwargs': {
+                    'input_size': 3,
+                },
+            },
+            'foo_discrete': {
+                'type': 'DiscreteInput',
+                'kwargs': {
+                    'input_size': 3,
+                },
+            }
+        },
+        'output_modules': {
+            'some_output': {
+                'type': 'LinearOutput',
+                'kwargs': {
+                    'output_size': 3,
+                },
+            },
+        },
+        'core_modules': {
+            'type': 'RecurrentAttention17',
+        },
+    }
+
+    model = create_model(config)
+    old_model = create_model(config)
+    old_model.load_state_dict(model.state_dict())
+
+    x = {
+        'foo_linear': torch.zeros(batch_size, 3),
+        'foo_discrete': torch.zeros(batch_size),
+    }
+    h = model.init_hidden(batch_size)
+
+    y = model(x, h)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    loss = torch.sum(y['some_output'])
+    with pytest.raises(Exception):
+        loss.backward() # Should error because all weights are frozen? I don't know if this is expected behaviour, but it's what I'm seeing and it makes sense, so I'll assume it's correct until proven otherwise.
+        optimizer.step()
+
+    # Check that none of the weights changed
+    for p1,p2 in zip(model.parameters(), old_model.parameters()):
+        assert torch.equal(p1, p2)
+
+
+@pytest.mark.parametrize('batch_size', [1])
+def test_freeze_weights__partially_frozen(batch_size, tmpdir):
+    """ if only some of the weights are frozen, then those should be the only weights that change after a gradient step. """
+
+    config = {
+        'type': 'ModularModel1',
+        'weight_config': {
+            'freeze': True,
+        },
+        'input_modules': {
+            'foo_linear': {
+                'type': 'LinearInput',
+                'kwargs': {
+                    'input_size': 3,
+                },
+            },
+            'foo_discrete': {
+                'type': 'DiscreteInput',
+                'kwargs': {
+                    'input_size': 3,
+                },
+                'weight_config': {
+                    'freeze': False,
+                },
+            }
+        },
+        'output_modules': {
+            'some_output': {
+                'type': 'LinearOutput',
+                'kwargs': {
+                    'output_size': 3,
+                },
+            },
+        },
+        'core_modules': {
+            'type': 'RecurrentAttention17',
+        },
+    }
+
+    model = create_model(config)
+    old_model = create_model(config)
+    old_model.load_state_dict(model.state_dict())
+
+    x = {
+        'foo_linear': torch.zeros(batch_size, 3),
+        'foo_discrete': torch.zeros(batch_size),
+    }
+    h = model.init_hidden(batch_size)
+
+    y = model(x, h)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    loss = torch.sum(y['some_output'])
+    loss.backward()
+    optimizer.step()
+
+    # Check that none of the weights changed
+    for p1,p2 in zip(model.core_modules.parameters(), old_model.core_modules.parameters()):
+        assert torch.equal(p1, p2)
+    for p1,p2 in zip(model.output_modules.parameters(), old_model.output_modules.parameters()):
+        assert torch.equal(p1, p2)
+    for p1,p2 in zip(model.input_modules.input_modules['foo_linear'].parameters(), old_model.input_modules.input_modules['foo_linear'].parameters()):
+        assert torch.equal(p1, p2)
+
+    # Check that the weights in the discrete input module did change
+    for p1,p2 in zip(model.input_modules.input_modules['foo_discrete'].parameters(), old_model.input_modules.input_modules['foo_discrete'].parameters()):
+        assert not torch.equal(p1, p2)

@@ -23,6 +23,7 @@ from frankenstein.loss.policy_gradient import clipped_advantage_policy_gradient_
 
 from big_rl.minigrid.envs import MetaWrapper, ActionShuffle
 from big_rl.utils import torch_save, zip2, merge_space, generate_id
+from big_rl.utils.make_env import make_env_from_yaml, make_env_labels_from_yaml
 from big_rl.atari.common import init_model, env_config_presets
 from big_rl.model import factory as model_factory
 
@@ -595,8 +596,10 @@ if __name__ == '__main__':
 
     parser.add_argument('--envs', type=str, default=['ALE/Pong-v5'], nargs='*', help='Environments to train on')
     parser.add_argument('--num-envs', type=int, default=[16], nargs='*',
-            help='Number of environments to train on. If a single number is specified, it will be used for all environments. If a list of numbers is specified, it must have the same length as --env.')
+                        help='Number of environments to train on. If a single number is specified, it will be used for all environments. If a list of numbers is specified, it must have the same length as --env.')
     parser.add_argument('--env-labels', type=str, default=None, nargs='*', help='')
+    parser.add_argument('--env-config', type=str, default=None,
+                        help='Path to an environment config file (yaml format). If specified, all other environment arguments are ignored.')
 
     init_parser_trainer(parser)
     init_parser_model(parser)
@@ -656,23 +659,34 @@ if __name__ == '__main__':
             wandb.init(project=WANDB_PROJECT_NAME)
         wandb.config.update({k:v for k,v in args.__dict__.items() if k != 'model_config'}) # 
 
-    if len(args.envs) != len(args.num_envs):
-        if len(args.num_envs) == 1:
-            args.num_envs = args.num_envs * len(args.envs)
-        else:
-            raise ValueError('The number of environments must match the number of environment labels.')
+    # Initialize environments
+    if args.env_config is not None:
+        envs = make_env_from_yaml(args.env_config)
+        env_labels = make_env_labels_from_yaml(args.env_config)
+        if isinstance(envs, gymnasium.vector.VectorEnv):
+            envs = [envs]
+        elif isinstance(envs, gymnasium.Env):
+            raise ValueError('The environment config file must specify a vectorized environment.')
+    else:
+        if len(args.envs) != len(args.num_envs):
+            if len(args.num_envs) == 1:
+                args.num_envs = args.num_envs * len(args.envs)
+            else:
+                raise ValueError('The number of environments must match the number of environment labels.')
 
-    ENV_CONFIG_PRESETS = env_config_presets()
-    env_configs = [
-        [ENV_CONFIG_PRESETS[e] for _ in range(n)]
-        for e,n in zip(args.envs, args.num_envs)
-    ]
-    VectorEnv = gymnasium.vector.SyncVectorEnv if args.sync_vector_env else gymnasium.vector.AsyncVectorEnv
-    envs = [
-        VectorEnv([lambda conf=conf: make_env(**conf) for conf in env_config]) # type: ignore (Why is `make_env` missing an argument?)
-        for env_config in env_configs
-    ]
+        ENV_CONFIG_PRESETS = env_config_presets()
+        env_configs = [
+            [ENV_CONFIG_PRESETS[e] for _ in range(n)]
+            for e,n in zip(args.envs, args.num_envs)
+        ]
+        VectorEnv = gymnasium.vector.SyncVectorEnv if args.sync_vector_env else gymnasium.vector.AsyncVectorEnv
+        envs = [
+            VectorEnv([lambda conf=conf: make_env(**conf) for conf in env_config]) # type: ignore (Why is `make_env` missing an argument?)
+            for env_config in env_configs
+        ]
+        env_labels = [[e]*n for e,n in zip(args.envs, args.num_envs)],
 
+    # Device
     if args.cuda and torch.cuda.is_available():
         print('Using CUDA')
         device = torch.device('cuda')
@@ -746,7 +760,7 @@ if __name__ == '__main__':
             envs = envs, # type: ignore (??? AsyncVectorEnv is not a subtype of VectorEnv ???)
             #env_labels = [['doot']*len(envs)], # TODO: Make this configurable
             #env_labels = [[e]*n for e,n in zip(args.envs, args.num_envs)],
-            env_labels = [[e]*n for e,n in zip(args.envs, args.num_envs)],
+            env_labels = env_labels, # type: ignore
             env_group_labels = args.envs,
             optimizer = optimizer,
             lr_scheduler = lr_scheduler,

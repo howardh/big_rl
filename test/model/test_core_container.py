@@ -11,7 +11,7 @@ class DummyCoreModule(CoreModule):
         self.key_size = key_size
         self.value_size = value_size
         self.num_outputs = num_outputs
-        self.hidden = [ torch.randn(1, size) for size in hidden_shapes ]
+        self.hidden = torch.nn.ParameterList([ torch.randn(1, size) for size in hidden_shapes ])
     def forward(self, key, value, hidden):
         batch_size = key.shape[1]
 
@@ -302,3 +302,20 @@ def test_deeper_nested_modules(batch_size):
         
         assert output['key'].shape == (3, batch_size, 16)
         assert output['value'].shape == (3, batch_size, 16)
+
+
+def test_module_has_parameters():
+    """ Regression test: Sub-modules were kept as a plain list rather than a ModuleList, so gradients were not passed to them and they were not moved to the GPU. """
+    model = CoreModuleParallel([
+        CoreModuleSeries([
+            DummyCoreModule(hidden_shapes=[3]),
+            DummyCoreModule(hidden_shapes=[4]),
+        ]),
+        CoreModuleParallel([
+            DummyCoreModule(hidden_shapes=[5]),
+            DummyCoreModule(hidden_shapes=[6]),
+        ]),
+        DummyCoreModule(hidden_shapes=[7]),
+    ])
+
+    assert len(model.state_dict()) > 0

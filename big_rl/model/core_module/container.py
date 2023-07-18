@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import inspect
 import typing
 from typing import TypedDict, TypeAlias, Type
@@ -153,7 +154,7 @@ class CoreModuleContainer(CoreModule):
         """
         super().__init__()
 
-        self.core_modules = modules
+        self.core_modules = torch.nn.ModuleList(modules)
 
         for m in modules:
             if not hasattr(m, 'init_hidden'):
@@ -168,8 +169,8 @@ class CoreModuleContainer(CoreModule):
         """ Split hidden state into a list of hidden states, one for each core module. """
         output = []
         start_idx = 0
-        for m in self.core_modules:
-            n = int(m.n_hidden) # type: ignore
+        for m in self.core_modules:  # type: ignore
+            n = int(m.n_hidden)  # type: ignore
             output.append(hidden[start_idx:start_idx+n])
             start_idx += n
         return output
@@ -183,6 +184,14 @@ class CoreModuleContainer(CoreModule):
             return 0
         return sum(m.n_hidden for m in self.core_modules) # type: ignore
 
+    def state_dict(self, *args, **kwargs):
+        """ Override `state_dict()` to simplify the path names. """
+        return self.core_modules.state_dict(*args, **kwargs)
+
+    def load_state_dict(self, state_dict):
+        """ Override `load_state_dict()` to simplify the path names. """
+        self.core_modules.load_state_dict(state_dict)
+
 
 class CoreModuleParallel(CoreModuleContainer):
     def __init__(self, modules: list[CoreModule]):
@@ -194,7 +203,7 @@ class CoreModuleParallel(CoreModuleContainer):
         new_key = []
         new_value = []
         new_hidden = []
-        for m,h in zip(self.core_modules, split_hidden):
+        for m,h in zip(self.core_modules, split_hidden):  # type: ignore
             output = m(key, value, h)
             new_key.append(output['key'])
             new_value.append(output['value'])
@@ -217,7 +226,7 @@ class CoreModuleSeries(CoreModuleContainer):
         new_key = key
         new_value = value
         new_hidden = []
-        for m,h in zip(self.core_modules, split_hidden):
+        for m,h in zip(self.core_modules, split_hidden):  # type: ignore
             output = m(new_key, new_value, h)
             new_key = output['key']
             new_value = output['value']

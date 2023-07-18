@@ -46,9 +46,14 @@ def init_weights(module, weight_config, strict=True):
 
 
     # Freeze weights if requested
-    if weight_config.get('freeze', False):
-        for param in module.parameters():
-            param.requires_grad = False
+    freeze = weight_config.get('freeze')
+    if freeze is not None:
+        if freeze:
+            for param in module.parameters():
+                param.requires_grad = False
+        else:
+            for param in module.parameters():
+                param.requires_grad = True
 
 
 def create_model(config, observation_space=None, action_space=None):
