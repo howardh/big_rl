@@ -146,15 +146,17 @@ class CoreModule(torch.nn.Module):
     def n_hidden(self):
         raise NotImplementedError()
 
+    @property
+    def core_modules(self):
+        return self
 
-class CoreModuleContainer(CoreModule):
+
+class CoreModuleContainer(CoreModule, torch.nn.ModuleList):
     def __init__(self, modules: list[CoreModule]):
         """
         Args:
         """
-        super().__init__()
-
-        self.core_modules = torch.nn.ModuleList(modules)
+        torch.nn.ModuleList.__init__(self, modules)
 
         for m in modules:
             if not hasattr(m, 'init_hidden'):
@@ -176,21 +178,13 @@ class CoreModuleContainer(CoreModule):
         return output
 
     def init_hidden(self, batch_size) -> tuple[torch.Tensor, ...]:
-        return tuple(itertools.chain.from_iterable([m.init_hidden(batch_size) for m in self.core_modules])) # type: ignore
+        return tuple(itertools.chain.from_iterable([m.init_hidden(batch_size) for m in self]))  # type: ignore
 
     @property
     def n_hidden(self) -> int:
         if self.core_modules is None:
             return 0
         return sum(m.n_hidden for m in self.core_modules) # type: ignore
-
-    def state_dict(self, *args, **kwargs):
-        """ Override `state_dict()` to simplify the path names. """
-        return self.core_modules.state_dict(*args, **kwargs)
-
-    def load_state_dict(self, state_dict):
-        """ Override `load_state_dict()` to simplify the path names. """
-        self.core_modules.load_state_dict(state_dict)
 
 
 class CoreModuleParallel(CoreModuleContainer):
