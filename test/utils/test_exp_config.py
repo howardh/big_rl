@@ -2,6 +2,7 @@ import pytest
 
 from big_rl.utils import ExperimentConfigs, ConfigReplace, ConfigDelete
 
+
 def test_add():
     config = ExperimentConfigs()
     config.add('config-1', {'a': 1})
@@ -23,7 +24,7 @@ def test_add_change():
     assert 'config-2' in config.keys()
 
     assert config['config-1'] == {'a': 1}
-    assert config['config-2'] == {'a':1, 'b': 1}
+    assert config['config-2'] == {'a': 1, 'b': 1}
 
 
 def test_repeat_config_name_errors():
