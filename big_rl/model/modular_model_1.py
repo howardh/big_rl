@@ -41,6 +41,11 @@ class ModularModel1(torch.nn.Module):
         return {
             'hidden': tuple([x2['key'], x2['value'], *x2['hidden']]),
             **x3,
+            'misc': {
+                'input': x1.get('misc', {}),
+                'core': x2.get('misc', {}),
+                'output': x3.get('misc', {}),
+            },
         }
 
     def init_hidden(self, batch_size):

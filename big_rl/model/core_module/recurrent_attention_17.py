@@ -125,14 +125,6 @@ class RecurrentAttention17(CoreModule):
         gated_output_hidden = output_hidden_gate * output_hidden + (1 - output_hidden_gate) * prev_hidden
 
         return { # seq_len = number of inputs receives
-            'attn_output': attn_output, # (num_blocks, batch_size, value_size)
-            'attn_output_weights': attn_output_weights, # (num_blocks, batch_size, seq_len)
-            'gates': {
-                'query': output_query_gate, # (num_blocks, batch_size)
-                'key': output_key_gate, # (num_blocks, batch_size)
-                'value': output_value_gate, # (num_blocks, batch_size)
-                'hidden': output_hidden_gate, # (num_blocks, batch_size)
-            },
             'key': gated_output_keys, # (num_blocks, batch_size, key_size)
             'value': gated_output_values, # (num_blocks, batch_size, value_size)
             'hidden': (
@@ -140,7 +132,17 @@ class RecurrentAttention17(CoreModule):
                 gated_output_queries, # (num_blocks, batch_size, key_size)
                 gated_output_keys, # (num_blocks, batch_size, key_size)
                 gated_output_values, # (num_blocks, batch_size, value_size)
-            )
+            ),
+            'misc': {
+                'attn_output': attn_output, # (num_blocks, batch_size, value_size)
+                'attn_output_weights': attn_output_weights, # (num_blocks, batch_size, seq_len)
+                'gates': {
+                    'query': output_query_gate, # (num_blocks, batch_size)
+                    'key': output_key_gate, # (num_blocks, batch_size)
+                    'value': output_value_gate, # (num_blocks, batch_size)
+                    'hidden': output_hidden_gate, # (num_blocks, batch_size)
+                },
+            },
         }
 
     def _make_mlp(self, sizes, num_duplicates=1):

@@ -29,6 +29,7 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, hidden_in
             'hidden': [],
             'input_labels': [],
             'hidden_info': None, # Last output of hidden_info_fn. No history is kept.
+            'foo': [] # Output attention
     }
 
     hidden = model.init_hidden(1) # type: ignore (???)
@@ -55,6 +56,7 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, hidden_in
         obs, reward, terminated, truncated, info = env.step(action)
         obs = preprocess_obs_fn(obs)
 
+        results['foo'].append(model_output['misc']['output']['value']['attn_output_weights'].detach().cpu().numpy())
         results['reward'].append(reward)
         #results['hidden'].append([
         #    x.cpu().detach().numpy() for x in model.last_hidden
@@ -478,5 +480,15 @@ if __name__ == '__main__':
         results_filename = os.path.abspath(args.results)
         torch.save(test_results, results_filename)
         print(f'Results saved to {results_filename}')
+
+    # Temporary plotting code. Remove when done.
+    from matplotlib import pyplot as plt
+    output_attn_weights = np.concatenate([np.concatenate(r['results']['foo']).squeeze() for r in test_results])
+    plt.figure()
+    labels = ['Input #1', 'Input #2', 'Input #3', 'Old Core #1', 'Old Core #2', 'Old Core #3', 'New Core']
+    plt.boxplot(output_attn_weights, labels=labels)
+    plt.xticks(rotation=30, ha='center')
+    plt.ylabel('Attention Weight')
+    plt.savefig('output_attn_weights.png')
 
     breakpoint()

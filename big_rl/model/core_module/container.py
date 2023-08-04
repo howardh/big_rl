@@ -1,7 +1,9 @@
+from __future__ import annotations
 from collections import OrderedDict
 import inspect
 import typing
-from typing import TypedDict, TypeAlias, Type
+from typing import TypeAlias, Type
+from typing_extensions import TypedDict, NotRequired # For python<3.11
 from collections import defaultdict
 import itertools
 import warnings
@@ -15,12 +17,14 @@ ValueInputType: TypeAlias = Float[torch.Tensor, 'num_inputs batch_size value_siz
 KeyOutputType: TypeAlias = Float[torch.Tensor, 'num_modules batch_size key_size']
 ValueOutputType: TypeAlias = Float[torch.Tensor, 'num_modules batch_size value_size']
 HiddenType: TypeAlias = tuple[torch.Tensor, ...]
+MiscType: TypeAlias = dict
 
 
 class CoreModuleOutput(TypedDict):
     key: KeyOutputType
     value: ValueOutputType
     hidden: HiddenType
+    misc: NotRequired[MiscType]
 
 
 _core_module_subclasses = []
@@ -197,17 +201,27 @@ class CoreModuleParallel(CoreModuleContainer):
         new_key = []
         new_value = []
         new_hidden = []
+        misc = []
         for m,h in zip(self.core_modules, split_hidden):  # type: ignore
             output = m(key, value, h)
             new_key.append(output['key'])
             new_value.append(output['value'])
             new_hidden.append(output['hidden'])
+            misc.append(output.get('misc', None))
 
-        return {
-            'key': torch.cat(new_key, dim=0),
-            'value': torch.cat(new_value, dim=0),
-            'hidden': tuple(itertools.chain.from_iterable(new_hidden)),
-        }
+        if all(m is None for m in misc):
+            return {
+                'key': torch.cat(new_key, dim=0),
+                'value': torch.cat(new_value, dim=0),
+                'hidden': tuple(itertools.chain.from_iterable(new_hidden)),
+            }
+        else:
+            return {
+                'key': torch.cat(new_key, dim=0),
+                'value': torch.cat(new_value, dim=0),
+                'hidden': tuple(itertools.chain.from_iterable(new_hidden)),
+                'misc': {i: m for i,m in enumerate(misc) if m is not None},
+            }
 
 
 class CoreModuleSeries(CoreModuleContainer):
@@ -220,14 +234,24 @@ class CoreModuleSeries(CoreModuleContainer):
         new_key = key
         new_value = value
         new_hidden = []
+        misc = []
         for m,h in zip(self.core_modules, split_hidden):  # type: ignore
             output = m(new_key, new_value, h)
             new_key = output['key']
             new_value = output['value']
             new_hidden.append(output['hidden'])
+            misc.append(output.get('misc', None))
 
-        return {
-            'key': new_key,
-            'value': new_value,
-            'hidden': tuple(itertools.chain.from_iterable(new_hidden)),
-        }
+        if all(m is None for m in misc):
+            return {
+                'key': new_key,
+                'value': new_value,
+                'hidden': tuple(itertools.chain.from_iterable(new_hidden)),
+            }
+        else:
+            return {
+                'key': new_key,
+                'value': new_value,
+                'hidden': tuple(itertools.chain.from_iterable(new_hidden)),
+                'misc': {i: m for i,m in enumerate(misc) if m is not None},
+            }

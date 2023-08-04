@@ -7,9 +7,14 @@ class OutputModuleContainer(torch.nn.Module):
 
         self.output_modules = output_modules
 
+        if 'misc' in self.output_modules:
+            raise ValueError('Output module name "misc" is reserved')
+
     def forward(self, key, value):
-        output = {}
+        output = {'misc': {}}
         for k,module in self.output_modules.items():
-            output[k] = module(key, value)['output']
+            o = module(key, value)
+            output[k] = o['output']
+            output['misc'][k] = o.get('misc', None)
 
         return output

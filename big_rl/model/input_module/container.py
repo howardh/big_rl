@@ -56,5 +56,7 @@ class InputModuleContainer(torch.nn.Module):
         return {
             'key': input_keys,
             'value': input_vals,
-            'input_labels': input_labels,
+            'misc': {
+                'input_labels': input_labels,
+            }
         }
