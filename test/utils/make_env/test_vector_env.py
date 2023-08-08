@@ -1,6 +1,6 @@
 import gymnasium
 
-from big_rl.utils.make_env import make_env
+from big_rl.utils.make_env import make_env, make_env_labels
 
 
 def test_atari_one_type():
@@ -73,3 +73,77 @@ def test_atari_two_types():
     for _ in range(5):
         action = env.action_space.sample()
         env.step(action)
+
+
+def test_env_labels_default():
+    """  """
+    config = {
+        'type': 'SyncVectorEnv',
+        'envs': [{
+            'repeat': 5,
+            'kwargs': {
+                'id': 'ALE/Pong-v5',
+                'render_mode': 'rgb_array',
+                'frameskip': 1,
+                'full_action_space': True,
+            }
+        }, {
+            'repeat': 3,
+            'kwargs': {
+                'id': 'ALE/Breakout-v5',
+                'render_mode': 'rgb_array',
+                'frameskip': 1,
+                'full_action_space': True,
+            }
+        }],
+    }
+
+    labels = make_env_labels(config)
+    assert labels == [
+            'ALE/Pong-v5',
+            'ALE/Pong-v5',
+            'ALE/Pong-v5',
+            'ALE/Pong-v5',
+            'ALE/Pong-v5',
+            'ALE/Breakout-v5',
+            'ALE/Breakout-v5',
+            'ALE/Breakout-v5',
+    ]
+
+
+def test_env_labels_custom_names():
+    """  """
+    config = {
+        'type': 'SyncVectorEnv',
+        'envs': [{
+            'name': 'doot',
+            'repeat': 5,
+            'kwargs': {
+                'id': 'ALE/Pong-v5',
+                'render_mode': 'rgb_array',
+                'frameskip': 1,
+                'full_action_space': True,
+            }
+        }, {
+            'name': 'boop',
+            'repeat': 3,
+            'kwargs': {
+                'id': 'ALE/Breakout-v5',
+                'render_mode': 'rgb_array',
+                'frameskip': 1,
+                'full_action_space': True,
+            }
+        }],
+    }
+
+    labels = make_env_labels(config)
+    assert labels == [
+            'doot',
+            'doot',
+            'doot',
+            'doot',
+            'doot',
+            'boop',
+            'boop',
+            'boop',
+    ]

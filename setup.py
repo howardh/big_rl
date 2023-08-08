@@ -13,6 +13,7 @@ setup(name='big_rl',
         'scikit-learn',
         'tabulate>=0.9.0',
         'tensordict>=0.1.0',
+        'pydantic>=2.1.1',
 
         # Minigrid
         'minigrid',
