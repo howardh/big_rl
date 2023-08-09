@@ -6,6 +6,8 @@ import warnings
 import logging
 
 import torch
+import pydantic
+from pydantic import BaseModel, ConfigDict, FilePath, PositiveInt, Field
 
 from big_rl.model.input_module.modules import IgnoredInput, GreyscaleImageInput, ImageInput56, ImageInput84, ScalarInput, DiscreteInput, LinearInput, MatrixInput
 from big_rl.model.output_module.modules import LinearOutput, StateIndependentOutput
@@ -19,14 +21,109 @@ from big_rl.model.core_module.recurrent_attention_17 import RecurrentAttention17
 logger = logging.getLogger(__name__)
 
 
-def init_weights(module, weight_config, strict=True):
+VALID_INPUT_MODULES = [
+    IgnoredInput,
+    GreyscaleImageInput,
+    ImageInput56,
+    ImageInput84,
+    ScalarInput,
+    DiscreteInput,
+    LinearInput,
+    MatrixInput,
+]
+
+
+VALID_OUTPUT_MODULES = [
+    LinearOutput,
+    StateIndependentOutput,
+]
+
+
+##################################################
+# Config Model/Schema
+##################################################
+
+
+class WeightConfig(BaseModel):
+    filename: FilePath | None = Field(
+            default=None,
+            description='Path to a file containing the weights for this module.'
+    )
+    key_prefix: str = Field(
+            default='',
+            description='Prefix to add to the keys in the state dict. Useful for loading weights from a model with a different architecture.'
+    )
+    freeze: bool = Field(
+            default=False,
+            description='Freeze the weights of this module. This is useful for transfer learning.'
+    )
+
+    model_config = ConfigDict(extra='forbid')
+
+
+class PeripheralModuleConfig(BaseModel):
+    type: str
+    kwargs: dict = {}
+    key_size: PositiveInt | None = None
+    value_size: PositiveInt | None = None
+    num_heads: PositiveInt | None = None
+    weight_config: WeightConfig | None = None
+
+    model_config = ConfigDict(extra='forbid')
+
+
+class CoreModuleConfig(BaseModel):
+    type: str | None = None
+    kwargs: dict = {}
+    key_size: PositiveInt | None = None
+    value_size: PositiveInt | None = None
+    num_heads: PositiveInt | None = None
+    weight_config: WeightConfig | None = None
+
+    container: str | None = None
+    modules: list['CoreModuleConfig'] = []
+
+    model_config = ConfigDict(extra='forbid')
+
+    @pydantic.model_validator(mode='after')
+    def check_module_or_container(self):
+        if self.type is None and self.container is None:
+            raise ValueError('Must specify either a module type ("type") or container type ("container") for a core module.')
+        elif self.type is not None and self.container is not None:
+            raise ValueError('Cannot specify both a module type ("type") and container type ("container") for a core module.')
+        
+        if self.container is None and len(self.modules) > 0:
+            raise ValueError('Cannot specify children modules ("modules") if container type ("container") is not specified for a core module.')
+
+        return self
+
+
+class ModelConfig(BaseModel):
+    type: str
+    key_size: PositiveInt = 512
+    value_size: PositiveInt = 512
+    num_heads: PositiveInt = 8
+    input_modules: dict[str, PeripheralModuleConfig]
+    output_modules: dict[str, PeripheralModuleConfig]
+    core_modules: CoreModuleConfig
+    weight_config: WeightConfig | None = None
+
+    model_config = ConfigDict(extra='forbid')
+
+
+##################################################
+# Model Creation
+##################################################
+
+
+def init_weights(module, weight_config: WeightConfig | None, strict=True):
     if weight_config is None:
         return
-    if 'filename' in weight_config:
-        key_prefix = weight_config.get('key_prefix')
+    if weight_config.filename is not None:
+        key_prefix = weight_config.key_prefix
         if key_prefix is None:
             raise ValueError('Must specify a key prefix if you want to load weights from a file')
-        state_dict = torch.load(weight_config['filename'],
+        state_dict = torch.load(weight_config.filename,
                                 map_location=torch.device('cpu'))
         state_dict = state_dict['model']
 
@@ -46,45 +143,46 @@ def init_weights(module, weight_config, strict=True):
 
 
     # Freeze weights if requested
-    freeze = weight_config.get('freeze')
-    if freeze is not None:
-        if freeze:
-            for param in module.parameters():
-                param.requires_grad = False
-        else:
-            for param in module.parameters():
-                param.requires_grad = True
+    if weight_config.freeze:
+        for param in module.parameters():
+            param.requires_grad = False
+    else:
+        for param in module.parameters():
+            param.requires_grad = True
 
 
-def create_model(config, observation_space=None, action_space=None):
-    model_type = config.get('type')
-    key_size = config.get('key_size', 512)
-    value_size = config.get('value_size', 512)
-    num_heads = config.get('num_heads', 8)
+def create_model(config: dict | ModelConfig, observation_space=None, action_space=None):
+    if isinstance(config, dict):
+        config = ModelConfig.model_validate(config)
 
-    if model_type is None:
+    #model_type = config.get('type')
+    #key_size = config.get('key_size', 512)
+    #value_size = config.get('value_size', 512)
+    #num_heads = config.get('num_heads', 8)
+
+    if config.type is None:
         raise ValueError('Model type must be specified in config')
 
-    if model_type == 'ModularModel1':
+    if config.type == 'ModularModel1':
         # Initialize model architecture
         input_modules = create_input_modules(
-                config=config['input_modules'],
-                key_size=key_size,
-                value_size=value_size,
+                config=config.input_modules,
+                key_size=config.key_size,
+                value_size=config.value_size,
                 observation_space=observation_space,
                 action_space=action_space,
         )
         core_modules = create_core_modules(
-                config=config['core_modules'],
-                key_size=key_size,
-                value_size=value_size,
-                num_heads=num_heads,
+                config=config.core_modules,
+                key_size=config.key_size,
+                value_size=config.value_size,
+                num_heads=config.num_heads,
         )
         output_modules = create_output_modules(
-                config=config['output_modules'],
-                key_size=key_size,
-                value_size=value_size,
-                num_heads=num_heads,
+                config=config.output_modules,
+                key_size=config.key_size,
+                value_size=config.value_size,
+                num_heads=config.num_heads,
                 observation_space=observation_space,
                 action_space=action_space,
         )
@@ -93,68 +191,69 @@ def create_model(config, observation_space=None, action_space=None):
                 input_modules=InputModuleContainer(input_modules),
                 core_modules=core_modules,
                 output_modules=OutputModuleContainer(output_modules),
-                key_size=key_size,
-                value_size=value_size,
-                num_heads=num_heads,
+                key_size=config.key_size,
+                value_size=config.value_size,
+                num_heads=config.num_heads,
         )
 
         # Intialize weights
         # This needs to be done separately in case we want to load weights for the entire model and then overwrite the weights of some constituent modules
-        init_weights(model, config.get('weight_config'), strict=False)
+        init_weights(model, config.weight_config, strict=False)
         for k,m in model.input_modules.input_modules.items():
-            init_weights(m, config['input_modules'][k].get('weight_config'))
+            init_weights(m, config.input_modules[k].weight_config)
         for k,m in model.output_modules.output_modules.items():
-            init_weights(m, config['output_modules'][k].get('weight_config'))
+            init_weights(m, config.output_modules[k].weight_config)
         def init_core_weights(module, config):
-            if 'weight_config' in config:
-                init_weights(module, config['weight_config'])
+            if config.weight_config is not None:
+                init_weights(module, config.weight_config)
             if isinstance(module, CoreModuleContainer):
-                for m,c in zip(module.core_modules, config['modules']):
+                for m,c in zip(module.core_modules, config.modules):
                     init_core_weights(m, c)
-        init_core_weights(model.core_modules, config['core_modules'])
+        init_core_weights(model.core_modules, config.core_modules)
 
         return model
     else:
         raise NotImplementedError()
 
 
-def create_input_modules(config: Dict[str,Dict], key_size: int | None = None, value_size: int | None = None, observation_space=None, action_space=None) -> torch.nn.ModuleDict:
+def create_input_modules(config: dict[str,dict] | dict[str,PeripheralModuleConfig], key_size: int | None = None, value_size: int | None = None, observation_space=None, action_space=None) -> torch.nn.ModuleDict:
+    if len(config) == 0:
+        return torch.nn.ModuleDict()
+    if isinstance(next(iter(config.values())), dict):
+        config = {
+            k:PeripheralModuleConfig.model_validate(v)
+            for k,v in config.items()
+        }
     config = copy.deepcopy(config)
+
     valid_modules = {
             cls.__name__: cls
-            for cls in [
-                IgnoredInput,
-                GreyscaleImageInput,
-                ImageInput56,
-                ImageInput84,
-                ScalarInput,
-                DiscreteInput,
-                LinearInput,
-                MatrixInput,
-            ]
+            for cls in VALID_INPUT_MODULES
     }
     input_modules: Dict[str,torch.nn.Module] = {}
     for module_name,module_config in config.items():
-        class_name = module_config.get('type')
-        key_size = module_config.get('key_size', key_size)
-        value_size = module_config.get('value_size', value_size)
+        assert isinstance(module_config, PeripheralModuleConfig)
+
+        class_name = module_config.type
+        key_size = module_config.key_size or key_size
+        value_size = module_config.value_size or value_size
 
         # Check if we requested a valid module
         if class_name not in valid_modules:
-            raise NotImplementedError(f'Unknown output module type: {module_config["type"]}')
+            raise NotImplementedError(f'Unknown output module type: {module_config.type}')
 
         # Initialize model
-        module_config['kwargs'] = _preprocess_kwargs(
-                kwargs = module_config.get('kwargs',{}),
-                cls = valid_modules[module_config['type']],
+        module_config.kwargs = _preprocess_kwargs(
+                kwargs = module_config.kwargs,
+                cls = valid_modules[module_config.type],
                 observation_space = observation_space,
                 action_space = action_space
         )
 
-        logger.debug(f'Creating input module {module_name} of type {class_name} with kwargs {module_config["kwargs"]}')
+        logger.debug(f'Creating input module {module_name} of type {class_name} with kwargs {module_config.kwargs}')
 
         input_modules[module_name] = valid_modules[class_name](
-                **module_config['kwargs'],
+                **module_config.kwargs,
                 key_size = key_size,
                 value_size = value_size,
         )
@@ -188,37 +287,43 @@ def create_input_modules(config: Dict[str,Dict], key_size: int | None = None, va
     return torch.nn.ModuleDict(input_modules)
 
 
-def create_output_modules(config, key_size: int | None = None, value_size: int | None = None, num_heads: int | None = None, observation_space=None, action_space=None):
+def create_output_modules(config: dict, key_size: int | None = None, value_size: int | None = None, num_heads: int | None = None, observation_space=None, action_space=None):
+    if len(config) == 0:
+        return torch.nn.ModuleDict()
+    if isinstance(next(iter(config.values())), dict):
+        config = {
+            k:PeripheralModuleConfig.model_validate(v)
+            for k,v in config.items()
+        }
     config = copy.deepcopy(config)
     valid_modules = {
             cls.__name__: cls
-            for cls in [
-                LinearOutput,
-                StateIndependentOutput,
-            ]
+            for cls in VALID_OUTPUT_MODULES
     }
 
     output_modules: Dict[str,torch.nn.Module] = {}
     for module_name,module_config in config.items():
-        class_name = module_config.get('type')
-        key_size = module_config.get('key_size', key_size)
-        value_size = module_config.get('value_size', value_size)
-        num_heads = module_config.get('num_heads', num_heads)
+        assert isinstance(module_config, PeripheralModuleConfig)
+
+        class_name = module_config.type
+        #key_size = module_config.get('key_size', key_size)
+        #value_size = module_config.get('value_size', value_size)
+        #num_heads = module_config.get('num_heads', num_heads)
 
         if class_name not in valid_modules:
-            raise NotImplementedError(f'Unknown output module type: {module_config["type"]}')
+            raise NotImplementedError(f'Unknown output module type: {module_config.type}')
         if module_name == 'hidden':
             raise Exception(f'Cannot use "{module_name}" as an output module name')
 
-        module_config['kwargs'] = _preprocess_kwargs(
-                kwargs = module_config.get('kwargs',{}),
+        module_config.kwargs = _preprocess_kwargs(
+                kwargs = module_config.kwargs,
                 cls = valid_modules[class_name],
                 observation_space = observation_space,
                 action_space = action_space
         )
 
         output_modules[module_name] = valid_modules[class_name](
-                **module_config.get('kwargs', {}),
+                **module_config.kwargs,
                 key_size = key_size,
                 value_size = value_size,
                 num_heads = num_heads
@@ -226,17 +331,19 @@ def create_output_modules(config, key_size: int | None = None, value_size: int |
     return torch.nn.ModuleDict(output_modules)
 
 
-def create_core_modules(config, key_size=None, value_size=None, num_heads=None) -> CoreModule:
-    container_type = config.get('container')
-    class_name = config.get('type')
-    key_size = config.get('key_size', key_size)
-    value_size = config.get('value_size', value_size)
-    num_heads = config.get('num_heads', num_heads)
-    kwargs = config.get('kwargs', {})
+def create_core_modules(config: dict | CoreModuleConfig, key_size=None, value_size=None, num_heads=None) -> CoreModule:
+    if isinstance(config, dict):
+        config = CoreModuleConfig.model_validate(config)
+
+    container_type = config.container
+    class_name = config.type
+    key_size = config.key_size or key_size
+    value_size = config.value_size or value_size
+    num_heads = config.num_heads or num_heads
 
     if container_type is not None:
         if container_type == 'parallel':
-            submodule_configs = config.get('modules', [])
+            submodule_configs = config.modules
             return CoreModuleParallel([
                 create_core_modules(
                     submodule_config,
@@ -247,7 +354,7 @@ def create_core_modules(config, key_size=None, value_size=None, num_heads=None) 
                 for submodule_config in submodule_configs
             ])
         elif container_type == 'series':
-            submodule_configs = config.get('modules', [])
+            submodule_configs = config.modules
             return CoreModuleSeries([
                 create_core_modules(
                     submodule_config,
@@ -284,7 +391,7 @@ def create_core_modules(config, key_size=None, value_size=None, num_heads=None) 
             key_size=key_size,
             value_size=value_size,
             num_heads=num_heads,
-            **kwargs
+            **config.kwargs
     )
     return output
 

@@ -150,7 +150,7 @@ def test_mixed_remap_and_default_mapping_2():
 
 
 def test_input_with_no_corresponding_module():
-    """ If we pass in an input that has no corresponding module, it should be ignored. Similarly, if a module has no corresponding input, it should also be ignored. """
+    """ If we pass in an input that has no corresponding module, it should error since it's very easy to have a silent bug where you think an input is being handled but it isn't. If an input module has no corresponding input, it should be ignored. """
     config = {
         'a': {
             'type': 'LinearInput',
@@ -170,10 +170,8 @@ def test_input_with_no_corresponding_module():
         input_modules,
     )
 
-    output = module_container({'x': torch.zeros(1, 4)})
-
-    assert len(output['key']) == 0
-    assert len(output['value']) == 0
+    with pytest.raises(Exception):
+        module_container({'non-existant-key': torch.zeros(1, 4)})
 
 
 def test_invalid_module_name():
