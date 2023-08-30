@@ -481,14 +481,14 @@ if __name__ == '__main__':
         torch.save(test_results, results_filename)
         print(f'Results saved to {results_filename}')
 
-    # Temporary plotting code. Remove when done.
-    from matplotlib import pyplot as plt
-    output_attn_weights = np.concatenate([np.concatenate(r['results']['foo']).squeeze() for r in test_results])
-    plt.figure()
-    labels = ['Input #1', 'Input #2', 'Input #3', 'Old Core #1', 'Old Core #2', 'Old Core #3', 'New Core']
-    plt.boxplot(output_attn_weights, labels=labels)
-    plt.xticks(rotation=30, ha='center')
-    plt.ylabel('Attention Weight')
-    plt.savefig('output_attn_weights.png')
+    ## Temporary plotting code. Remove when done.
+    #from matplotlib import pyplot as plt
+    #output_attn_weights = np.concatenate([np.concatenate(r['results']['foo']).squeeze() for r in test_results])
+    #plt.figure()
+    #labels = ['Input #1', 'Input #2', 'Input #3', 'Old Core #1', 'Old Core #2', 'Old Core #3', 'New Core']
+    #plt.boxplot(output_attn_weights, labels=labels)
+    #plt.xticks(rotation=30, ha='center')
+    #plt.ylabel('Attention Weight')
+    #plt.savefig('output_attn_weights.png')
 
     breakpoint()

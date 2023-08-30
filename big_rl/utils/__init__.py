@@ -25,15 +25,37 @@ def validate_checkpoint(obj):
 
 
 def merge_space(*spaces):
-    new_space = {}
-    for space in spaces:
-        for k,v in space.items():
-            if k in new_space:
-                if new_space[k] != v:
-                    raise ValueError(f"Space mismatch for key {k}: {new_space[k]} != {v}")
-            else:
-                new_space[k] = v
-    return gymnasium.spaces.Dict(new_space)
+    if isinstance(spaces[0], gymnasium.spaces.Dict):
+        new_space = {}
+        for space in spaces:
+            for k,v in space.items():
+                if k in new_space:
+                    if new_space[k] != v:
+                        #raise ValueError(f"Space mismatch for key {k}: {new_space[k]} != {v}")
+                        return None
+                else:
+                    new_space[k] = v
+        return gymnasium.spaces.Dict(new_space)
+    elif isinstance(spaces[0], gymnasium.spaces.Discrete):
+        n = spaces[0].n
+        for space in spaces:
+            if space.n != n:
+                #raise ValueError(f"Space mismatch: {space.n} != {n}")
+                return None
+        return gymnasium.spaces.Discrete(n)
+    elif isinstance(spaces[0], gymnasium.spaces.Box):
+        low = spaces[0].low
+        high = spaces[0].high
+        for space in spaces:
+            if (space.low != low).any():
+                #raise ValueError(f"Space mismatch: {space.low} != {low}")
+                return None
+            if (space.high != high).any():
+                #raise ValueError(f"Space mismatch: {space.high} != {high}")
+                return None
+        return gymnasium.spaces.Box(low, high)
+    else:
+        raise NotImplementedError(f"Space type {type(spaces[0])} not supported")
 
 
 def zip2(*args) -> Iterable[Union[Tuple,Mapping]]:

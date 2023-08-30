@@ -378,6 +378,19 @@ class RandomResetWrapper(TaskWrapper):
         return output
 
 
+class ResetWrapper(TaskWrapper):
+    def __init__(self, task, rng: np.random.RandomState, prob: float):
+        """ Randomly reset the environment with probability `prob` at the end of each trial. """
+        super().__init__(task, rng)
+        raise NotImplementedError()
+        self.prob = prob
+    def step(self):
+        output = self.task.step()
+        if output['trial_completed'] and self.rng.uniform() < self.prob:
+            self.task.reset()
+        return output
+
+
 def init_task(env, rng, config) -> Task:
     task_mapping = {
         'none': NoTask,

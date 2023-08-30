@@ -1,8 +1,7 @@
-import argparse
 from collections import defaultdict
 import os
 import itertools
-from typing import Optional, Generator, Dict, List, Any, Callable, Union, Tuple
+from typing import Optional, Generator, Dict, List, Any, Callable, Union, Tuple, Iterable
 import time
 import yaml
 
@@ -15,36 +14,42 @@ from torch.utils.data.dataloader import default_collate
 import torch.nn
 import torch.nn.utils
 import numpy as np
+import numpy.typing as npt
 import wandb
 
 from frankenstein.buffer.vec_history import VecHistoryBuffer
 from frankenstein.advantage.gae import generalized_advantage_estimate 
 from frankenstein.loss.policy_gradient import clipped_advantage_policy_gradient_loss
 
-from big_rl.minigrid.arguments import init_parser_trainer, init_parser_model
 from big_rl.minigrid.envs import MetaWrapper, ActionShuffle
 from big_rl.utils import torch_save, zip2, merge_space, generate_id
-from big_rl.utils.make_env import EnvGroup, make_env_from_yaml
+from big_rl.utils.make_env import EnvGroup, get_config_from_yaml, make_env_from_yaml#, make_env_labels_from_yaml, make_env_group_labels_from_yaml, make_env_to_model_mapping_from_yaml, make_eval_only_from_yaml
 from big_rl.atari.common import init_model, env_config_presets
 from big_rl.model import factory as model_factory
 
 
-WANDB_PROJECT_NAME = 'ppo-multitask-atari'
+WANDB_PROJECT_NAME = 'ppo-generic'
 
 
-def make_env(env_name: str,
-        config={},
-        atari_preprocessing={},
-        meta_config=None,
-        action_shuffle=False) -> gymnasium.Env:
-    env = gymnasium.make(env_name, render_mode='rgb_array', **config)
-    env = AtariPreprocessing(env, **atari_preprocessing)
-    env = FrameStack(env, 1)
-    if meta_config is not None:
-        env = MetaWrapper(env, **meta_config)
-    if action_shuffle:
-        env = ActionShuffle(env)
-    return env
+def action_dist_discrete(net_output, n=None):
+    dist = torch.distributions.Categorical(logits=net_output['action'][:n])
+    return dist, dist.log_prob
+
+
+def action_dist_continuous(net_output, n=None):
+    action_mean = net_output['action_mean'][:n]
+    action_logstd = net_output['action_logstd'][:n]
+    dist = torch.distributions.Normal(action_mean, action_logstd.exp())
+    return dist, lambda x: dist.log_prob(x).sum(-1)
+
+
+def get_action_dist_function(action_space: gymnasium.Space):
+    if isinstance(action_space, gymnasium.spaces.Discrete):
+        return action_dist_discrete
+    elif isinstance(action_space, gymnasium.spaces.Box):
+        return action_dist_continuous
+    else:
+        raise NotImplementedError(f'Unknown action space: {action_space}')
 
 
 def compute_ppo_losses(
@@ -58,7 +63,8 @@ def compute_ppo_losses(
         entropy_loss_coeff : float,
         vf_loss_coeff : float,
         target_kl : Optional[float],
-        num_epochs : int) -> Generator[Dict[str,Union[torch.Tensor,Tuple[torch.Tensor,...]]],None,None]:
+        num_epochs : int,
+        action_dist_fn : Callable = action_dist_discrete) -> Generator[Dict[str,Union[torch.Tensor,Tuple[torch.Tensor,...]]],None,None]:
     """
     Compute the losses for PPO.
     """
@@ -88,8 +94,8 @@ def compute_ppo_losses(
             net_output.append(no)
         net_output = default_collate(net_output)
         state_values_old = net_output['value'].squeeze(2)
-        action_dist = torch.distributions.Categorical(logits=net_output['action'][:n-1])
-        log_action_probs_old = action_dist.log_prob(action)
+        action_dist, action_dist_log_prob = action_dist_fn(net_output,n-1)
+        log_action_probs_old = action_dist_log_prob(action) # FIXME: For continuous action spaces, this needs to be summed over the action size dimension.
 
         # Advantage
         advantages = generalized_advantage_estimate(
@@ -121,10 +127,9 @@ def compute_ppo_losses(
         net_output = default_collate(net_output)
 
         assert 'value' in net_output
-        assert 'action' in net_output
         state_values = net_output['value'].squeeze()
-        action_dist = torch.distributions.Categorical(logits=net_output['action'][:n-1])
-        log_action_probs = action_dist.log_prob(action)
+        action_dist, action_dist_log_prob = action_dist_fn(net_output,n-1)
+        log_action_probs = action_dist_log_prob(action)
         entropy = action_dist.entropy()
 
         with torch.no_grad():
@@ -222,6 +227,7 @@ def train_single_env(
         norm_adv: bool = True,
         warmup_steps: int = 0,
         update_hidden_after_grad: bool = False,
+        action_dist_fn: Callable | None = None,
         ) -> Generator[Dict[str, Any], None, None]:
     """
     Train a model with PPO on an Atari game.
@@ -232,6 +238,9 @@ def train_single_env(
     """
     num_envs = env.num_envs
 
+    if action_dist_fn is None:
+        action_dist_fn = get_action_dist_function(env.single_action_space)
+
     env_label_to_id = {label: i for i,label in enumerate(set(env_labels))}
     env_ids = np.array([env_label_to_id[label] for label in env_labels])
 
@@ -239,7 +248,7 @@ def train_single_env(
 
     def preprocess_input(obs: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         return {
-            k: torch.tensor(v, device=device)*obs_scale.get(k,1)
+            k: torch.tensor(v, dtype=torch.float, device=device)*obs_scale.get(k,1)
             for k,v in obs.items() if k not in obs_ignore
         }
 
@@ -281,8 +290,7 @@ def train_single_env(
             }, hidden)
             hidden = model_output['hidden']
 
-            action_probs = model_output['action'].softmax(1)
-            action_dist = torch.distributions.Categorical(action_probs)
+            action_dist, _ = action_dist_fn(model_output)
             action = action_dist.sample().cpu().numpy()
 
         # Step environment
@@ -349,8 +357,7 @@ def train_single_env(
                 }, hidden)
                 hidden = model_output['hidden']
 
-                action_probs = model_output['action'].softmax(1)
-                action_dist = torch.distributions.Categorical(action_probs)
+                action_dist, _ = action_dist_fn(model_output)
                 action = action_dist.sample().cpu().numpy()
 
                 state_values.append(model_output['value'])
@@ -428,6 +435,7 @@ def train_single_env(
                 entropy_loss_coeff = entropy_loss_coeff,
                 target_kl = target_kl,
                 num_epochs = num_epochs,
+                action_dist_fn=action_dist_fn,
         )
         x = None
         for x in losses:
@@ -454,9 +462,7 @@ def train_single_env(
 
 def train(
         model: torch.nn.Module,
-        envs: List[gymnasium.vector.VectorEnv],
-        env_labels: List[List[str]],
-        env_group_labels: List[str],
+        envs: List[EnvGroup],
         optimizer: torch.optim.Optimizer,
         lr_scheduler: Optional[torch.optim.lr_scheduler._LRScheduler], # XXX: Private class. This might break in the future.
         *,
@@ -478,12 +484,6 @@ def train(
         warmup_steps: int = 0,
         update_hidden_after_grad: bool = False,
         start_step: int = 0,
-        # Task weight
-        env_random_score: Optional[List[float]] = None,
-        env_max_score: Optional[List[float]] = None,
-        use_multitask_dynamic_weighting: bool = False,
-        multitask_dynamic_weight_temperature: float = 10,
-        multitask_static_weight: Optional[List[float]] = None,
         ):
     global_step_counter = [start_step, start_step]
     if max_steps_total > 0 and start_step > max_steps_total:
@@ -493,9 +493,9 @@ def train(
     trainers = [
         train_single_env(
             global_step_counter = global_step_counter,
-            model = model,
-            env = env,
-            env_labels = labels,
+            model = model[env.model_name] if env.model_name is not None else model, # type: ignore
+            env = env.env,
+            env_labels = env.env_labels,
             obs_scale = obs_scale,
             rollout_length = rollout_length,
             reward_scale = reward_scale,
@@ -511,8 +511,12 @@ def train(
             warmup_steps = warmup_steps,
             update_hidden_after_grad = update_hidden_after_grad,
         )
-        for env,labels in zip(envs, env_labels)
+        for env in envs
+        if not env.eval_only
     ]
+
+    # TODO: Eval envs
+    #evaluators = [... for env in envs if env.eval_only]
 
     start_time = time.time()
     for _, losses in enumerate(zip(*trainers)):
@@ -540,7 +544,8 @@ def train(
         optimizer.step()
 
         if wandb.run is not None:
-            for label,x in zip(env_group_labels, losses):
+            for env,x in zip(envs, losses):
+                label = env.name
                 data = {
                     f'loss/pi/{label}': x['loss_pi'].item(),
                     f'loss/v/{label}': x['loss_vf'].item(),
@@ -585,7 +590,11 @@ def train(
                 print(f"Step {env_steps-start_step:,} \t {int(steps_per_sec):,} SPS \t Elapsed: {elapsed_hours:02d}:{elapsed_minutes:02d}:{elapsed_seconds:02d}")
 
 
-def init_arg_parser():
+if __name__ == '__main__':
+    import argparse
+
+    from big_rl.minigrid.arguments import init_parser_trainer, init_parser_model
+
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--run-id', type=str, default=None,
@@ -618,10 +627,9 @@ def init_arg_parser():
     parser.add_argument('--wandb-id', type=str, default=None,
                         help='W&B run ID. Defaults to the run ID.')
 
-    return parser
+    # Parse arguments
+    args = parser.parse_args()
 
-
-def main(args):
     # Post-process string arguments
     # Note: Only non-string arguments and args.run_id can be used until the post-processing is done.
     if args.run_id is None:
@@ -661,31 +669,15 @@ def main(args):
     if args.env_config is not None:
         envs = make_env_from_yaml(args.env_config)
         #env_labels = make_env_labels_from_yaml(args.env_config)
-        env_labels = [e.env_labels for e in envs]
-        if isinstance(envs, list):
-            envs = [e.env for e in envs]
-        elif isinstance(envs, gymnasium.vector.VectorEnv):
-            envs = [envs]
-        elif isinstance(envs, gymnasium.Env):
-            raise ValueError('The environment config file must specify a vectorized environment.')
+        #env_group_labels = make_env_group_labels_from_yaml(args.env_config)
+        #env_model_mapping = make_env_to_model_mapping_from_yaml(args.env_config)
+        #is_eval_env = make_eval_only_from_yaml(args.env_config)
+        #if isinstance(envs, gymnasium.vector.VectorEnv):
+        #    envs = [envs]
+        #elif isinstance(envs, gymnasium.Env):
+        #    raise ValueError('The environment config file must specify a vectorized environment.')
     else:
-        if len(args.envs) != len(args.num_envs):
-            if len(args.num_envs) == 1:
-                args.num_envs = args.num_envs * len(args.envs)
-            else:
-                raise ValueError('The number of environments must match the number of environment labels.')
-
-        ENV_CONFIG_PRESETS = env_config_presets()
-        env_configs = [
-            [ENV_CONFIG_PRESETS[e] for _ in range(n)]
-            for e,n in zip(args.envs, args.num_envs)
-        ]
-        VectorEnv = gymnasium.vector.SyncVectorEnv if args.sync_vector_env else gymnasium.vector.AsyncVectorEnv
-        envs = [
-            VectorEnv([lambda conf=conf: make_env(**conf) for conf in env_config]) # type: ignore (Why is `make_env` missing an argument?)
-            for env_config in env_configs
-        ]
-        env_labels = [[e]*n for e,n in zip(args.envs, args.num_envs)],
+        raise Exception('Environments must be configured via a config file.')
 
     # Device
     if args.cuda and torch.cuda.is_available():
@@ -701,22 +693,24 @@ def main(args):
             model_config = yaml.safe_load(f)
         if wandb.run is not None:
             wandb.config.update({'model_config': model_config}, allow_val_change=True)
+        observation_spaces = defaultdict(lambda: [])
+        action_spaces = defaultdict(lambda: [])
+        for env in envs:
+            if env.model_name is None:
+                continue
+            observation_spaces[env.model_name].append(env.env.single_observation_space)
+            action_spaces[env.model_name].append(env.env.single_action_space)
+        observation_spaces = {k: merge_space(*v) for k,v in observation_spaces.items()}
+        action_spaces = {k: merge_space(*v) for k,v in action_spaces.items()}
+
         model = model_factory.create_model(
             model_config,
-            observation_space = merge_space(*[env.single_observation_space for env in envs]),
-            action_space = envs[0].single_action_space, # Assume the same action space for all environments
+            #observation_space = observation_spaces,
+            #action_space = action_spaces,
+            envs = envs,
         )
     else:
-        model = init_model(
-                observation_space = merge_space(*[env.single_observation_space for env in envs]),
-                action_space = envs[0].single_action_space, # Assume the same action space for all environments
-                model_type = args.model_type,
-                recurrence_type = args.recurrence_type,
-                architecture = args.architecture,
-                ff_size = args.ff_size,
-                hidden_size = args.hidden_size,
-                device = device,
-        )
+        raise Exception('Model must be configured via a config file.')
     model.to(device)
 
     # Initialize optimizer
@@ -761,8 +755,8 @@ def main(args):
             envs = envs, # type: ignore (??? AsyncVectorEnv is not a subtype of VectorEnv ???)
             #env_labels = [['doot']*len(envs)], # TODO: Make this configurable
             #env_labels = [[e]*n for e,n in zip(args.envs, args.num_envs)],
-            env_labels = env_labels, # type: ignore
-            env_group_labels = args.envs,
+            #env_labels = env_labels, # type: ignore
+            #env_group_labels = env_group_labels,
             optimizer = optimizer,
             lr_scheduler = lr_scheduler,
             max_steps = args.max_steps,
@@ -783,11 +777,6 @@ def main(args):
             warmup_steps = args.warmup_steps,
             update_hidden_after_grad = args.update_hidden_after_grad,
             start_step = start_step,
-            env_random_score = args.random_score,
-            env_max_score = args.max_score,
-            use_multitask_dynamic_weighting = args.multitask_dynamic_weight,
-            multitask_dynamic_weight_temperature = args.multitask_dynamic_weight_temperature,
-            multitask_static_weight = args.multitask_static_weight,
     )
 
     # Run training loop
@@ -826,9 +815,3 @@ def main(args):
             print('Saving model')
             tmp_checkpoint = f'./temp-checkpoint.pt'
             save_checkpoint(tmp_checkpoint)
-
-
-if __name__ == '__main__':
-    parser = init_arg_parser()
-    args = parser.parse_args()
-    main(args)

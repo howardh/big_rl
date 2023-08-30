@@ -458,6 +458,11 @@ def test_args_from_obs_or_action_space(batch_size):
         }, hidden)
 
 
+##################################################
+# Freezing Weights
+##################################################
+
+
 @pytest.mark.parametrize('batch_size', [1])
 def test_freeze_weights__all_frozen(batch_size, tmpdir):
     """ if all weights are frozen, then the none of the weights should change after a gradient step. """
@@ -584,3 +589,180 @@ def test_freeze_weights__partially_frozen(batch_size, tmpdir):
     # Check that the weights in the discrete input module did change
     for p1, p2 in zip(model.input_modules.input_modules['foo_discrete'].parameters(), old_model.input_modules.input_modules['foo_discrete'].parameters()):
         assert not torch.equal(p1, p2)
+
+
+##################################################
+# Sub-models
+##################################################
+
+
+@pytest.mark.parametrize('batch_size', [1, 2])
+def test_submodels(batch_size):
+    """ Make sure that if we have a model with submodels specified, we can use the submodels the same way as any other model. """
+    config = {
+        'type': 'ModularModel1',
+        'input_modules': {
+            f'submodel{i}_discrete': {
+                'type': 'DiscreteInput',
+                'kwargs': {
+                    'input_size': 3,
+                },
+            }
+            for i in range(3)
+        },
+        'output_modules': {
+            f'submodel{i}_output': {
+                'type': 'LinearOutput',
+                'kwargs': {
+                    'output_size': 3,
+                },
+            }
+            for i in range(3)
+        },
+        'core_modules': {
+            'type': 'RecurrentAttention17',
+        },
+        'submodel_configs': {
+            f'submodel{i}_asdf': {
+                'input_modules': {
+                    f'submodel{i}_discrete': 'foo_discrete',
+                },
+                'output_modules': {
+                    f'submodel{i}_output': 'foo_output',
+                },
+            }
+            for i in range(3)
+        }
+    }
+    model = create_model(config)
+
+    # Verify that the model can run without errors
+    outputs = []
+    for i in range(3):
+        m = model[f'submodel{i}_asdf']
+        hidden = m.init_hidden(batch_size)
+        for _ in range(10):  # With inputs included
+            output = m({'foo_discrete': torch.zeros(batch_size)}, hidden)
+            hidden = output['hidden']
+            outputs.append(output['foo_output'])
+
+
+@pytest.mark.parametrize('batch_size', [1, 2])
+def test_submodels_weight_sharing_hidden_state(batch_size):
+    """ Make sure that the initial hidden states are properly shared between submodules. """
+    config = {
+        'type': 'ModularModel1',
+        'input_modules': {
+            f'submodel{i}_discrete': {
+                'type': 'DiscreteInput',
+                'kwargs': {
+                    'input_size': 3,
+                },
+            }
+            for i in range(3)
+        },
+        'output_modules': {
+            f'submodel{i}_output': {
+                'type': 'LinearOutput',
+                'kwargs': {
+                    'output_size': 3,
+                },
+            }
+            for i in range(3)
+        },
+        'core_modules': {
+            'type': 'RecurrentAttention17',
+        },
+        'submodel_configs': {
+            f'submodel{i}_asdf': {
+                'input_modules': {
+                    f'submodel{i}_discrete': 'foo_discrete',
+                },
+                'output_modules': {
+                    f'submodel{i}_output': 'foo_output',
+                },
+            }
+            for i in range(3)
+        }
+    }
+    model = create_model(config)
+
+    # Do some gradient update
+    for i in range(3):
+        m = model[f'submodel{i}_asdf']
+        optim = torch.optim.Adam(m.parameters(), lr=1e-3)
+        loss = []
+        hidden = m.init_hidden(batch_size)
+        for _ in range(10):  # With inputs included
+            output = m({'foo_discrete': torch.zeros(batch_size)}, hidden)
+            hidden = output['hidden']
+            loss.append(output['foo_output'].mean())
+        loss = torch.stack(loss).mean()
+
+        optim.zero_grad()
+        loss.backward()
+        optim.step()
+
+    # Check that the initial hidden state is the same
+    hidden = model.init_hidden(batch_size)
+    for i in range(3):
+        m = model[f'submodel{i}_asdf']
+        for h1, h2 in zip(m.init_hidden(batch_size), hidden):
+            assert torch.equal(h1, h2)
+
+
+@pytest.mark.parametrize('batch_size', [1, 2])
+def test_submodels_shared_optimizer(batch_size):
+    """ Submodels should be trainable using a shared optimizer. """
+    config = {
+        'type': 'ModularModel1',
+        'input_modules': {
+            f'submodel{i}_discrete': {
+                'type': 'DiscreteInput',
+                'kwargs': {
+                    'input_size': 3,
+                },
+            }
+            for i in range(3)
+        },
+        'output_modules': {
+            f'submodel{i}_output': {
+                'type': 'LinearOutput',
+                'kwargs': {
+                    'output_size': 3,
+                },
+            }
+            for i in range(3)
+        },
+        'core_modules': {
+            'type': 'RecurrentAttention17',
+        },
+        'submodel_configs': {
+            f'submodel{i}_asdf': {
+                'input_modules': {
+                    f'submodel{i}_discrete': 'foo_discrete',
+                },
+                'output_modules': {
+                    f'submodel{i}_output': 'foo_output',
+                },
+            }
+            for i in range(3)
+        }
+    }
+    model = create_model(config)
+
+    # Do some gradient update
+    optim = torch.optim.Adam(model.parameters(), lr=1e-3)
+    for i in range(3):
+        m = model[f'submodel{i}_asdf']
+        loss = []
+        hidden = m.init_hidden(batch_size)
+        for _ in range(10):  # With inputs included
+            output = m({'foo_discrete': torch.zeros(batch_size)}, hidden)
+            hidden = output['hidden']
+            loss.append(output['foo_output'].mean())
+        loss = torch.stack(loss).mean()
+
+        optim.zero_grad()
+        loss.backward()
+        optim.step()
