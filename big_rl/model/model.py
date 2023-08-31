@@ -1237,6 +1237,7 @@ class ImageInput84(torch.nn.Module):
             torch.nn.Conv2d(
                 in_channels=64,out_channels=64,kernel_size=3,stride=1),
             torch.nn.ReLU(),
+            torch.nn.Flatten(),
             torch.nn.Linear(in_features=64*7*7,out_features=512),
             torch.nn.ReLU(),
         )

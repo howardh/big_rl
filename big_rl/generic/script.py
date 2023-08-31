@@ -1,3 +1,4 @@
+import argparse
 from collections import defaultdict
 import os
 import itertools
@@ -21,6 +22,7 @@ from frankenstein.buffer.vec_history import VecHistoryBuffer
 from frankenstein.advantage.gae import generalized_advantage_estimate 
 from frankenstein.loss.policy_gradient import clipped_advantage_policy_gradient_loss
 
+from big_rl.minigrid.arguments import init_parser_trainer, init_parser_model
 from big_rl.minigrid.envs import MetaWrapper, ActionShuffle
 from big_rl.utils import torch_save, zip2, merge_space, generate_id
 from big_rl.utils.make_env import EnvGroup, get_config_from_yaml, make_env_from_yaml#, make_env_labels_from_yaml, make_env_group_labels_from_yaml, make_env_to_model_mapping_from_yaml, make_eval_only_from_yaml
@@ -590,11 +592,7 @@ def train(
                 print(f"Step {env_steps-start_step:,} \t {int(steps_per_sec):,} SPS \t Elapsed: {elapsed_hours:02d}:{elapsed_minutes:02d}:{elapsed_seconds:02d}")
 
 
-if __name__ == '__main__':
-    import argparse
-
-    from big_rl.minigrid.arguments import init_parser_trainer, init_parser_model
-
+def init_arg_parser():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--run-id', type=str, default=None,
@@ -627,9 +625,10 @@ if __name__ == '__main__':
     parser.add_argument('--wandb-id', type=str, default=None,
                         help='W&B run ID. Defaults to the run ID.')
 
-    # Parse arguments
-    args = parser.parse_args()
+    return parser
 
+
+def main(args):
     # Post-process string arguments
     # Note: Only non-string arguments and args.run_id can be used until the post-processing is done.
     if args.run_id is None:
@@ -815,3 +814,9 @@ if __name__ == '__main__':
             print('Saving model')
             tmp_checkpoint = f'./temp-checkpoint.pt'
             save_checkpoint(tmp_checkpoint)
+
+
+if __name__ == '__main__':
+    parser = init_arg_parser()
+    args = parser.parse_args()
+    main(args)

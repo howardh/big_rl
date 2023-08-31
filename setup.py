@@ -33,6 +33,7 @@ setup(name='big_rl',
 
         # Dev stuff
         'pytest',
+        'pytest-timeout',
         'flake8',
     ],
     packages=find_packages(),

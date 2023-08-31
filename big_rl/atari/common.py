@@ -20,7 +20,7 @@ def init_model(observation_space, action_space,
     observation_space = observation_space # Unused variable
     inputs = {
         'obs': {
-            'type': 'ImageInput56',
+            'type': 'ImageInput84',
             'config': {
                 'in_channels': 1, #observation_space['obs'].shape[0]
             },

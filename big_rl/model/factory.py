@@ -464,49 +464,58 @@ def _get_space_by_module(envs: list[EnvGroup], model_config: ModelConfig):
     # For each submodel, find the environments associated with it and their corresponding observation/action spaces
     if model_config.submodel_configs is None:
         # TODO: Merge all observation/action spaces together and map all modules to the same spaces
-        raise NotImplementedError()
+        observation_spaces = merge_space(*[env.env.single_observation_space for env in envs])
+        action_spaces = merge_space(*[env.env.single_action_space for env in envs])
+        return {
+            'input': {
+                'observation_space': observation_spaces,
+                'action_space': action_spaces,
+            },
+            'output': {
+                'observation_space': observation_spaces,
+                'action_space': action_spaces,
+            },
+        }
+    else:
+        input_modules_to_submodels = defaultdict(lambda: [])
+        output_modules_to_submodels = defaultdict(lambda: [])
+        for submodel_name, submodel_config in model_config.submodel_configs.items():
+            for input_module_name in submodel_config.input_modules:
+                input_modules_to_submodels[input_module_name].append(submodel_name)
+            for output_module_name in submodel_config.output_modules:
+                output_modules_to_submodels[output_module_name].append(submodel_name)
 
-    input_modules_to_submodels = defaultdict(lambda: [])
-    output_modules_to_submodels = defaultdict(lambda: [])
-    for submodel_name, submodel_config in model_config.submodel_configs.items():
-        for input_module_name in submodel_config.input_modules:
-            input_modules_to_submodels[input_module_name].append(submodel_name)
-        for output_module_name in submodel_config.output_modules:
-            output_modules_to_submodels[output_module_name].append(submodel_name)
+        submodel_to_observation_space = {}
+        submodel_to_action_space = {}
+        for env in envs:
+            submodel_to_observation_space[env.model_name] = env.env.single_observation_space
+            submodel_to_action_space[env.model_name] = env.env.single_action_space
 
-    submodel_to_observation_space = {}
-    submodel_to_action_space = {}
-    for env in envs:
-        submodel_to_observation_space[env.model_name] = env.env.single_observation_space
-        submodel_to_action_space[env.model_name] = env.env.single_action_space
+        input_module_to_observation_space = defaultdict(lambda: [])
+        input_module_to_action_space = defaultdict(lambda: [])
+        output_module_to_observation_space = defaultdict(lambda: [])
+        output_module_to_action_space = defaultdict(lambda: [])
+        for module_name, submodel_names in input_modules_to_submodels.items():
+            for submodel_name in submodel_names:
+                input_module_to_observation_space[module_name].append(submodel_to_observation_space[submodel_name])
+                input_module_to_action_space[module_name].append(submodel_to_action_space[submodel_name])
+        for module_name, submodel_names in output_modules_to_submodels.items():
+            for submodel_name in submodel_names:
+                output_module_to_observation_space[module_name].append(submodel_to_observation_space[submodel_name])
+                output_module_to_action_space[module_name].append(submodel_to_action_space[submodel_name])
 
-    input_module_to_observation_space = defaultdict(lambda: [])
-    input_module_to_action_space = defaultdict(lambda: [])
-    output_module_to_observation_space = defaultdict(lambda: [])
-    output_module_to_action_space = defaultdict(lambda: [])
-    for module_name, submodel_names in input_modules_to_submodels.items():
-        for submodel_name in submodel_names:
-            input_module_to_observation_space[module_name].append(submodel_to_observation_space[submodel_name])
-            input_module_to_action_space[module_name].append(submodel_to_action_space[submodel_name])
-    for module_name, submodel_names in output_modules_to_submodels.items():
-        for submodel_name in submodel_names:
-            output_module_to_observation_space[module_name].append(submodel_to_observation_space[submodel_name])
-            output_module_to_action_space[module_name].append(submodel_to_action_space[submodel_name])
+        input_module_to_observation_space = {k: merge_space(*v) for k,v in input_module_to_observation_space.items()}
+        input_module_to_action_space = {k: merge_space(*v) for k,v in input_module_to_action_space.items()}
+        output_module_to_observation_space = {k: merge_space(*v) for k,v in output_module_to_observation_space.items()}
+        output_module_to_action_space = {k: merge_space(*v) for k,v in output_module_to_action_space.items()}
 
-    input_module_to_observation_space = {k: merge_space(*v) for k,v in input_module_to_observation_space.items()}
-    input_module_to_action_space = {k: merge_space(*v) for k,v in input_module_to_action_space.items()}
-    output_module_to_observation_space = {k: merge_space(*v) for k,v in output_module_to_observation_space.items()}
-    output_module_to_action_space = {k: merge_space(*v) for k,v in output_module_to_action_space.items()}
-
-    return {
-        'input': {
-            'observation_space': input_module_to_observation_space,
-            'action_space': input_module_to_action_space
-        },
-        'output': {
-            'observation_space': output_module_to_observation_space,
-            'action_space': output_module_to_action_space
-        },
-    }
-
-    #return input_module_to_observation_space, input_module_to_action_space, output_module_to_observation_space, output_module_to_action_space # TODO: How do I output this nicely?
+        return {
+            'input': {
+                'observation_space': input_module_to_observation_space,
+                'action_space': input_module_to_action_space
+            },
+            'output': {
+                'observation_space': output_module_to_observation_space,
+                'action_space': output_module_to_action_space
+            },
+        }

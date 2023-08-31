@@ -1013,6 +1013,16 @@ register(
     entry_point="big_rl.mujoco.envs.arm_fetch:ArmFetchEnv",
 )
 
+register(
+    id="HopperNoVelocity-v4",
+    entry_point="big_rl.mujoco.envs.hopper_no_velocity:HopperNoVelocityEnv_v4",
+)
+
+register(
+    id="AntNoVelocity-v4",
+    entry_point="big_rl.mujoco.envs.ant_no_velocity:AntNoVelocityEnv_v4",
+)
+
 
 if __name__ == '__main__':
     env = gym.make('ArmFetch-v0', render_mode='human', num_objs=6, camera_fov=90, camera_distance=0)

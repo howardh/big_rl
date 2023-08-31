@@ -659,15 +659,9 @@ def main(args):
 
     # Initialize environments
     if args.env_config is not None:
-        envs = make_env_from_yaml(args.env_config)
-        #env_labels = make_env_labels_from_yaml(args.env_config)
-        env_labels = [e.env_labels for e in envs]
-        if isinstance(envs, list):
-            envs = [e.env for e in envs]
-        elif isinstance(envs, gymnasium.vector.VectorEnv):
-            envs = [envs]
-        elif isinstance(envs, gymnasium.Env):
-            raise ValueError('The environment config file must specify a vectorized environment.')
+        env_groups = make_env_from_yaml(args.env_config)
+        envs = [e.env for e in env_groups]
+        env_labels = [e.env_labels for e in env_groups]
     else:
         if len(args.envs) != len(args.num_envs):
             if len(args.num_envs) == 1:
@@ -685,7 +679,7 @@ def main(args):
             VectorEnv([lambda conf=conf: make_env(**conf) for conf in env_config]) # type: ignore (Why is `make_env` missing an argument?)
             for env_config in env_configs
         ]
-        env_labels = [[e]*n for e,n in zip(args.envs, args.num_envs)],
+        env_labels = [[e]*n for e,n in zip(args.envs, args.num_envs)]
 
     # Device
     if args.cuda and torch.cuda.is_available():
