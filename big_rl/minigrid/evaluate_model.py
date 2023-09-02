@@ -38,7 +38,7 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, hidden_in
     hidden = model.init_hidden(1) # type: ignore (???)
     steps_iterator = itertools.count()
     #steps_iterator = range(100+np.random.randint(50)); print('--- DEBUG MODE ---')
-    steps_iterator = range(10); print('--- DEBUG MODE ---')
+    #steps_iterator = range(10); print('--- DEBUG MODE ---')
     if verbose:
         steps_iterator = tqdm(steps_iterator)
 
@@ -56,6 +56,9 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, hidden_in
             action_dist = torch.distributions.Categorical(action_probs)
             action = action_dist.sample().cpu().numpy().squeeze()
 
+        if hasattr(env, 'goal_str'): # Needs to be done before taking a step since the goal can change after the step, but the reward and everything else we get from `step()` applies to the current goal.
+            results['target'].append(env.goal_str) # type: ignore
+
         obs, reward, terminated, truncated, info = env.step(action)
         obs = preprocess_obs_fn(obs)
 
@@ -72,8 +75,6 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, hidden_in
             x.cpu().detach().numpy() for x in model.last_hidden
         ])
         results['input_labels'].append(model.last_input_labels)
-        if hasattr(env, 'goal_str'):
-            results['target'].append(env.goal_str) # type: ignore
         if hidden_info_fn is not None:
             results['hidden_info'] = hidden_info_fn(hidden)
 
@@ -677,7 +678,7 @@ if __name__ == '__main__':
                 headers=['Target', 'Σ', '#'], tablefmt='simple_grid'
             )
             tables.append(table)
-        max_table_width = max(max(len(l) for l in table.split('\n')) for table in tables)
+        max_table_width = max(max(len(l) for l in table.split('\n')) for table in tables)+1
         term_width = shutil.get_terminal_size().columns
         tables_per_row = max(1, term_width // max_table_width)
         row_width = 0

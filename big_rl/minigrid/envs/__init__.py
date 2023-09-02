@@ -273,6 +273,7 @@ class MetaWrapper(gym.Wrapper):
 
     def reset(self, seed=None, options=None):
         self.episode_count = 0
+        self._done = False
         if self.randomize:
             self.env.randomize() # type: ignore
         if self.action_shuffle:

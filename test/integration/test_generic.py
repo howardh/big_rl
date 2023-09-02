@@ -44,6 +44,7 @@ def model_config_file(tmpdir):
     config_file.write(config)
     return config_file
 
+
 @pytest.fixture
 def env_config_file_atari(tmpdir):
     config = textwrap.dedent("""
@@ -97,13 +98,13 @@ def env_config_file_mujoco(tmpdir):
 
 
 @pytest.fixture
-def env_config_file(tmpdir): # TODO
-    return env_config_file_atari(tmpdir)
+def env_config_file(env_config_file_atari): # TODO
+    return env_config_file_atari
 
 
 @pytest.mark.timeout(30)
-def test_config_file(model_config_file, env_config_file):
+def test_config_file(model_config_file, env_config_file_atari):
     parser = init_arg_parser()
-    args = parser.parse_args(f'--env-config {env_config_file} --model-config {model_config_file} --max-steps 100 --rollout-length 10'.split())
+    args = parser.parse_args(f'--env-config {env_config_file_atari} --model-config {model_config_file} --max-steps 100 --rollout-length 10'.split())
     main(args)
 

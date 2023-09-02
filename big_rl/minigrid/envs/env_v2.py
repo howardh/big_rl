@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import os
-from typing import Sequence, TypedDict, Literal, Tuple
+from typing import Sequence, TypedDict, Literal, Tuple, Iterable
 
 import numpy as np
 import gymnasium
@@ -27,6 +27,7 @@ from big_rl.minigrid.envs import PotentialBasedReward, RewardNoise, RewardDelay,
 class TaskStepReturn(TypedDict):
     reward: float
     trial_completed: bool
+    trial_success: bool
 
     pseudo_reward: float | None
     potential: float | None
@@ -52,6 +53,7 @@ class NoTask(Task):
         return TaskStepReturn(
             reward = 0,
             trial_completed = False,
+            trial_success = False,
             pseudo_reward = None,
             potential = None,
         )
@@ -59,6 +61,7 @@ class NoTask(Task):
         return TaskStepReturn(
             reward = 0,
             trial_completed = False,
+            trial_success = False,
             pseudo_reward = None,
             potential = None,
         )
@@ -70,7 +73,7 @@ class NoTask(Task):
 class FetchTask(Task):
     def __init__(self,
                  env: 'MultiRoomEnv_v2',
-                 rng: np.random.RandomState,
+                 rng: np.random.Generator,
                  num_targets: int = 1,
                  # Reward
                  reward_correct: float = 1,
@@ -83,7 +86,7 @@ class FetchTask(Task):
                  pbrs_discount: float = 0.99,
                  pbrs_scale: float = 1.0,
                  # Misc
-                 fixed_target: Tuple[str,str] | None = None,
+                 fixed_target: Tuple[str,str] | int | None = None,
                  cycle_targets: bool = False,
                  ):
         """
@@ -94,6 +97,7 @@ class FetchTask(Task):
             reward_correct: Reward to provide if the agent picks up the correct object.
             reward_incorrect: Reward to provide if the agent picks up the incorrect object.
             reward_flip_prob: Probability of giving a reward at all upon completing a trial.
+            fixed_target: If None, then the target object is chosen randomly. If an integer, then the target object is the object at that index in the environment (allows for creating multiple tasks that target different objects). If set to a (type, colour) tuple, then the target object will be that which matches those properties.
         """
         self.env = env
         self.rng = rng
@@ -127,9 +131,15 @@ class FetchTask(Task):
         # Pick a random object
         if self.fixed_target is None:
             self.target_objs = self.rng.choice(self.env.objects, replace=False, size=self.num_targets)
-        else:
+        elif isinstance(self.fixed_target, int):
+            if self.fixed_target >= len(self.env.objects):
+                raise ValueError(f'Cannot target object at index {self.fixed_target} because there are only {len(self.env.objects)} objects.')
+            self.target_objs = [self.env.objects[self.fixed_target]]
+        elif isinstance(self.fixed_target, tuple):
             target_type, target_color = self.fixed_target
             self.target_objs = [obj for obj in self.env.objects if obj.color == target_color and obj.type == target_type]
+        else:
+            raise ValueError(f'`fixed_target` must be None, an integer, or a (type, color) tuple. {self.fixed_target} was provided.')
 
         # Choose an order to cycle through the targets
         if self.cycle_targets:
@@ -186,6 +196,7 @@ class FetchTask(Task):
         return TaskStepReturn(
             reward = reward+pbrs_reward,
             trial_completed = trial_completed,
+            trial_success = reward == self.reward_correct,
             pseudo_reward = self._pseudo_reward(),
             potential = self._potential(),
         )
@@ -330,27 +341,58 @@ class AlternatingTasks(Task):
     """
     def __init__(self,
                  env: 'MultiRoomEnv_v2',
-                 rng: np.random.RandomState,
-                 tasks: Sequence[Task]):
+                 rng: np.random.Generator,
+                 tasks: Sequence[Task],
+                 task_duration: tuple[int,str] = (1,'trial success'),
+                 reset_on_switch: bool = False,
+                 randomize_tasks: bool = False):
         self.env = env
         self.rng = rng
         self.tasks = tasks
+        self.task_duration = task_duration
+        self.reset_on_switch = reset_on_switch
+        self.randomize_tasks = randomize_tasks
     def reset(self):
-        self.current_task_idx = self.rng.choice(len(self.tasks))
+        if self.randomize_tasks:
+            self.tasks = [self.tasks[i] for i in self.rng.permutation(len(self.tasks))]
+        self.current_task_idx = 0
+        self.step_count = 0
+        self.trial_count = 0
+        self.trial_success_count = 0
         for t in self.tasks:
             t.reset()
     def step(self) -> TaskStepReturn:
         output = self.tasks[self.current_task_idx].step()
-        if output['trial_completed'] and output['reward'] > 0:
-            self.current_task_idx = (self.current_task_idx+1) % len(self.tasks)
+        if output['trial_completed']:
+            self.trial_count += 1
+            if output['trial_success']:
+                self.trial_success_count += 1
+        self.step_count += 1
+        self._update_current_task()
         return output
+    def _update_current_task(self):
+        match self.task_duration:
+            case (n, 'trials'):
+                if self.trial_count >= n:
+                    self.current_task_idx = (self.current_task_idx+1) % len(self.tasks)
+                    self.trial_count = 0
+            case (n, 'trial success'):
+                if self.trial_success_count >= n:
+                    self.current_task_idx = (self.current_task_idx+1) % len(self.tasks)
+                    self.trial_success_count = 0
+            case (n, 'steps'):
+                if self.step_count >= n:
+                    self.current_task_idx = (self.current_task_idx+1) % len(self.tasks)
+                    self.step_count = 0
+            case _:
+                raise ValueError(f'Unrecognized task duration: {self.task_duration}')
     @property
     def description(self):
         return self.tasks[self.current_task_idx].description
 
 
 class TaskWrapper(Task):
-    def __init__(self, task, rng: np.random.RandomState):
+    def __init__(self, task, rng: np.random.Generator):
         self.task = task
         self.rng = rng
     def reset(self):
@@ -367,7 +409,7 @@ class TaskWrapper(Task):
 
 
 class RandomResetWrapper(TaskWrapper):
-    def __init__(self, task, rng: np.random.RandomState, prob: float):
+    def __init__(self, task, rng: np.random.Generator, prob: float):
         """ Randomly reset the environment with probability `prob` at the end of each trial. """
         super().__init__(task, rng)
         self.prob = prob
@@ -378,17 +420,219 @@ class RandomResetWrapper(TaskWrapper):
         return output
 
 
-class ResetWrapper(TaskWrapper):
-    def __init__(self, task, rng: np.random.RandomState, prob: float):
-        """ Randomly reset the environment with probability `prob` at the end of each trial. """
+class RewardCutoffWrapper(TaskWrapper):
+    def __init__(self,
+                 task,
+                 rng: np.random.Generator,
+                 threshold_stop: tuple[int,str] | tuple[int,str,int],
+                 threshold_resume: tuple[int,str,int] | None = None):
+        """ Stop providing rewards after the threshold is reached. """
         super().__init__(task, rng)
-        raise NotImplementedError()
-        self.prob = prob
+
+        self.threshold_stop = threshold_stop
+        self.threshold_resume = threshold_resume
+
+        self.reward_cutoff = False
+        self._reset_counts()
+    def reset(self):
+        self.task.reset()
+        self._reset_counts()
+        self.reward_cutoff = False
     def step(self):
         output = self.task.step()
-        if output['trial_completed'] and self.rng.uniform() < self.prob:
-            self.task.reset()
+        self.step_count += 1
+        if output['trial_completed']:
+            self.trial_count += 1
+            if output['trial_success']:
+                self.trial_successes.append(True)
+            else:
+                self.trial_successes.append(False)
+
+        output = self._modify_output(output)
+
+        self._update_reward_cutoff()
+
         return output
+
+    def _reset_counts(self):
+        self.step_count = 0
+        self.trial_count = 0
+        self.trial_successes = []
+    def _update_reward_cutoff(self):
+        if self.reward_cutoff:
+            # Check if we should resume providing rewards
+            match self.threshold_resume:
+                case None:
+                    pass
+                case (n, 'trials'):
+                    if self.trial_count >= n:
+                        self.reward_cutoff = False
+                        self._reset_counts()
+                case (n, 'trial failure', m):
+                    if len(self.trial_successes) >= m and self.trial_successes[-n:].count(False) >= m:
+                        self.reward_cutoff = False
+                        self._reset_counts()
+                case (n, 'steps'):
+                    if self.step_count >= n:
+                        self.reward_cutoff = False
+                        self._reset_counts()
+                case _:
+                    raise ValueError(f'Unrecognized threshold resume: {self.threshold_resume}')
+        else:
+            # Check if we need to cut off rewards
+            match self.threshold_stop:
+                case (n, 'trials'):
+                    if self.trial_count >= n:
+                        self.reward_cutoff = True
+                        self._reset_counts()
+                case (n, 'trial success', m):
+                    if len(self.trial_successes) >= m and self.trial_successes[-n:].count(True) >= m:
+                        self.reward_cutoff = True
+                        self._reset_counts()
+                case (n, 'steps'):
+                    if self.step_count >= n:
+                        self.reward_cutoff = True
+                        self._reset_counts()
+                case _:
+                    raise ValueError(f'Unrecognized threshold_stop: {self.threshold_stop}')
+    def _modify_output(self, output):
+        if self.reward_cutoff:
+            output['reward'] = 0
+        return output
+
+
+class PseudoRewardCutoffWrapper(RewardCutoffWrapper):
+    def _modify_output(self, output: TaskStepReturn):
+        if self.reward_cutoff:
+            output['pseudo_reward'] = 0
+        return output
+
+
+class PseudoRewardDelayWrapper(TaskWrapper):
+    def __init__(self,
+                 task,
+                 rng: np.random.Generator,
+                 delay_type: Literal[None, 'fixed', 'random', 'interval'] = None,
+                 steps: int | Tuple[int,int] = 0,
+                 overlap: Literal[None, 'replace', 'sum', 'sum_clipped'] = None):
+        """ ... """
+        super().__init__(task, rng)
+        
+        self.delay_type = delay_type
+        self.steps = steps
+        self.overlap = overlap
+
+    def reset(self):
+        self.task.reset()
+
+        if self.delay_type == 'fixed':
+            assert type(self.steps) is int
+            if self.steps >= 0:
+                self._buffer = [0.] * (self.steps + 1)
+            else:
+                self._buffer = [] 
+            self._buffer_idx = 0
+
+        if self.delay_type == 'random':
+            assert type(self.steps) is tuple
+            _, max_steps = self.steps
+            self._buffer = [0.] * (max_steps + 1)
+            self._buffer_idx = 0
+
+        if self.delay_type == 'interval':
+            self._buffer = [0.]
+            self._buffer_idx = 1
+
+            if isinstance(self.steps, int):
+                assert self.steps > 0
+            elif isinstance(self.steps, tuple):
+                min_steps, max_steps = self.steps
+                assert min_steps > 0
+                assert max_steps > 0
+                assert min_steps <= max_steps
+
+    def step(self):
+        output = self.task.step()
+        output['pseudo_reward'] = self.delay(output['pseudo_reward'])
+        return output
+
+    def delay(self, reward: float) -> float:
+        if self.delay_type is None:
+            return reward
+
+        if self.delay_type == 'fixed':
+            assert isinstance(self.steps, int)
+            return self._fixed_delay(reward, self.steps)
+        elif self.delay_type == 'random':
+            assert isinstance(self.steps, Sequence)
+            assert self.overlap is not None
+            return self._random_delay(reward, self.steps, self.overlap)
+        elif self.delay_type == 'interval':
+            assert self.overlap is not None
+            return self._interval_delay(reward, self.steps, self.overlap)
+        else:
+            raise Exception(f'Invalid delay type: {self.delay_type}')
+
+    def _fixed_delay(self, reward: float, steps: int) -> float:
+        """ Delay the reward by `steps` steps. If `steps` is negative, then the reward is delayed indefinitely (i.e. will always be 0). """
+        if steps < 0:
+            return 0
+
+        self._buffer_idx = (self._buffer_idx + 1) % len(self._buffer)
+
+        delayed_idx = (self._buffer_idx + steps) % len(self._buffer)
+        self._buffer[delayed_idx] = reward
+        return self._buffer[self._buffer_idx]
+
+    def _random_delay(self, reward: float, steps: Tuple[int,int], overlap: str) -> float:
+        """ Delay the reward by a random number of steps in the range `steps`. """
+        self._buffer[self._buffer_idx] = 0
+        self._buffer_idx = (self._buffer_idx + 1) % len(self._buffer)
+
+        min_steps, max_steps = steps
+        delay = self.rng.integers(min_steps, max_steps + 1)
+        delayed_idx = (self._buffer_idx + delay) % len(self._buffer)
+
+        if overlap == 'replace':
+            self._buffer[delayed_idx] = reward
+        elif overlap == 'sum' or overlap == 'sum_clipped':
+            self._buffer[delayed_idx] += reward
+
+        if overlap == 'replace' or overlap == 'sum':
+            return self._buffer[self._buffer_idx]
+        elif overlap == 'sum_clipped':
+            return np.clip(self._buffer[self._buffer_idx], -1, 1)
+        else:
+            raise ValueError(f'Unknown overlap type: {overlap}')
+
+    def _interval_delay(self, reward: float, steps: int | Tuple[int,int], overlap: str) -> float:
+        """ Give a reward every `steps` steps. If `steps` is a tuple, then the time between each reward is chosen uniformly at random from the range `steps`. """
+        self._buffer_idx -= 1
+
+        if isinstance(steps, int):
+            min_steps = steps
+            max_steps = steps
+        else:
+            min_steps, max_steps = steps
+
+        if self._buffer_idx <= 0:
+            self._buffer_idx = self.rng.integers(min_steps, max_steps + 1)
+            self._buffer[0] = 0
+
+        if overlap == 'replace':
+            self._buffer[0] = reward
+        elif overlap == 'sum' or overlap == 'sum_clipped':
+            self._buffer[0] += reward
+
+        if self._buffer_idx <= 1:
+            if overlap == 'replace' or overlap == 'sum':
+                return self._buffer[0]
+            elif overlap == 'sum_clipped':
+                return np.clip(self._buffer[0], -1, 1)
+            else:
+                raise ValueError(f'Unknown overlap type: {overlap}')
+        else:
+            return 0
 
 
 def init_task(env, rng, config) -> Task:
@@ -399,16 +643,29 @@ def init_task(env, rng, config) -> Task:
     if config['task'] in task_mapping:
         task = task_mapping[config['task']](env, rng, **config['args'])
     elif config['task'] == 'alternating':
-        task = AlternatingTasks(
-                env, rng,
-                [init_task(env, rng, c) for c in config['args']['tasks']]
-        )
+        def flatten_task_list(tasks: Sequence[Task | Iterable[Task]]) -> Sequence[Task]:
+            flat_tasks = []
+            for t in tasks:
+                if isinstance(t, Task):
+                    flat_tasks.append(t)
+                else:
+                    flat_tasks.extend(list(t))
+            return flat_tasks
+        task = AlternatingTasks(**{
+            'env': env,
+            'rng': rng,
+            **config['args'],
+            'tasks': flatten_task_list([init_task(env, rng, c) for c in config['args']['tasks']])
+        })
     else:
         raise ValueError(f'Unknown task: {config["task"]}')
 
     for wrapper_config in config.get('wrappers', []):
         wrapper_mapping = {
             'random_reset': RandomResetWrapper,
+            'reward_cutoff': RewardCutoffWrapper,
+            'pseudo_reward_cutoff': PseudoRewardCutoffWrapper,
+            'pseudo_reward_delay': PseudoRewardDelayWrapper,
         }
         if wrapper_config['type'] in wrapper_mapping:
             task = wrapper_mapping[wrapper_config['type']](task, rng, **wrapper_config['args'])
@@ -921,8 +1178,6 @@ class MultiRoomEnv_v2(MiniGridEnv):
             transform.reset()
         if self.pseudo_reward_config is not None:
             obs['pseudo_reward'] = np.array([0], dtype=np.float32)
-
-        #print([(o.type, o.color) for o in self.objects])
 
         return obs, info
 

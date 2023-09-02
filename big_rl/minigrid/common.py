@@ -6,7 +6,7 @@ from minigrid.core.constants import COLOR_NAMES
 from big_rl.model.model import ModularPolicy2, ModularPolicy4, ModularPolicy5, ModularPolicy5LSTM, ModularPolicy7
 from big_rl.model.modular_policy_8 import ModularPolicy8
 from big_rl.model.baseline import BaselineModel
-from big_rl.utils import ExperimentConfigs
+from big_rl.utils import ExperimentConfigs, ConfigReplace
 
 
 def init_model(observation_space, action_space,
@@ -1245,33 +1245,6 @@ def env_config_presets():
 
         # Multiple noise types together
         # Use to compare training everything together in one environment versus separately
-        config.add(f'fetch2-006', {
-            'meta_config': {
-                'include_reward': False,
-            },
-            'config': {
-                'min_room_size': 5,
-                'max_room_size': 12,
-                'task_config': {
-                    'task': 'fetch',
-                    'args': {
-                        'pseudo_reward_config': {
-                            'type': 'subtask',
-                            'delay': ('random', (1, 5), 'replace'),
-                        },
-                    },
-                    'wrappers': [{
-                        'type': 'random_reset',
-                        'args': {
-                            'prob': 0.02,
-                        },
-                    }]
-                },
-            }
-        }, inherit='fetch2-004')
-
-        ## TODO: Combine noises together (delayed pseudo-reward, task randomization, reward cut-off)
-        ## Set to change tasks every n trials
         #config.add(f'fetch2-006', {
         #    'meta_config': {
         #        'include_reward': False,
@@ -1296,6 +1269,100 @@ def env_config_presets():
         #        },
         #    }
         #}, inherit='fetch2-004')
+
+        # TODO: Combine noises together (delayed pseudo-reward, task randomization, reward cut-off)
+        config.add(f'fetch2-006', {
+            'meta_config': {
+                'include_reward': False,
+            },
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+                'task_config': {
+                    'task': 'fetch',
+                    'args': {
+                        'pseudo_reward_config': {
+                            'type': 'subtask',
+                        },
+                    },
+                    'wrappers': [{
+                        'type': 'pseudo_reward_cutoff',
+                        'args': {
+                            'threshold_stop': (9, 'trial success', 10),
+                            'threshold_resume': (4, 'trial failure', 10),
+                        },
+                    },{
+                        'type': 'random_reset',
+                        'args': {
+                            'prob': 0.02,
+                        },
+                    },{
+                        'type': 'pseudo_reward_delay',
+                        'args': {
+                            'delay_type': 'random',
+                            'steps': (1,5),
+                            'overlap': 'replace',
+                        }
+                    }]
+                },
+            }
+        }, inherit='fetch2-004')
+
+        # Same as above, but we change the task every 50 trials
+        config.add(f'fetch2-007', {
+            'meta_config': {
+                'include_reward': False,
+            },
+            'config': {
+                'min_room_size': 5,
+                'max_room_size': 12,
+                'task_config': ConfigReplace({
+                    'task': 'alternating',
+                    'args': {
+                        'task_duration': (50, 'trials'),
+                        'tasks': [{
+                            'task': 'fetch',
+                            'args': {
+                                'pseudo_reward_config': {
+                                    'type': 'subtask',
+                                },
+                                'reward_correct': 1,
+                                'reward_flip_prob': 0,
+                                'reward_incorrect': -1,
+                                'reward_type': 'standard',
+                                'fixed_target': 0,
+                            },
+                        },{
+                            'task': 'fetch',
+                            'args': {
+                                'pseudo_reward_config': {
+                                    'type': 'subtask',
+                                },
+                                'reward_correct': 1,
+                                'reward_flip_prob': 0,
+                                'reward_incorrect': -1,
+                                'reward_type': 'standard',
+                                'fixed_target': 1,
+                            },
+                        }]
+                    },
+                    'wrappers': [{
+                        'type': 'pseudo_reward_cutoff',
+                        'args': {
+                            'threshold_stop': (9, 'trial success', 10),
+                            'threshold_resume': (4, 'trial failure', 10),
+                        },
+                    },{
+                        'type': 'pseudo_reward_delay',
+                        'args': {
+                            'delay_type': 'random',
+                            'steps': (1,5),
+                            'overlap': 'replace',
+                        }
+                    }]
+                }),
+            }
+        }, inherit='fetch2-004')
 
     init_fetch()
     init_delayed()
