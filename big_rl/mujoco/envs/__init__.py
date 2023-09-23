@@ -49,7 +49,7 @@ ObsType = TypeVar('ObsType')
 ActionType = TypeVar('ActionType')
 
 
-class NormalizeDictObservation(gym.Wrapper[dict, ActionType]):
+class NormalizeDictObservation(gym.Wrapper[dict, ActionType, dict, ActionType]):
     """This wrapper will normalize observations s.t. each coordinate is centered with unit variance.
     Note:
         The normalization depends on past trajectories and observations will not be normalized correctly if the wrapper was
@@ -1021,6 +1021,20 @@ register(
 register(
     id="AntNoVelocity-v4",
     entry_point="big_rl.mujoco.envs.ant_no_velocity:AntNoVelocityEnv_v4",
+)
+
+register(
+    id="HalfCheetahForward-v4",
+    entry_point="big_rl.mujoco.envs.half_cheetah_fw_bw:HalfCheetahForwardBackwardEnv",
+    max_episode_steps=1000,
+    kwargs={'target_direction': 1},
+)
+
+register(
+    id="HalfCheetahBackward-v4",
+    entry_point="big_rl.mujoco.envs.half_cheetah_fw_bw:HalfCheetahForwardBackwardEnv",
+    max_episode_steps=1000,
+    kwargs={'target_direction': -1},
 )
 
 

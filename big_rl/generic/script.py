@@ -28,6 +28,7 @@ from big_rl.utils import torch_save, zip2, merge_space, generate_id
 from big_rl.utils.make_env import EnvGroup, get_config_from_yaml, make_env_from_yaml#, make_env_labels_from_yaml, make_env_group_labels_from_yaml, make_env_to_model_mapping_from_yaml, make_eval_only_from_yaml
 from big_rl.atari.common import init_model, env_config_presets
 from big_rl.model import factory as model_factory
+import big_rl.mujoco.envs # type: ignore (import for the env registration)
 
 
 WANDB_PROJECT_NAME = 'ppo-generic'
@@ -185,7 +186,7 @@ def log_episode_end(done, info, episode_reward, episode_true_reward, episode_ste
         done2 = done & (env_ids == env_id)
         if not done2.any():
             continue
-        fi = info['_final_info']
+        #fi = info['_final_info']
         #unsupervised_trials = np.array([x['unsupervised_trials'] for x in info['final_info'][fi]])
         #supervised_trials = np.array([x['supervised_trials'] for x in info['final_info'][fi]])
         #unsupervised_reward = np.array([x['unsupervised_reward'] for x in info['final_info'][fi]])
@@ -205,7 +206,7 @@ def log_episode_end(done, info, episode_reward, episode_true_reward, episode_ste
             #if supervised_trials[done2[fi]].mean() > 0:
             #    data[f'supervised_reward/{env_label}'] = supervised_reward[done2[fi]].mean().item()
             wandb.log(data, step = global_step_counter[0])
-        print(f'  reward: {episode_reward[done].mean():.2f}\t len: {episode_steps[done].mean()} \t env: {env_label} ({done2.sum().item()})')
+        print(f'  reward: {episode_reward[done2].mean():.2f}\t len: {episode_steps[done2].mean()} \t env: {env_label} ({done2.sum().item()})')
 
 
 def train_single_env(
