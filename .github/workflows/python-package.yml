@@ -33,4 +33,4 @@ jobs:
         python -m pip install git+https://github.com/howardh/frankenstein.git#egg=frankenstein
     - name: Test with pytest
       run: |
-        pytest
+        python -m pytest
