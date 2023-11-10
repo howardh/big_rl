@@ -1,6 +1,7 @@
 import argparse
 import copy
 import itertools
+import os
 import time
 import textwrap
 import random
@@ -10,7 +11,6 @@ from gymnasium.vector import VectorEnv, AsyncVectorEnv, SyncVectorEnv
 from gymnasium.wrappers import RecordEpisodeStatistics, ClipAction, NormalizeObservation, TransformObservation, NormalizeReward, TransformReward, TimeLimit # pyright: ignore[reportPrivateImportUsage]
 import torch
 from torch.func import functional_call # pyright: ignore[reportPrivateImportUsage]
-from torch.utils.data.dataloader import default_collate
 import numpy as np
 import wandb
 from tqdm import tqdm
@@ -95,7 +95,8 @@ class Model2(torch.nn.Module):
                 'value': self.v(x),
                 #'action': pi,
                 'action_mean': self.pi_mean(x),
-                'action_logstd': self.pi_logstd[*unsqueeze_dims, :].expand(*batch_size, -1).clamp(-10,None),
+                #'action_logstd': self.pi_logstd[*unsqueeze_dims, :].expand(*batch_size, -1).clamp(-10,None), # XXX: Requires python>=3.11
+                'action_logstd': self.pi_logstd.__getitem__([*unsqueeze_dims, slice(None)]).expand(*batch_size, -1).clamp(-10,None),
         }
 
 
@@ -106,8 +107,6 @@ class Model3(torch.nn.Module):
     def __init__(self, obs_size, action_size):
         super().__init__()
         self.action_size = action_size
-        #self.v_weights = torch.nn.Parameter(torch.empty(obs_size*2+3+1, 1))
-        #torch.nn.init.xavier_uniform_(self.v_weights)
         self.pi_mean = torch.nn.Sequential(
             torch.nn.Linear(in_features=obs_size,out_features=100),
             torch.nn.ReLU(),
@@ -118,34 +117,51 @@ class Model3(torch.nn.Module):
             torch.nn.Linear(in_features=100,out_features=action_size),
         )
         self.pi_logstd = torch.nn.Parameter(torch.zeros(action_size))
-    #def _vf_features(self, x, t):
-    #    batch_size = x.shape[:-1]
-    #    t = t.unsqueeze(-1) / 100
-    #    return torch.cat([x, x**2, t, t**2, t**3, torch.ones([*batch_size, 1])], dim=-1).float()
-    #def fit_vf(self, x, t, y):
-    #    y = y.flatten()
-    #    features = self._vf_features(x, t)
-    #    features = features.flatten(end_dim=-2)
-    #    breakpoint()
-    #    v_weights = torch.linalg.lstsq(features, y).solution
-    #    ...
-    def forward(self, x, t=None):
+    def forward(self, x):
         batch_size = x.shape[:-1]
         unsqueeze_dims = [None] * len(batch_size)
         output = {
                 'action_mean': self.pi_mean(x),
-                'action_logstd': self.pi_logstd[*unsqueeze_dims, :].expand(*batch_size, -1).clamp(-10,None),
+                #'action_logstd': self.pi_logstd[*unsqueeze_dims, :].expand(*batch_size, -1).clamp(-10,None), # XXX: Requires python>=3.11
+                'action_logstd': self.pi_logstd.__getitem__([*unsqueeze_dims, slice(None)]).expand(*batch_size, -1).clamp(-10,None),
         }
-        #if t is not None:
-        #    output['value'] = self._vf_features(x, t) @ self.v_weights * 0
+        return output
+
+
+class Model4(torch.nn.Module):
+    """
+    State independent logstd
+    """
+    def __init__(self, obs_size, action_size):
+        super().__init__()
+        self.action_size = action_size
+        self.pi_mean = torch.nn.Sequential(
+            torch.nn.Linear(in_features=obs_size,out_features=2048),
+            torch.nn.ReLU(),
+            torch.nn.Linear(in_features=2048,out_features=2048),
+            torch.nn.ReLU(),
+            torch.nn.Linear(in_features=2048,out_features=2048),
+            torch.nn.ReLU(),
+            torch.nn.Linear(in_features=2048,out_features=action_size),
+        )
+        self.pi_logstd = torch.nn.Parameter(torch.zeros(action_size))
+    def forward(self, x):
+        batch_size = x.shape[:-1]
+        unsqueeze_dims = [None] * len(batch_size)
+        output = {
+                'action_mean': self.pi_mean(x),
+                #'action_logstd': self.pi_logstd[*unsqueeze_dims, :].expand(*batch_size, -1).clamp(-10,None), # XXX: Requires python>=3.11
+                'action_logstd': self.pi_logstd.__getitem__([*unsqueeze_dims, slice(None)]).expand(*batch_size, -1).clamp(-10,None),
+        }
         return output
 
 
 def compute_advantage(obs, timesteps, reward, terminal, discount, gae_lambda):
     def vf_features(x, t):
         batch_size = x.shape[:-1]
+        device = x.device
         t = t.unsqueeze(-1) / 100
-        return torch.cat([x, x**2, t, t**2, t**3, torch.ones([*batch_size, 1])], dim=-1).float()
+        return torch.cat([x, x**2, t, t**2, t**3, torch.ones([*batch_size, 1], device=device)], dim=-1).float()
     def fit_vf(x, t, y):
         y = y.flatten()
         features = vf_features(x, t)
@@ -173,6 +189,9 @@ def compute_advantage(obs, timesteps, reward, terminal, discount, gae_lambda):
             gae_lambda = gae_lambda,
     )
 
+    # Normalize advantages
+    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
     return advantages
 
 
@@ -185,6 +204,7 @@ def update_trpo(
         discount : float,
         gae_lambda : float,
         target_kl : float):
+    start_time = time.time()
     cg_damping = 1e-2
     device = next(model.parameters()).device
 
@@ -193,7 +213,7 @@ def update_trpo(
 
     def surrogate_objective_dict(adapted_params):
         losses = []
-        for (train_data, val_data), params in zip(data, adapted_params):
+        for (_, val_data), params in zip(data, adapted_params):
             n = len(val_data.obs_history)
             obs = torch.tensor(val_data.obs, dtype=torch.float, device=device)
             action = val_data.action
@@ -202,22 +222,13 @@ def update_trpo(
             old_log_action_probs = val_data.misc['log_action_prob'][1:] # type: ignore
             timesteps = val_data.misc['time'] # type: ignore
 
-            net_output = functional_call(model, params, (obs, timesteps))
-            #state_values = net_output['value'].squeeze(2)
+            net_output = functional_call(model, params, obs)
             action_mean = net_output['action_mean'][:n-1]
             action_logstd = net_output['action_logstd'][:n-1]
             action_dist = torch.distributions.Normal(action_mean, action_logstd.exp())
             log_action_probs = action_dist.log_prob(action).sum(-1)
 
             with torch.no_grad():
-                #advantages = generalized_advantage_estimate(
-                #        state_values = state_values[:n-1,:],
-                #        next_state_values = state_values[1:,:],
-                #        rewards = reward[1:,:],
-                #        terminals = terminal[1:,:],
-                #        discount = discount,
-                #        gae_lambda = gae_lambda,
-                #)
                 advantage = compute_advantage(
                     obs = obs,
                     timesteps = timesteps,
@@ -243,13 +254,12 @@ def update_trpo(
         for history, _ in data:
             n = len(history.obs_history)
             obs = torch.tensor(history.obs, dtype=torch.float, device=device)
-            timesteps = torch.tensor(history.misc['time'], dtype=torch.float, device=device) # type: ignore
 
             action_logstd_old = torch.tensor(history.misc['action_logstd'][1:], dtype=torch.float, device=device) # type: ignore
             action_mean_old = torch.tensor(history.misc['action_mean'][1:], dtype=torch.float, device=device) # type: ignore
             action_dist_old = torch.distributions.Normal(action_mean_old, action_logstd_old.exp())
 
-            net_output = functional_call(model, model_params_dict, (obs, timesteps))
+            net_output = functional_call(model, model_params_dict, obs)
             action_mean = net_output['action_mean'][:n-1]
             action_logstd = net_output['action_logstd'][:n-1]
             # See https://en.wikipedia.org/wiki/Kullback%E2%80%93Leibler_divergence#Multivariate_normal_distributions
@@ -375,6 +385,9 @@ def update_trpo(
             **evaluate_v2(model, data)
         }
 
+    output['time'] = time.time() - start_time
+    print(f'Time: {output["time"]}')
+
     return output
 
 
@@ -494,8 +507,8 @@ def gather_data(model: torch.nn.Module,
             misc={
                 'task_id': info['target_direction'],
                 'log_action_prob': np.ones(num_envs)*np.nan,
-                'action_logstd': np.ones_like(action_mean)*np.nan,
-                'action_mean': np.ones_like(action_mean)*np.nan,
+                'action_logstd': np.ones_like(action_mean.cpu())*np.nan,
+                'action_mean': np.ones_like(action_mean.cpu())*np.nan,
                 'time': np.zeros(num_envs),
             }
     )
@@ -545,7 +558,7 @@ def adapt_model(model: torch.nn.Module,
     timesteps = history.misc['time'] # type: ignore
     old_log_action_probs = torch.tensor(history.misc['log_action_prob'][1:], dtype=torch.float, device=device) # type: ignore
 
-    net_output = functional_call(model, params, (obs, timesteps))
+    net_output = functional_call(model, params, obs)
     #state_values = net_output['value'].squeeze(2)
     action_mean = net_output['action_mean'][:n-1]
     action_logstd = net_output['action_logstd'][:n-1]
@@ -610,97 +623,30 @@ def evaluate(
     def finetune(model):
         yield model
 
-        optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
-        device = next(model.parameters()).device
         for _ in itertools.count():
-            history = VecHistoryBuffer(
-                    num_envs = num_envs,
-                    max_len=rollout_length+1,
-                    device=device)
+            history = gather_data(
+                model = model,
+                params = dict(model.named_parameters()),
+                env = env,
+                rollout_length = rollout_length,
+            )
 
-            obs, _ = env.reset()
-            history.append_obs(obs)
 
-            # Gather data
-            for _ in range(rollout_length):
-                # Select action
-                with torch.no_grad():
-                    model_output = model(torch.tensor(obs, dtype=torch.float, device=device))
-                    action_mean = model_output['action_mean']
-                    action_logstd = model_output['action_logstd']
-                    action_dist = torch.distributions.Normal(action_mean, action_logstd.exp())
-                    action = action_dist.sample().cpu().numpy()
+            # Adapt model to the training data
+            new_model_params = adapt_model(
+                model = model,
+                params = dict(model.named_parameters()),
+                history = history,
+                discount = discount,
+                gae_lambda = gae_lambda,
+                inner_lr = learning_rate,
+            )
 
-                # Step environment
-                obs, reward, terminated, truncated, _ = env.step(action)
-                done = terminated | truncated
-
-                history.append_action(action)
-                history.append_obs(obs, reward, done)
-
-            # Train
-            obs = history.obs
-            action = history.action
-            reward = history.reward
-            terminal = history.terminal
-            device = next(model.parameters()).device
-
-            n = len(history.obs_history)
-
-            timesteps = torch.arange(n, dtype=torch.float, device=device).unsqueeze(1).expand(-1, num_envs)
-            net_output = model(torch.tensor(obs, dtype=torch.float, device=device), timesteps)
-            #state_values = net_output['value'].squeeze(2)
-            action_mean = net_output['action_mean'][:n-1]
-            action_logstd = net_output['action_logstd'][:n-1]
-            action_dist = torch.distributions.Normal(action_mean, action_logstd.exp())
-            log_action_probs = action_dist.log_prob(action).sum(-1)
-
-            # Advantage
-            with torch.no_grad():
-                #advantages = generalized_advantage_estimate(
-                #        state_values = state_values[:n-1,:],
-                #        next_state_values = state_values[1:,:],
-                #        rewards = reward[1:,:],
-                #        terminals = terminal[1:,:],
-                #        discount = discount,
-                #        gae_lambda = gae_lambda,
-                #)
-                #returns = advantages + state_values[:n-1,:]
-                advantage = compute_advantage(
-                    obs = obs,
-                    timesteps = timesteps,
-                    reward = reward,
-                    terminal = terminal,
-                    discount = discount,
-                    gae_lambda = gae_lambda,
-                )
-
-            #loss = adaptation_loss(
-            #    model = model,
-            #    history = history,
-            #    discount = discount,
-            #    gae_lambda = gae_lambda,
-            #)
-            loss = adaptation_loss(
-                log_action_probs=log_action_probs,
-                old_log_action_probs=log_action_probs.detach(),
-                terminals=terminal[:n-1,:],
-                #advantages=advantages,
-                returns=advantage,
-            ).mean()
-
-            optimizer.zero_grad()
-            loss.backward()
-            #for param in model.parameters():
-            #    if param.grad is None:
-            #        continue
-            #    param.grad = torch.ones_like(param.grad, device=device)
-            optimizer.step()
+            # Update model parameters
+            model.load_state_dict(new_model_params)
 
             yield model
 
-            # Clear data
-            history.clear()
 
     # Evaluate after each fine-tuning step
     episode_reward = np.zeros(num_envs)
@@ -744,7 +690,7 @@ def evaluate(
 
 def evaluate_v2(
         model: torch.nn.Module,
-        history: list[list[VecHistoryBuffer]],
+        history: list[tuple[VecHistoryBuffer, VecHistoryBuffer]],
         *,
         learning_rate: float = 0.1,
         discount: float = 0.99,
@@ -780,17 +726,16 @@ def evaluate_v2(
         for _ in itertools.count():
             # Train
             n = len(history_by_task[task_id][0].obs_history)
-            obs = history_by_task[task_id][0].obs
+            obs = torch.tensor(history_by_task[task_id][0].obs, dtype=torch.float, device=device)
             action = history_by_task[task_id][0].action
             reward = history_by_task[task_id][0].reward
             terminal = history_by_task[task_id][0].terminal
             device = next(model.parameters()).device
             task_ids = history_by_task[task_id][0].misc['task_id'][0,:] # type: ignore
-            indices = torch.arange(task_ids.shape[0])[task_ids == task_id]
+            indices = torch.arange(task_ids.shape[0], device=device)[task_ids == task_id]
             timesteps = history_by_task[task_id][0].misc['time'] # type: ignore
 
-            net_output = model(torch.tensor(obs, dtype=torch.float, device=device), timesteps)
-            #state_values = net_output['value'].squeeze(2)
+            net_output = model(obs)
             action_mean = net_output['action_mean'][:n-1]
             action_logstd = net_output['action_logstd'][:n-1]
             action_dist = torch.distributions.Normal(action_mean, action_logstd.exp())
@@ -798,15 +743,6 @@ def evaluate_v2(
 
             # Advantage
             with torch.no_grad():
-                #advantages = generalized_advantage_estimate(
-                #        state_values = state_values[:n-1,:],
-                #        next_state_values = state_values[1:,:],
-                #        rewards = reward[1:,:],
-                #        terminals = terminal[1:,:],
-                #        discount = discount,
-                #        gae_lambda = gae_lambda,
-                #)
-                #returns = advantages + state_values[:n-1,:]
                 advantage = compute_advantage(
                     obs = obs.index_select(1, indices),
                     timesteps = timesteps.index_select(1, indices),
@@ -945,7 +881,7 @@ def main(args):
         AsyncVectorEnv([lambda: make_env('HalfCheetahForward-v4') for _ in range(args.num_envs)]),
         AsyncVectorEnv([lambda: make_env('HalfCheetahBackward-v4') for _ in range(args.num_envs)]),
     ]
-    num_test_envs = 1
+    num_test_envs = 20
     test_env_forward = AsyncVectorEnv([lambda: make_env('HalfCheetahForward-v4') for _ in range(num_test_envs)])
     test_env_backward = AsyncVectorEnv([lambda: make_env('HalfCheetahBackward-v4') for _ in range(num_test_envs)])
 
@@ -956,11 +892,13 @@ def main(args):
 
     assert envs[0].single_observation_space.shape is not None
     assert envs[0].single_action_space.shape is not None
-    model = Model3(
+    model = Model4(
             obs_size=envs[0].single_observation_space.shape[0],
             action_size=envs[0].single_action_space.shape[0]
     )
     model.to(device)
+    param_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f'Number of parameters: {param_count:,}')
 
     trainer = train_trpo_mujoco(
             model = model,
@@ -980,8 +918,8 @@ def main(args):
     test_lengths_backward = []
     for i in itertools.count():
         if i % 10 == 0:
-            performance_forward = evaluate(model, test_env_forward, learning_rate=args.inner_lr, rollout_length=args.rollout_length//num_test_envs)
-            performance_backward = evaluate(model, test_env_backward, learning_rate=args.inner_lr, rollout_length=args.rollout_length//num_test_envs)
+            performance_forward = evaluate(model, test_env_forward, learning_rate=args.inner_lr, rollout_length=args.rollout_length)
+            performance_backward = evaluate(model, test_env_backward, learning_rate=args.inner_lr, rollout_length=args.rollout_length)
             test_rewards_forward.append(performance_forward['reward'])
             test_lengths_forward.append(performance_forward['length'])
             test_rewards_backward.append(performance_backward['reward'])
@@ -999,6 +937,10 @@ def main(args):
                     data[f'test_performance/forward/{grad_steps}'] = performance_forward['reward'][grad_steps]
                     data[f'test_performance/backward/{grad_steps}'] = performance_backward['reward'][grad_steps]
                 wandb.log(data, step=i)
+        #if i % 100 == 0:
+        #    checkpoint_directory = 'checkpoints-2048'
+        #    os.makedirs(checkpoint_directory, exist_ok=True)
+        #    torch.save(model.state_dict(), f'{checkpoint_directory}/checkpoint_{i}.pt')
         x = next(trainer)
         if wandb.run is not None:
             wandb.log(x, step=i)

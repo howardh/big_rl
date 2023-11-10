@@ -15,7 +15,7 @@ from big_rl.model.input_module.container import InputModuleContainer
 from big_rl.model.core_module.container import CoreModule, CoreModuleContainer, CoreModuleParallel, CoreModuleSeries
 from big_rl.model.output_module.container import OutputModuleContainer
 from big_rl.model.modular_model_1 import ModularModel1
-from big_rl.model.core_module.recurrent_attention_17 import RecurrentAttention17
+import big_rl.model.core_module
 from big_rl.utils import merge_space
 from big_rl.utils.make_env import EnvGroup
 

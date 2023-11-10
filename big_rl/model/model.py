@@ -996,6 +996,10 @@ class BatchMultiHeadAttentionEinsum(torch.nn.Module):
 
         attn_output = attn_output.unsqueeze(1)
 
+        if torch.isnan(attn_output).any():
+            print('nan in mha output')
+            breakpoint()
+
         return attn_output, attn_output_weights.view(num_modules, batch_size, num_heads, 1, num_inputs).mean(2)
 
     def to_multihead_attention_modules(self) -> List[torch.nn.MultiheadAttention]:

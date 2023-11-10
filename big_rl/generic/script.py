@@ -41,7 +41,7 @@ def action_dist_discrete(net_output, n=None):
 
 def action_dist_continuous(net_output, n=None):
     action_mean = net_output['action_mean'][:n]
-    action_logstd = net_output['action_logstd'][:n]
+    action_logstd = net_output['action_logstd'][:n].clamp(-10, 10)
     dist = torch.distributions.Normal(action_mean, action_logstd.exp())
     return dist, lambda x: dist.log_prob(x).sum(-1)
 
@@ -186,11 +186,10 @@ def log_episode_end(done, info, episode_reward, episode_true_reward, episode_ste
         done2 = done & (env_ids == env_id)
         if not done2.any():
             continue
-        #fi = info['_final_info']
-        #unsupervised_trials = np.array([x['unsupervised_trials'] for x in info['final_info'][fi]])
-        #supervised_trials = np.array([x['supervised_trials'] for x in info['final_info'][fi]])
-        #unsupervised_reward = np.array([x['unsupervised_reward'] for x in info['final_info'][fi]])
-        #supervised_reward = np.array([x['supervised_reward'] for x in info['final_info'][fi]])
+
+        if 'final_info' in info:
+            episode_true_reward = np.array([np.nan if x is None else x['episode']['r'].item() for x in info['final_info']])
+
         if wandb.run is not None:
             data = {
                     f'reward/{env_label}': episode_reward[done2].mean().item(),
@@ -199,14 +198,8 @@ def log_episode_end(done, info, episode_reward, episode_true_reward, episode_ste
                     'step': global_step_counter[0]-global_step_counter[1],
                     'step_total': global_step_counter[0],
             }
-            #data[f'unsupervised_trials/{env_label}'] = unsupervised_trials[done2[fi]].mean().item()
-            #data[f'supervised_trials/{env_label}'] = supervised_trials[done2[fi]].mean().item()
-            #if unsupervised_trials[done2[fi]].mean() > 0:
-            #    data[f'unsupervised_reward/{env_label}'] = unsupervised_reward[done2[fi]].mean().item()
-            #if supervised_trials[done2[fi]].mean() > 0:
-            #    data[f'supervised_reward/{env_label}'] = supervised_reward[done2[fi]].mean().item()
             wandb.log(data, step = global_step_counter[0])
-        print(f'  reward: {episode_reward[done2].mean():.2f}\t len: {episode_steps[done2].mean()} \t env: {env_label} ({done2.sum().item()})')
+        print(f'  reward: {episode_true_reward[done2].mean():.2f}\t len: {episode_steps[done2].mean()} \t env: {env_label} ({done2.sum().item()})')
 
 
 def train_single_env(
@@ -371,13 +364,14 @@ def train_single_env(
             done = terminated | truncated
 
             history.append_action(action)
-            episode_reward += reward
             episode_true_reward += info.get('reward', reward)
             episode_steps += 1
 
             reward *= reward_scale
             if reward_clip is not None:
                 reward = np.clip(reward, -reward_clip, reward_clip)
+
+            episode_reward += reward # Sum up reward after clipping
 
             history.append_obs(
                     {k:v for k,v in obs.items() if k not in obs_ignore}, reward, done,
@@ -652,7 +646,6 @@ def main(args):
     print('-'*80)
     print(f'Run ID: {args.run_id}')
     print(f'W&B ID: {args.wandb_id}')
-    print('-'*80)
 
     # Initialize W&B
     if args.wandb:
@@ -663,7 +656,7 @@ def main(args):
             wandb.init(project=WANDB_PROJECT_NAME, id=wandb_id, resume='allow')
         else:
             wandb.init(project=WANDB_PROJECT_NAME)
-        wandb.config.update({k:v for k,v in args.__dict__.items() if k != 'model_config'}) # 
+        wandb.config.update({k:v for k,v in args.__dict__.items() if k != 'model_config'})
 
     # Initialize environments
     if args.env_config is not None:
@@ -680,6 +673,7 @@ def main(args):
         raise Exception('Environments must be configured via a config file.')
 
     # Device
+    print('-'*80)
     if args.cuda and torch.cuda.is_available():
         print('Using CUDA')
         device = torch.device('cuda')
@@ -712,6 +706,10 @@ def main(args):
     else:
         raise Exception('Model must be configured via a config file.')
     model.to(device)
+    param_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print('-'*80)
+    print('Model initialized')
+    print(f'Number of parameters: {param_count:,}')
 
     # Initialize optimizer
     if args.optimizer == 'Adam':
@@ -750,6 +748,7 @@ def main(args):
         print(f'Loaded checkpoint from {args.starting_model}')
 
     # Initialize trainer
+    print('-'*80)
     trainer = train(
             model = model,
             envs = envs, # type: ignore (??? AsyncVectorEnv is not a subtype of VectorEnv ???)

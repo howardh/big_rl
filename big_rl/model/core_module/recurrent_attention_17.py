@@ -124,6 +124,11 @@ class RecurrentAttention17(CoreModule):
         gated_output_values = output_value_gate * output_values + (1 - output_value_gate) * prev_value
         gated_output_hidden = output_hidden_gate * output_hidden + (1 - output_hidden_gate) * prev_hidden
 
+        # Check if there's any nan values
+        if torch.isnan(gated_output_queries).any() or torch.isnan(gated_output_keys).any() or torch.isnan(gated_output_values).any() or torch.isnan(gated_output_hidden).any():
+            print("NaN detected in gated_output_queries, gated_output_keys, gated_output_values, or gated_output_hidden")
+            breakpoint()
+
         return { # seq_len = number of inputs receives
             'key': gated_output_keys, # (num_blocks, batch_size, key_size)
             'value': gated_output_values, # (num_blocks, batch_size, value_size)

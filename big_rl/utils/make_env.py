@@ -1,3 +1,4 @@
+import copy
 from typing import NamedTuple
 from enum import Enum
 import itertools
@@ -6,15 +7,18 @@ import yaml
 import gymnasium
 from gymnasium.vector import SyncVectorEnv, AsyncVectorEnv
 from gymnasium.wrappers import AtariPreprocessing, FrameStack, TimeLimit
-from gymnasium.wrappers import RecordEpisodeStatistics, ClipAction, TransformObservation, NormalizeReward, TransformReward # pyright: ignore[reportPrivateImportUsage]
+from gymnasium.wrappers import RecordEpisodeStatistics, ClipAction, NormalizeObservation, TransformObservation, NormalizeReward, TransformReward # pyright: ignore[reportPrivateImportUsage]
 from pydantic import BaseModel, ConfigDict, Field, RootModel
+import numpy as np
 
 from big_rl.minigrid.envs import MinigridPreprocessing, MetaWrapper, ActionShuffle
+from big_rl.utils.wrappers import PadObservation, PadAction
 
 
 WRAPPERS = [
     RecordEpisodeStatistics,
     ClipAction,
+    NormalizeObservation,
     TransformObservation, # XXX: Can't do this with a YAML config. We need to be able to pass a lambda. We can interpret the 'f' kwarg using `eval`?
     NormalizeReward,
     TransformReward,
@@ -27,6 +31,8 @@ WRAPPERS = [
     MetaWrapper,
     ActionShuffle,
     TimeLimit,
+    PadObservation,
+    PadAction,
 ]
 
 
@@ -49,7 +55,7 @@ class EnvType(str, Enum):
 
 class WrapperConfig(BaseModel):
     type: str
-    kwargs: dict
+    kwargs: dict = Field(default_factory=dict)
 
     model_config = ConfigDict(extra='forbid')
 
@@ -121,6 +127,7 @@ def make_env(config : list[EnvGroupConfig] | list[dict]) -> list[EnvGroup]:
 
 
 def make_single_env(config : dict | SingleEnvConfig) -> gymnasium.Env:
+    config = copy.deepcopy(config)
     if isinstance(config, dict):
         config = SingleEnvConfig.model_validate(config)
     if config.kwargs is None:

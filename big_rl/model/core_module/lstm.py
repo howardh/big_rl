@@ -80,9 +80,10 @@ class AttentionLSTM(CoreModule):
         }
 
     def init_hidden(self, batch_size) -> Tuple[torch.Tensor, ...]:
+        device = next(self.parameters()).device
         return (
-            torch.zeros(batch_size, self._hidden_size),
-            torch.zeros(batch_size, self._hidden_size),
+            torch.zeros([batch_size, self._hidden_size], device=device),
+            torch.zeros([batch_size, self._hidden_size], device=device),
         )
 
     @property
