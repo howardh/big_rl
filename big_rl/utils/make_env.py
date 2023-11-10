@@ -9,7 +9,7 @@ from gymnasium.vector import SyncVectorEnv, AsyncVectorEnv
 from gymnasium.wrappers import AtariPreprocessing, FrameStack, TimeLimit
 from gymnasium.wrappers import RecordEpisodeStatistics, ClipAction, NormalizeObservation, TransformObservation, NormalizeReward, TransformReward # pyright: ignore[reportPrivateImportUsage]
 from pydantic import BaseModel, ConfigDict, Field, RootModel
-import numpy as np
+import numpy as np # Imported so that it can be used by TransformObservation's `f` function
 
 from big_rl.minigrid.envs import MinigridPreprocessing, MetaWrapper, ActionShuffle
 from big_rl.utils.wrappers import PadObservation, PadAction

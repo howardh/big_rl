@@ -67,10 +67,14 @@ def compute_ppo_losses(
         vf_loss_coeff : float,
         target_kl : Optional[float],
         num_epochs : int,
+        backtrack : bool,
         action_dist_fn : Callable = action_dist_discrete) -> Generator[Dict[str,Union[torch.Tensor,Tuple[torch.Tensor,...]]],None,None]:
     """
     Compute the losses for PPO.
     """
+    if backtrack and target_kl is None:
+        raise ValueError('`target_kl` must be specified when backtracking is enabled.')
+
     obs = history.obs
     action = history.action
     reward = history.reward
@@ -114,6 +118,8 @@ def compute_ppo_losses(
         if norm_adv:
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
+    state_dict = None
+
     for _ in range(num_epochs):
         net_output = []
         curr_hidden = tuple([h[0].detach() for h in hidden])
@@ -139,6 +145,13 @@ def compute_ppo_losses(
             logratio = log_action_probs - log_action_probs_old
             ratio = logratio.exp()
             approx_kl = ((ratio - 1) - logratio).mean()
+
+        if target_kl is not None:
+            if approx_kl > target_kl:
+                if backtrack:
+                    assert state_dict is not None
+                    model.load_state_dict(state_dict)
+                break
 
         # Policy loss
         pg_loss = clipped_advantage_policy_gradient_loss(
@@ -166,6 +179,9 @@ def compute_ppo_losses(
         entropy_loss = entropy.mean()
         loss = pg_loss - entropy_loss_coeff * entropy_loss + v_loss * vf_loss_coeff
 
+        if backtrack:
+            state_dict = model.state_dict()
+
         yield {
                 'loss': loss,
                 'loss_pi': pg_loss,
@@ -176,10 +192,6 @@ def compute_ppo_losses(
                 'hidden': tuple(h.detach() for h in curr_hidden),
         }
 
-        if target_kl is not None:
-            if approx_kl > target_kl:
-                break
-
 
 def log_episode_end(done, info, episode_reward, episode_true_reward, episode_steps, env_ids, env_label_to_id, global_step_counter):
     for env_label, env_id in env_label_to_id.items():
@@ -187,7 +199,7 @@ def log_episode_end(done, info, episode_reward, episode_true_reward, episode_ste
         if not done2.any():
             continue
 
-        if 'final_info' in info:
+        if 'episode' in info['final_info']:
             episode_true_reward = np.array([np.nan if x is None else x['episode']['r'].item() for x in info['final_info']])
 
         if wandb.run is not None:
@@ -223,6 +235,7 @@ def train_single_env(
         norm_adv: bool = True,
         warmup_steps: int = 0,
         update_hidden_after_grad: bool = False,
+        backtrack: bool = False,
         action_dist_fn: Callable | None = None,
         ) -> Generator[Dict[str, Any], None, None]:
     """
@@ -432,6 +445,7 @@ def train_single_env(
                 entropy_loss_coeff = entropy_loss_coeff,
                 target_kl = target_kl,
                 num_epochs = num_epochs,
+                backtrack = backtrack,
                 action_dist_fn=action_dist_fn,
         )
         x = None
@@ -480,6 +494,7 @@ def train(
         norm_adv: bool = True,
         warmup_steps: int = 0,
         update_hidden_after_grad: bool = False,
+        backtrack: bool = False,
         start_step: int = 0,
         ):
     global_step_counter = [start_step, start_step]
@@ -507,6 +522,7 @@ def train(
             norm_adv = norm_adv,
             warmup_steps = warmup_steps,
             update_hidden_after_grad = update_hidden_after_grad,
+            backtrack = backtrack,
         )
         for env in envs
         if not env.eval_only
@@ -775,6 +791,7 @@ def main(args):
             max_grad_norm = args.max_grad_norm,
             warmup_steps = args.warmup_steps,
             update_hidden_after_grad = args.update_hidden_after_grad,
+            backtrack = args.backtrack,
             start_step = start_step,
     )
 

@@ -24,6 +24,7 @@ def init_parser_trainer(parser: ArgumentParser):
     parser.add_argument('--max-grad-norm', type=float, default=0.5, help='Maximum gradient norm.')
     parser.add_argument('--warmup-steps', type=int, default=0, help='Number of warmup steps on the environment before we start training on the generated samples.')
     parser.add_argument('--update-hidden-after-grad', action='store_true', help='Update the hidden state after the gradient step.')
+    parser.add_argument('--backtrack', action='store_true', help='Backtrack if the KL constraint is violated.')
 
     parser.add_argument('--random-score', type=float, nargs='*', default=None, help='Random score for each environment.')
     parser.add_argument('--max-score', type=float, nargs='*', default=None, help='Max score for each environment.')
