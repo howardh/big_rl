@@ -120,7 +120,7 @@ def compute_ppo_losses(
 
     state_dict = None
 
-    for _ in range(num_epochs):
+    for epoch in range(num_epochs):
         net_output = []
         curr_hidden = tuple([h[0].detach() for h in hidden])
         initial_hidden = model.init_hidden(num_training_envs) # type: ignore
@@ -182,6 +182,9 @@ def compute_ppo_losses(
         if backtrack:
             state_dict = model.state_dict()
 
+        if not torch.isfinite(loss):
+            raise ValueError('Invalid loss computed')
+
         yield {
                 'loss': loss,
                 'loss_pi': pg_loss,
@@ -190,6 +193,7 @@ def compute_ppo_losses(
                 'approx_kl': approx_kl,
                 'output': net_output,
                 'hidden': tuple(h.detach() for h in curr_hidden),
+                'epoch': torch.tensor(epoch),
         }
 
 
@@ -569,6 +573,7 @@ def train(
                     f'entropy/{label}': x['log']['entropy'].mean().item(),
                     #last_approx_kl=approx_kl.item(),
                     #'learning_rate': lr_scheduler.get_lr()[0],
+                    'epoch': x['epoch'],
                     'step': global_step_counter[0]-global_step_counter[1],
                     'step_total': global_step_counter[0],
                 }

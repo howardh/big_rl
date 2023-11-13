@@ -1024,6 +1024,18 @@ register(
 )
 
 register(
+    id="AntForward-v4",
+    entry_point="big_rl.mujoco.envs.ant_fw_bw:AntForwardBackwardEnv",
+    kwargs={'target_direction': 1},
+)
+
+register(
+    id="AntBackward-v4",
+    entry_point="big_rl.mujoco.envs.ant_fw_bw:AntForwardBackwardEnv",
+    kwargs={'target_direction': -1},
+)
+
+register(
     id="HalfCheetahForward-v4",
     entry_point="big_rl.mujoco.envs.half_cheetah_fw_bw:HalfCheetahForwardBackwardEnv",
     max_episode_steps=1000,
@@ -1034,6 +1046,30 @@ register(
     id="HalfCheetahBackward-v4",
     entry_point="big_rl.mujoco.envs.half_cheetah_fw_bw:HalfCheetahForwardBackwardEnv",
     max_episode_steps=1000,
+    kwargs={'target_direction': -1},
+)
+
+register(
+    id="SwimmerForward-v4",
+    entry_point="big_rl.mujoco.envs.swimmer_fw_bw:SwimmerForwardBackwardEnv",
+    kwargs={'target_direction': 1},
+)
+
+register(
+    id="SwimmerBackward-v4",
+    entry_point="big_rl.mujoco.envs.swimmer_fw_bw:SwimmerForwardBackwardEnv",
+    kwargs={'target_direction': -1},
+)
+
+register(
+    id="Walker2dForward-v4",
+    entry_point="big_rl.mujoco.envs.walker2d_fw_bw:Walker2dForwardBackwardEnv",
+    kwargs={'target_direction': 1},
+)
+
+register(
+    id="Walker2dBackward-v4",
+    entry_point="big_rl.mujoco.envs.walker2d_fw_bw:Walker2dForwardBackwardEnv",
     kwargs={'target_direction': -1},
 )
 

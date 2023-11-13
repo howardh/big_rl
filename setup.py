@@ -29,8 +29,8 @@ setup(name='big_rl',
         'beautifulsoup4', # Needed for manipulating MJCF files
         'lxml',
 
-        # Atari (Not yet compatible with Gymnasium)
-        #'gym[atari,accept-rom-license]',
+        # Atari
+        'gymnasium[atari,accept-rom-license]',
 
         # Dev stuff
         'pytest',
