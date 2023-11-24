@@ -214,13 +214,19 @@ class CoreModuleParallel(CoreModuleContainer):
                 'key': torch.cat(new_key, dim=0),
                 'value': torch.cat(new_value, dim=0),
                 'hidden': tuple(itertools.chain.from_iterable(new_hidden)),
+                'misc': {
+                    'container_type': 'parallel',
+                }
             }
         else:
             return {
                 'key': torch.cat(new_key, dim=0),
                 'value': torch.cat(new_value, dim=0),
                 'hidden': tuple(itertools.chain.from_iterable(new_hidden)),
-                'misc': {i: m for i,m in enumerate(misc) if m is not None},
+                'misc': {
+                    **{i: m for i,m in enumerate(misc) if m is not None},
+                    'container_type': 'parallel',
+                }
             }
 
 
@@ -247,11 +253,17 @@ class CoreModuleSeries(CoreModuleContainer):
                 'key': new_key,
                 'value': new_value,
                 'hidden': tuple(itertools.chain.from_iterable(new_hidden)),
+                'misc': {
+                    'container_type': 'series',
+                }
             }
         else:
             return {
                 'key': new_key,
                 'value': new_value,
                 'hidden': tuple(itertools.chain.from_iterable(new_hidden)),
-                'misc': {i: m for i,m in enumerate(misc) if m is not None},
+                'misc': {
+                    **{i: m for i,m in enumerate(misc) if m is not None},
+                    'container_type': 'series',
+                }
             }

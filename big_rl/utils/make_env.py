@@ -1,5 +1,5 @@
 import copy
-from typing import NamedTuple
+from typing import NamedTuple, Any
 from enum import Enum
 import itertools
 import yaml
@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel
 import numpy as np # Imported so that it can be used by TransformObservation's `f` function
 
 from big_rl.minigrid.envs import MinigridPreprocessing, MetaWrapper, ActionShuffle
+from big_rl.mujoco.envs.wrappers import MujocoTaskRewardWrapper
 from big_rl.utils.wrappers import PadObservation, PadAction
 
 
@@ -27,6 +28,8 @@ WRAPPERS = [
     FrameStack,
     # Minigrid
     MinigridPreprocessing,
+    # Mujoco
+    MujocoTaskRewardWrapper,
     # Misc
     MetaWrapper,
     ActionShuffle,
@@ -94,6 +97,11 @@ class EnvGroup(NamedTuple):
     name: str | None # Name for this entire group of envs
     eval_only: bool
     model_name: str | None
+
+    #def __getattribute__(self, __name: str) -> Any:
+    #    if __name in ['step', 'reset', 'action_space', 'observation_space']:
+    #        raise AttributeError(f'EnvGroup does not have attribute {__name}. It looks like you are trying to access an attribute of the underlying VectorEnv. You can access the underlying VectorEnv via the `env` attribute.')
+    #    return super().__getattribute__(__name)
 
 
 ##################################################

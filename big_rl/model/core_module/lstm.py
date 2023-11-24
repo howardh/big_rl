@@ -10,7 +10,7 @@ from typing import Tuple
 import torch
 from torchtyping.tensor_type import TensorType
 
-from big_rl.model.core_module.container import CoreModule
+from big_rl.model.core_module.container import CoreModule, CoreModuleOutput
 
 
 class AttentionLSTM(CoreModule):
@@ -40,7 +40,7 @@ class AttentionLSTM(CoreModule):
             key: TensorType['seq_len','batch_size','key_size',float],
             value: TensorType['seq_len','batch_size','value_size',float],
             hidden: Tuple[torch.Tensor, torch.Tensor],
-        ):
+        ) -> CoreModuleOutput:
         batch_size = key.shape[1]
 
         prev_hidden_state = hidden[0]
@@ -69,14 +69,16 @@ class AttentionLSTM(CoreModule):
         new_value = fc_output[:, self._key_size:]
 
         return { # seq_len = number of inputs receives
-            'attn_output': attn_output,
-            'attn_output_weights': attn_output_weights,
             'key': new_key.unsqueeze(0),
             'value': new_value.unsqueeze(0),
             'hidden': (
                 new_hidden_state,
                 new_cell_state,
-            )
+            ),
+            'misc': {
+                'attn_output': attn_output,
+                'attn_output_weights': attn_output_weights,
+            },
         }
 
     def init_hidden(self, batch_size) -> Tuple[torch.Tensor, ...]:

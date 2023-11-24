@@ -9,7 +9,7 @@ import torch
 import pydantic
 from pydantic import BaseModel, ConfigDict, FilePath, PositiveInt, Field
 
-from big_rl.model.input_module.modules import IgnoredInput, GreyscaleImageInput, ImageInput56, ImageInput84, ScalarInput, DiscreteInput, LinearInput, MatrixInput
+from big_rl.model.input_module.modules import IgnoredInput, GreyscaleImageInput, ImageInput56, ImageInput84, ScalarInput, UnaryScalarInput, DiscreteInput, LinearInput, MatrixInput
 from big_rl.model.output_module.modules import LinearOutput, StateIndependentOutput
 from big_rl.model.input_module.container import InputModuleContainer
 from big_rl.model.core_module.container import CoreModule, CoreModuleContainer, CoreModuleParallel, CoreModuleSeries
@@ -29,6 +29,7 @@ VALID_INPUT_MODULES = [
     ImageInput56,
     ImageInput84,
     ScalarInput,
+    UnaryScalarInput,
     DiscreteInput,
     LinearInput,
     MatrixInput,

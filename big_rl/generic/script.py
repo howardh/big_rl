@@ -15,7 +15,6 @@ from torch.utils.data.dataloader import default_collate
 import torch.nn
 import torch.nn.utils
 import numpy as np
-import numpy.typing as npt
 import wandb
 
 from frankenstein.buffer.vec_history import VecHistoryBuffer
@@ -72,6 +71,7 @@ def compute_ppo_losses(
     """
     Compute the losses for PPO.
     """
+    discount_pg = False
     if backtrack and target_kl is None:
         raise ValueError('`target_kl` must be specified when backtracking is enabled.')
 
@@ -82,6 +82,7 @@ def compute_ppo_losses(
     misc = history.misc
     assert isinstance(misc,dict)
     hidden = misc['hidden']
+    time_step = misc['t']
 
     n = len(history.obs_history)
     num_training_envs = len(reward[0])
@@ -160,7 +161,10 @@ def compute_ppo_losses(
                 advantages = advantages,
                 terminals = terminal[:n-1],
                 epsilon=0.1
-        ).mean()
+        )
+        if discount_pg:
+            pg_loss *= discount ** time_step[:n-1]
+        pg_loss = pg_loss.mean()
 
         # Value loss
         if clip_vf_loss is not None:
@@ -197,24 +201,44 @@ def compute_ppo_losses(
         }
 
 
-def log_episode_end(done, info, episode_reward, episode_true_reward, episode_steps, env_ids, env_label_to_id, global_step_counter):
+def log_episode_end(done, info, episode_reward, episode_true_reward, episode_reward_components, episode_steps, env_ids, env_label_to_id, global_step_counter):
     for env_label, env_id in env_label_to_id.items():
         done2 = done & (env_ids == env_id)
         if not done2.any():
             continue
 
-        if 'episode' in info['final_info']:
+        true_reward_source = 'accumulated during training'
+        if 'episode' in info['final_info'][done2][0]:
+            true_reward_source = 'RecordEpisodeStatistics wrapper'
             episode_true_reward = np.array([np.nan if x is None else x['episode']['r'].item() for x in info['final_info']])
 
         if wandb.run is not None:
             data = {
+                    'remaining_energy': np.mean([x['energy'] for x in info['final_info'][done2]]),
                     f'reward/{env_label}': episode_reward[done2].mean().item(),
                     f'true_reward/{env_label}': episode_true_reward[done2].mean().item(),
                     f'episode_length/{env_label}': episode_steps[done2].mean().item(),
                     'step': global_step_counter[0]-global_step_counter[1],
                     'step_total': global_step_counter[0],
             }
+
+            # Log individual reward components
+            for k,v in episode_reward_components.items():
+                data[f'reward_components/{env_label}/{k}'] = v[done2].mean().item()
+
+            # Log the standard mujoco reward by summing up the components
+            ANT_KEYS = ['reward_forward', 'reward_ctrl', 'reward_survive']
+            if all(k in episode_reward_components.keys() for k in ANT_KEYS):
+                standard_reward = sum(
+                    episode_reward_components[k][done2].mean().item()
+                    for k in ANT_KEYS
+                )
+                data[f'ant_standard_reward/{env_label}'] = standard_reward
+                data[f'ant_standard_reward/all'] = standard_reward
+
+            # Save data
             wandb.log(data, step = global_step_counter[0])
+            wandb.summary['true_reward_source'] = true_reward_source
         print(f'  reward: {episode_true_reward[done2].mean():.2f}\t len: {episode_steps[done2].mean()} \t env: {env_label} ({done2.sum().item()})')
 
 
@@ -276,15 +300,17 @@ def train_single_env(
             device=device)
     log = {}
 
+    episode_true_reward = np.zeros(num_envs) # Actual reward we want to optimize before any modifications (e.g. clipping)
+    episode_reward = np.zeros(num_envs) # Reward presented to the learning algorithm
+    episode_reward_components = defaultdict(lambda: np.zeros(num_envs)) # The reward split between the various components (e.g. control cost, healthy reward, task reward, etc)
+    episode_steps = np.zeros(num_envs)
+
     obs, info = env.reset(seed=0)
     hidden = model.init_hidden(num_envs) # type: ignore (???)
     history.append_obs(
             {k:v for k,v in obs.items() if k not in obs_ignore},
-            misc = {'hidden': hidden},
+            misc = {'hidden': hidden, 't': episode_steps.copy()},
     )
-    episode_true_reward = np.zeros(num_envs) # Actual reward we want to optimize before any modifications (e.g. clipping)
-    episode_reward = np.zeros(num_envs) # Reward presented to the learning algorithm
-    episode_steps = np.zeros(num_envs)
 
     ##################################################
     # Warmup
@@ -383,6 +409,9 @@ def train_single_env(
             history.append_action(action)
             episode_true_reward += info.get('reward', reward)
             episode_steps += 1
+            for k in info.keys():
+                if 'reward' in k and not k.startswith('_'):
+                    episode_reward_components[k] += info[k]
 
             reward *= reward_scale
             if reward_clip is not None:
@@ -392,7 +421,7 @@ def train_single_env(
 
             history.append_obs(
                     {k:v for k,v in obs.items() if k not in obs_ignore}, reward, done,
-                    misc = {'hidden': hidden}
+                    misc = {'hidden': hidden, 't': episode_steps.copy()}
             )
 
             if done.any():
@@ -402,6 +431,7 @@ def train_single_env(
                         info = info,
                         episode_reward = episode_reward,
                         episode_true_reward = episode_true_reward,
+                        episode_reward_components = episode_reward_components,
                         episode_steps = episode_steps,
                         env_ids = env_ids,
                         env_label_to_id = env_label_to_id,
@@ -419,6 +449,8 @@ def train_single_env(
                 episode_reward[done] = 0
                 episode_true_reward[done] = 0
                 episode_steps[done] = 0
+                for k in episode_reward_components.keys():
+                    episode_reward_components[k][done] = 0
 
         if type(model).__name__ == 'ModularPolicy5':
             assert isinstance(model.last_attention, list)
@@ -782,7 +814,8 @@ def main(args):
             max_steps = args.max_steps,
             max_steps_total = args.max_steps_total,
             rollout_length = args.rollout_length,
-            obs_scale = {'obs': 1.0/255.0},
+            #obs_scale = {'obs': 1.0/255.0},
+            obs_scale = {},
             reward_clip = args.reward_clip,
             reward_scale = args.reward_scale,
             discount = args.discount,

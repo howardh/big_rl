@@ -142,10 +142,10 @@ class RecurrentAttention17(CoreModule):
                 'attn_output': attn_output, # (num_blocks, batch_size, value_size)
                 'attn_output_weights': attn_output_weights, # (num_blocks, batch_size, seq_len)
                 'gates': {
-                    'query': output_query_gate, # (num_blocks, batch_size)
-                    'key': output_key_gate, # (num_blocks, batch_size)
-                    'value': output_value_gate, # (num_blocks, batch_size)
-                    'hidden': output_hidden_gate, # (num_blocks, batch_size)
+                    'query': output_query_gate, # (num_blocks, batch_size, key_size)
+                    'key': output_key_gate, # (num_blocks, batch_size, key_size)
+                    'value': output_value_gate, # (num_blocks, batch_size, value_size)
+                    'hidden': output_hidden_gate, # (num_blocks, batch_size, input_size)
                 },
             },
         }

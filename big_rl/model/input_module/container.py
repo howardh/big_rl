@@ -22,6 +22,7 @@ class InputModuleContainer(torch.nn.Module):
         self.input_modules = input_modules
         self._input_mapping = input_mapping
         self._input_to_modules = defaultdict(set)
+        self._module_names = sorted(list(input_modules.keys()))
         for input_key, module_name in input_mapping:
             if module_name not in input_modules:
                 raise ValueError(f"Unknown input module name: {module_name}")
@@ -30,7 +31,7 @@ class InputModuleContainer(torch.nn.Module):
             if k not in self._input_to_modules:
                 self._input_to_modules[k].add(k)
 
-    def forward(self, inputs):
+    def forward(self, inputs, hidden=tuple()):
         input_labels = []
         input_keys = []
         input_vals = []
@@ -60,3 +61,10 @@ class InputModuleContainer(torch.nn.Module):
                 'input_labels': input_labels,
             }
         }
+
+    @property
+    def n_hidden(self) -> int:
+        return sum(
+            m.n_hidden if hasattr(m, 'n_hidden') else 0
+            for m in self.input_modules.values()
+        )

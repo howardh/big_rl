@@ -44,14 +44,14 @@ class PadAction(gymnasium.ActionWrapper):
                     tuple((target_shape-action_shape,0) for action_shape, target_shape in zip(env.action_space.low.shape, shape)),
                     mode='constant',
                     #constant_values=0,
-                    constant_values=-1, # FIXME: Hack. Change it to 0 when the Gymnasium API allows for different low/high boundaries in the same vectorized environment.
+                    constant_values=-1, # FIXME: Hack. Change it to 0 when the Gymnasium API allows for different low/high boundaries in the same vectorized environment. This only works for now because the envirionments I'm using all have the same low/high values.
                 ),
                 high=np.pad(
                     env.action_space.high,
                     tuple((target_shape-action_shape,0) for action_shape, target_shape in zip(env.action_space.low.shape, shape)),
                     mode='constant',
                     #constant_values=0,
-                    constant_values=1, # FIXME: Hack. Change it to 0 when the Gymnasium API allows for different low/high boundaries in the same vectorized environment.
+                    constant_values=1, # FIXME: Hack. Change it to 0 when the Gymnasium API allows for different low/high boundaries in the same vectorized environment. This only works for now because the envirionments I'm using all have the same low/high values.
                 ),
                 shape=shape,
                 dtype=np.float32,

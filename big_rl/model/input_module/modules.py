@@ -111,6 +111,32 @@ class ScalarInput(InputModule):
         }
 
 
+class UnaryScalarInput(InputModule):
+    def __init__(self, key_size: int, value_size: int, min_value: float = -1, max_value: float = 1):
+        super().__init__()
+        self.value_size = value_size
+        self.key = torch.nn.Parameter(torch.rand([key_size]))
+        self.min_value = min_value
+        self.max_value = max_value
+    def forward(self, value: Float[torch.Tensor, 'batch_size']):
+        batch_size = int(torch.tensor(value.shape).prod().item())
+        batch_shape = value.shape
+        assert len(batch_shape) == 2
+        assert batch_shape[-1] == 1, 'Last dimension of input to UnaryScalarInput has to be size 1.'
+        assert (value >= 0).all(), 'UnaryScalarInput only supports positive values.'
+        unary_output = torch.ones([batch_size, self.value_size], device=value.device) * self.min_value
+        log_value = torch.log(value + 1)
+        for i in range(batch_size):
+            lv = int(log_value[i].item())
+            rem = log_value[i].item() - lv
+            unary_output[i,:lv] = self.max_value
+            unary_output[i,lv] = rem * (self.max_value - self.min_value) + self.min_value
+        return {
+            'key': self.key.view(1,-1).expand(batch_size, -1).view(*batch_shape[:-1],-1),
+            'value': unary_output
+        }
+
+
 class LinearInput(InputModule):
     def __init__(self, input_size: int, key_size: int, value_size: int, shared_key: bool = False):
         """
