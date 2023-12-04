@@ -129,9 +129,9 @@ class CoreModule(torch.nn.Module):
             if 'hidden' not in output:
                 raise ValueError(f'Core module output missing "hidden" field. If there is no hidden state, return an empty tuple.')
             if len(output['key'].shape) != 3:
-                raise ValueError(f'Expected key to have shape (batch_size, num_modules, key_size), got {output["key"].shape}')
+                raise ValueError(f'Expected key to have shape (num_modules, batch_size, key_size), got {output["key"].shape}')
             if len(output['value'].shape) != 3:
-                raise ValueError(f'Expected value to have shape (batch_size, num_modules, value_size), got {output["value"].shape}')
+                raise ValueError(f'Expected value to have shape (num_modules, batch_size, value_size), got {output["value"].shape}')
             if output['key'].shape[1] != batch_size:
                 raise ValueError(f'Output key dimensions does not match input key dimension. Expected key to have batch size {batch_size}, got {output["key"].shape[1]}')
             if output['key'].shape[2] != key_size:

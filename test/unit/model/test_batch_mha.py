@@ -2,10 +2,10 @@ import pytest
 
 import torch
 
-from big_rl.model.model import BatchMultiHeadAttentionEinsum, BatchMultiHeadAttentionBroadcast, NonBatchMultiHeadAttention
+from big_rl.model.model import BatchMultiHeadAttentionEinsum, BatchMultiHeadAttentionBroadcast, BatchMultiHeadAttentionVmap, NonBatchMultiHeadAttention
 
 
-@pytest.mark.parametrize("batch_mha_cls", [BatchMultiHeadAttentionEinsum, BatchMultiHeadAttentionBroadcast])
+@pytest.mark.parametrize("batch_mha_cls", [BatchMultiHeadAttentionEinsum, BatchMultiHeadAttentionBroadcast, BatchMultiHeadAttentionVmap])
 def test_same_as_non_batch(batch_mha_cls):
     modules = [torch.nn.MultiheadAttention(embed_dim=6, num_heads=3) for _ in range(5)]
     batch_mha = batch_mha_cls(modules, num_heads=3, key_size=6, default_batch=True)
@@ -24,7 +24,7 @@ def test_same_as_non_batch(batch_mha_cls):
     assert torch.allclose(batch_mha_output[1], non_batch_mha_output[1], atol=1e-7)
 
 
-@pytest.mark.parametrize("batch_mha_cls", [BatchMultiHeadAttentionEinsum, BatchMultiHeadAttentionBroadcast])
+@pytest.mark.parametrize("batch_mha_cls", [BatchMultiHeadAttentionEinsum, BatchMultiHeadAttentionBroadcast, BatchMultiHeadAttentionVmap])
 def test_convert_to_mha(batch_mha_cls):
     """ BatchMultiHeadAttentionEinsum/Broadcast can be converted back to a list of torch.nn.MultiheadAttention modules. Check that the conversion is done correctly. """
     modules = [torch.nn.MultiheadAttention(embed_dim=6, num_heads=3) for _ in range(5)]
@@ -44,7 +44,7 @@ def test_convert_to_mha(batch_mha_cls):
     assert torch.allclose(batch_mha_output[1], non_batch_mha_output[1], atol=1e-7)
 
 
-@pytest.mark.parametrize("batch_mha_cls", [BatchMultiHeadAttentionEinsum, BatchMultiHeadAttentionBroadcast])
+@pytest.mark.parametrize("batch_mha_cls", [BatchMultiHeadAttentionEinsum, BatchMultiHeadAttentionBroadcast, BatchMultiHeadAttentionVmap])
 def test_convert_to_mha_parameters_unchanged(batch_mha_cls):
     """  """
     modules = [torch.nn.MultiheadAttention(embed_dim=6, num_heads=3) for _ in range(5)]

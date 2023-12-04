@@ -93,7 +93,7 @@ def compute_ppo_losses(
         curr_hidden = tuple([h[0].detach() for h in hidden])
         for o,term in zip2(obs,terminal):
             curr_hidden = tuple([
-                torch.where(term.unsqueeze(1), init_h, h)
+                torch.where(term.view(-1, *([1]*(len(h.shape)-2))), init_h, h)
                 for init_h,h in zip(initial_hidden,curr_hidden)
             ])
             o = preprocess_input_fn(o) if preprocess_input_fn is not None else o
@@ -127,7 +127,7 @@ def compute_ppo_losses(
         initial_hidden = model.init_hidden(num_training_envs) # type: ignore
         for o,term in zip2(obs,terminal):
             curr_hidden = tuple([
-                torch.where(term.unsqueeze(1), init_h, h)
+                torch.where(term.view(-1, *([1]*(len(h.shape)-2))), init_h, h)
                 for init_h,h in zip(initial_hidden,curr_hidden)
             ])
             o = preprocess_input_fn(o) if preprocess_input_fn is not None else o
@@ -305,7 +305,7 @@ def train_single_env(
     episode_reward_components = defaultdict(lambda: np.zeros(num_envs)) # The reward split between the various components (e.g. control cost, healthy reward, task reward, etc)
     episode_steps = np.zeros(num_envs)
 
-    obs, info = env.reset(seed=0)
+    obs, info = env.reset()
     hidden = model.init_hidden(num_envs) # type: ignore (???)
     history.append_obs(
             {k:v for k,v in obs.items() if k not in obs_ignore},
@@ -331,6 +331,7 @@ def train_single_env(
 
             action_dist, _ = action_dist_fn(model_output)
             action = action_dist.sample().cpu().numpy()
+            breakpoint()
 
         # Step environment
         obs, reward, terminated, truncated, info = env.step(action) # type: ignore
@@ -439,7 +440,8 @@ def train_single_env(
                 )
                 # Reset hidden state for finished episodes
                 hidden = tuple(
-                        torch.where(torch.tensor(done, device=device).unsqueeze(1), h0, h)
+                        #torch.where(torch.tensor(done, device=device).unsqueeze(1), h0, h)
+                        torch.where(torch.tensor(done, device=device).view(-1, *([1]*(len(h.shape)-2))), h0, h)
                         for h0,h in zip(model.init_hidden(num_envs), hidden) # type: ignore (???)
                 )
                 # Save episode rewards

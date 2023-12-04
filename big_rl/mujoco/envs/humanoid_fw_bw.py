@@ -1,8 +1,9 @@
 import numpy as np
-from gymnasium.envs.mujoco.walker2d_v4 import Walker2dEnv as Walker2dEnv_
+from gymnasium.envs.mujoco.humanoid_v4 import HumanoidEnv as HumanoidEnv_
+from gymnasium.envs.mujoco.humanoid_v4 import mass_center
 
 
-class Walker2dForwardBackwardEnv(Walker2dEnv_):
+class HumanoidForwardBackwardEnv(HumanoidEnv_):
     def __init__(self, target_direction=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._target_direction = target_direction
@@ -20,35 +21,35 @@ class Walker2dForwardBackwardEnv(Walker2dEnv_):
         return obs, info
 
     def step(self, action):
-        x_position_before = self.data.qpos[0]
+        xy_position_before = mass_center(self.model, self.data)
         self.do_simulation(action, self.frame_skip)
-        x_position_after = self.data.qpos[0]
-        x_velocity = (x_position_after - x_position_before) / self.dt
+        xy_position_after = mass_center(self.model, self.data)
+
+        xy_velocity = (xy_position_after - xy_position_before) / self.dt
+        x_velocity, y_velocity = xy_velocity
 
         ctrl_cost = self.control_cost(action)
 
-        forward_reward = self._forward_reward_weight * x_velocity * self.target_direction # <-- Modified this line
+        forward_reward = self._forward_reward_weight * x_velocity * self.target_direction # <-- Changed this line
         healthy_reward = self.healthy_reward
 
         rewards = forward_reward + healthy_reward
-        costs = ctrl_cost
 
         observation = self._get_obs()
-        reward = rewards - costs
+        reward = rewards - ctrl_cost
         terminated = self.terminated
         info = {
-            # vvv Added these lines vvv
-            "reward_forward": forward_reward,
-            "reward_ctrl": -ctrl_cost,
-            "reward_survive": healthy_reward,
-            # ^^^ Added these lines ^^^
-
-            "x_position": x_position_after,
+            "reward_linvel": forward_reward,
+            "reward_quadctrl": -ctrl_cost,
+            "reward_alive": healthy_reward,
+            "x_position": xy_position_after[0],
+            "y_position": xy_position_after[1],
+            "distance_from_origin": np.linalg.norm(xy_position_after, ord=2),
             "x_velocity": x_velocity,
-            "target_direction": self.target_direction, # <-- Added this line
+            "y_velocity": y_velocity,
+            "forward_reward": forward_reward,
         }
 
         if self.render_mode == "human":
             self.render()
-
         return observation, reward, terminated, False, info

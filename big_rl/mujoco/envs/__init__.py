@@ -1073,6 +1073,40 @@ register(
     kwargs={'target_direction': -1},
 )
 
+register(
+    id="HumanoidForward-v4",
+    entry_point="big_rl.mujoco.envs.humanoid_fw_bw:HumanoidForwardBackwardEnv",
+    kwargs={'target_direction': 1},
+)
+
+register(
+    id="HumanoidBackward-v4",
+    entry_point="big_rl.mujoco.envs.humanoid_fw_bw:HumanoidForwardBackwardEnv",
+    kwargs={'target_direction': -1},
+)
+
+register(
+    id="HopperForward-v4",
+    entry_point="big_rl.mujoco.envs.hopper_fw_bw:HopperForwardBackwardEnv",
+    kwargs={'target_direction': 1},
+)
+
+register(
+    id="HopperBackward-v4",
+    entry_point="big_rl.mujoco.envs.hopper_fw_bw:HopperForwardBackwardEnv",
+    kwargs={'target_direction': -1},
+)
+
+register(
+    id="ReacherNoLimit-v4",
+    entry_point="gymnasium.envs.mujoco.reacher_v4:ReacherEnv",
+)
+
+register(
+    id="PusherNoLimit-v4",
+    entry_point="gymnasium.envs.mujoco.pusher_v4:PusherEnv",
+)
+
 
 if __name__ == '__main__':
     env = gym.make('ArmFetch-v0', render_mode='human', num_objs=6, camera_fov=90, camera_distance=0)

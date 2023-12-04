@@ -1,8 +1,8 @@
 import numpy as np
-from gymnasium.envs.mujoco.walker2d_v4 import Walker2dEnv as Walker2dEnv_
+from gymnasium.envs.mujoco.hopper_v4 import HopperEnv as HopperEnv_
 
 
-class Walker2dForwardBackwardEnv(Walker2dEnv_):
+class HopperForwardBackwardEnv(HopperEnv_):
     def __init__(self, target_direction=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._target_direction = target_direction
@@ -37,18 +37,15 @@ class Walker2dForwardBackwardEnv(Walker2dEnv_):
         reward = rewards - costs
         terminated = self.terminated
         info = {
+            "x_position": x_position_after,
+            "x_velocity": x_velocity,
             # vvv Added these lines vvv
             "reward_forward": forward_reward,
             "reward_ctrl": -ctrl_cost,
-            "reward_survive": healthy_reward,
+            "target_direction": self.target_direction,
             # ^^^ Added these lines ^^^
-
-            "x_position": x_position_after,
-            "x_velocity": x_velocity,
-            "target_direction": self.target_direction, # <-- Added this line
         }
 
         if self.render_mode == "human":
             self.render()
-
         return observation, reward, terminated, False, info

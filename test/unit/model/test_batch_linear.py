@@ -1,11 +1,11 @@
 import pytest
 import torch
 
-from big_rl.model.model import BatchLinear, NonBatchLinear
+from big_rl.model.model import BatchLinear, BatchLinearVmap, NonBatchLinear
 #from big_rl.model.model import BatchLinearCpp
 
 
-@pytest.mark.parametrize("batch_linear_cls", [BatchLinear])
+@pytest.mark.parametrize("batch_linear_cls", [BatchLinear, BatchLinearVmap])
 def test_same_as_non_batch_with_nonbatched_inputs(batch_linear_cls):
     """ If the batched and non-batched versions of the same model are given the same input, they should produce the same output. The inputs are not batched (`default_batch=False`), meaning that the same input is fed to each linear module in the batch of linear modules. """
     num_modules = 5
@@ -18,7 +18,7 @@ def test_same_as_non_batch_with_nonbatched_inputs(batch_linear_cls):
     assert torch.allclose(batch_linear(x), non_batch_linear(x))
 
 
-@pytest.mark.parametrize("batch_linear_cls", [BatchLinear])
+@pytest.mark.parametrize("batch_linear_cls", [BatchLinear, BatchLinearVmap])
 def test_same_as_non_batch_with_batched_inputs(batch_linear_cls):
     """ If the batched and non-batched versions of the same model are given the same input, they should produce the same output. The inputs are batched (`default_batch=True`), meaning that we have the same number of inputs as linear modules, each of which are fed to exactly one of the linear modules. """
     num_modules = 5

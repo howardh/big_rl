@@ -784,6 +784,74 @@ class NonBatchMultiHeadAttention(torch.nn.Module):
         return list(self.attentions) # type: ignore
 
 
+class BatchMultiHeadAttentionVmap(torch.nn.Module):
+    def __init__(self, modules, key_size, num_heads, default_batch=False):
+        super(BatchMultiHeadAttentionVmap, self).__init__()
+        self.num_heads = num_heads
+        self.key_size = key_size
+        self.default_batch = default_batch
+        self.attentions = torch.nn.ModuleList(modules)
+
+    def forward_module(self, query, key, value, attention):
+        query = query.unsqueeze(0)
+
+        num_heads = self.num_heads
+        embed_dim = self.key_size
+        head_dim = embed_dim // num_heads
+        num_inputs, batch_size, _ = key.shape
+
+        w_q, w_k, w_v = attention.in_proj_weight.chunk(3)
+        b_q, b_k, b_v = attention.in_proj_bias.chunk(3)
+
+        q = query @ w_q.transpose(-2,-1) + b_q
+        k = key @ w_k.transpose(-2,-1) + b_k
+        v = value @ w_v.transpose(-2,-1) + b_v
+
+        tgt_len, bsz, embed_dim = query.shape
+        q = q.contiguous().view(tgt_len, bsz * num_heads, head_dim).transpose(0, 1)
+        k = k.contiguous().view(k.shape[0], bsz * num_heads, head_dim).transpose(0, 1)
+        v = v.contiguous().view(v.shape[0], bsz * num_heads, head_dim).transpose(0, 1)
+
+        q = q / math.sqrt(head_dim)
+        attn_output_weights = torch.bmm(q, k.transpose(-2, -1))
+        attn_output_weights = torch.softmax(attn_output_weights, dim=-1)
+        attn_output = torch.bmm(attn_output_weights, v)
+
+        attn_output = attn_output.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
+        attn_output = attn_output @ attention.out_proj.weight.transpose(-2,-1) + attention.out_proj.bias
+
+        return attn_output, attn_output_weights.view(batch_size, num_heads, 1, num_inputs).mean(1)
+
+    def forward(self, query, key, value, batched=None):
+        if batched is None:
+            batched = self.default_batch
+        if batched:
+            return self.forward_batch(query, key, value)
+        else:
+            return self.forward_unbatched(query, key, value)
+
+    def forward_unbatched(self, query, key, value):
+        def wrapper(params, buffers, q, k, v):
+            return torch.func.functional_call(self.attentions[0], (params, buffers), (q, k, v))
+        batch_func = torch.vmap(wrapper, in_dims=(0, None, None, None, None), out_dims=0)
+
+        params, buffers = torch.func.stack_module_state(list(self.attentions))
+
+        return batch_func(params, buffers, query, key, value)
+
+    def forward_batch(self, query, key, value):
+        def wrapper(params, buffers, q, k, v):
+            return torch.func.functional_call(self.attentions[0], (params, buffers), (q, k, v))
+        batch_func = torch.vmap(wrapper, in_dims=(0, None, 0, 0, 0), out_dims=0)
+
+        params, buffers = torch.func.stack_module_state(list(self.attentions))
+
+        return batch_func(params, buffers, query.unsqueeze(1), key, value)
+
+    def to_multihead_attention_modules(self) -> List[torch.nn.MultiheadAttention]:
+        return list(self.attentions) # type: ignore
+
+
 class BatchMultiHeadAttentionBroadcast(torch.nn.Module):
     def __init__(self, modules: List[torch.nn.MultiheadAttention], key_size, num_heads, default_batch=False):
         super(BatchMultiHeadAttentionBroadcast, self).__init__()
@@ -1026,6 +1094,10 @@ class BatchMultiHeadAttentionEinsum(torch.nn.Module):
 
 class NonBatchLinear(torch.nn.Module):
     def __init__(self, modules, default_batch=False):
+        """
+        Args:
+            default_batch: if True, then the same input is used for all modules. Otherwise, the input is split across modules over its first dimension.
+        """
         super(NonBatchLinear, self).__init__()
 
         self.default_batch = default_batch
@@ -1073,6 +1145,66 @@ class NonBatchLinear(torch.nn.Module):
             self.forward_module(x, module)
             for x,module in zip(batched_x,self.linear)
         ])
+
+    def to_linear_modules(self) -> List[torch.nn.Linear]:
+        return list(self.linear) # type: ignore
+
+
+class BatchLinearVmap(torch.nn.Module):
+    def __init__(self, modules, default_batch=False):
+        super(BatchLinearVmap, self).__init__()
+
+        self.default_batch = default_batch
+        self.linear = torch.nn.ModuleList(modules)
+
+    def forward_module(self, x, module):
+        y = module(x)
+
+        w = module.weight
+        b = module.bias
+        output = x @ w.transpose(-2,-1) + b
+
+        assert (output == y).all()
+
+        return output
+
+    def forward(self, x, batched=None):
+        if batched is None:
+            batched = self.default_batch
+        if batched:
+            return self.forward_batch(x)
+        else:
+            return self.forward_unbatched(x)
+    
+    def forward_unbatched(self, x):
+        if len(x.shape) != 2:
+            raise ValueError("Expected 2D input (batch_size, input_size)")
+        if x.size(1) != self.linear[0].in_features:
+            raise ValueError(f"Expected dimension 1 of x to be equal to the input size of the linear modules ({self.linear[0].in_features}), got {x.size(2)}")
+
+        def wrapper(params, buffers, data):
+            return torch.func.functional_call(self.linear[0], (params, buffers), data)
+        batch_func = torch.vmap(wrapper, in_dims=(0, None, None), out_dims=0)
+
+        params, buffers = torch.func.stack_module_state(list(self.linear))
+
+        return batch_func(params, buffers, x)
+
+    def forward_batch(self, batched_x):
+        if len(batched_x.shape) != 3:
+            raise ValueError("Expected 3D input (num_modules, batch_size, input_size)")
+        if batched_x.size(0) != len(self.linear):
+            raise ValueError(f"Expected dimension 0 of batched_x to be equal to the number of linear modules ({len(self.linear)}), got {batched_x.size(0)}")
+        if batched_x.size(2) != self.linear[0].in_features:
+            raise ValueError(f"Expected dimension 2 of batched_x to be equal to the input size of the linear modules ({self.linear[0].in_features}), got {batched_x.size(2)}")
+
+        def wrapper(params, buffers, data):
+            return torch.func.functional_call(self.linear[0], (params, buffers), data)
+        batch_func = torch.vmap(wrapper, in_dims=(0, None, 0), out_dims=0)
+
+        params, buffers = torch.func.stack_module_state(list(self.linear))
+
+        return batch_func(params, buffers, batched_x)
 
     def to_linear_modules(self) -> List[torch.nn.Linear]:
         return list(self.linear) # type: ignore
@@ -3154,10 +3286,101 @@ if __name__ == '__main__':
         #bmha.forward_batch(bl_q(x), bl_k(x), bl_v(x))
         pass
 
+    def benchmark_mha_batching():
+        import timeit
+
+        if torch.cuda.is_available():
+            print('Using CUDA')
+            device = torch.device('cuda')
+            batch_size = 32
+            num_modules = 24
+            embed_dims = 512
+            num_heads = 8
+            seq_len = 128
+            num_iterations = 1_000
+        else:
+            print('Using CPU')
+            device = torch.device('cpu')
+            batch_size = 2
+            num_modules = 3
+            embed_dims = 16
+            num_heads = 4
+            seq_len = 3
+            num_iterations = 10
+
+        modules = [
+            torch.nn.MultiheadAttention(embed_dim=embed_dims, num_heads=num_heads).to(device)
+            for _ in range(num_modules)
+        ]
+        params = {
+            'modules': modules,
+            'key_size': embed_dims,
+            'num_heads': num_heads,
+            'default_batch': True,
+        }
+
+        mha = {
+            'non-batched': NonBatchMultiHeadAttention(**params).to(device),
+            'vmap': BatchMultiHeadAttentionVmap(**params).to(device),
+            'broadcast': BatchMultiHeadAttentionBroadcast(**params).to(device),
+            'einsum': BatchMultiHeadAttentionEinsum(**params).to(device),
+            'non-batched (compiled)': torch.compile(NonBatchMultiHeadAttention(**params).to(device)),
+            'vmap (compiled)': torch.compile(BatchMultiHeadAttentionVmap(**params).to(device)),
+            'broadcast (compiled)': torch.compile(BatchMultiHeadAttentionBroadcast(**params).to(device)),
+            'einsum (compiled)': torch.compile(BatchMultiHeadAttentionEinsum(**params).to(device)),
+        }
+
+        #for k,v in mha.items():
+        #    mha[f'{k} (compiled)'] = torch.compile(v) # XXX: Doesn't work for vmap
+
+        random_q = torch.rand([num_modules, batch_size, embed_dims]).to(device)
+        random_k = torch.rand([num_modules, seq_len, batch_size, embed_dims]).to(device)
+        random_v = torch.rand([num_modules, seq_len, batch_size, embed_dims]).to(device)
+        def foo(model):
+            model(random_q, random_k, random_v)
+
+        def foo2(model):
+            attn_output, _ = model(random_q, random_k, random_v)
+            loss = attn_output.mean()
+            loss.backward()
+
+        print('-'*80)
+        print(f'{num_iterations} iterations of forward only')
+        forward_times = {}
+        for name, model in mha.items():
+            try:
+                total_time = timeit.Timer(lambda: foo(model)).timeit(number=num_iterations)
+                forward_times[name] = total_time
+                print(f'  {name}:')
+                print(f'    {num_iterations} iterations took {total_time} seconds')
+                print(f'    {num_iterations / total_time} iterations per second')
+                print(f'    {total_time / num_iterations} seconds per iteration')
+            except Exception as e:
+                print(f'  {name}:')
+                print(f'    {e}')
+                continue
+
+        print('-'*80)
+        print(f'{num_iterations} iterations of forward and backward')
+        forward_times = {}
+        for name, model in mha.items():
+            try:
+                total_time = timeit.Timer(lambda: foo2(model)).timeit(number=num_iterations)
+                forward_times[name] = total_time
+                print(f'  {name}:')
+                print(f'    {num_iterations} iterations took {total_time} seconds')
+                print(f'    {num_iterations / total_time} iterations per second')
+                print(f'    {total_time / num_iterations} seconds per iteration')
+            except Exception as e:
+                print(f'  {name}:')
+                print(f'    {e}')
+                continue
+
     #benchmark_mp4()
     #benchmark_mp5()
     #test_batching()
     #benchmark_functorch()
     #benchmark_functorch_mha()
-    test_mp7()
+    #test_mp7()
+    benchmark_mha_batching()
 

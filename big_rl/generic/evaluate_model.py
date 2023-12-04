@@ -31,29 +31,45 @@ ALIGN_BOTTOM = 1
 ALIGN_CENTER = 0
 
 
-def test(model, env_config, preprocess_obs_fn, video_callback_fn=None, verbose=False, render=False, num_episodes=1, warmup_episodes=0):
+def test(model, env_config, preprocess_obs_fn, video_callback_fn={}, verbose=False, render=False, num_episodes=1, warmup_episodes=0):
     if warmup_episodes > 0:
-        env = make_env_from_yaml(env_config)[0].env
-        for _ in tqdm(range(warmup_episodes), desc='Warmup'):
-            test2(model, env, preprocess_obs_fn, video_callback_fn, verbose)
-        return [
-            test2(model, env, preprocess_obs_fn, video_callback_fn, verbose)
-            for _ in tqdm(range(num_episodes), desc='Test')
-        ]
+        envs = make_env_from_yaml(env_config)
+        output = defaultdict(list)
+        for env in envs:
+            for _ in tqdm(range(warmup_episodes), desc='Warmup'):
+                test2(model, env, preprocess_obs_fn, video_callback_fn, verbose)
+            for _ in tqdm(range(num_episodes), desc='Test'):
+                output[env.name].append(test2(
+                    model, env, preprocess_obs_fn, video_callback_fn.get(env.name), verbose))
+        return output
     else:
         # If `warmup_episodes` is 0, we will recreate the environment for each episode to ensure they all start from the same state.
-        return [
-            test2(
-                model,
-                make_env_from_yaml(env_config)[0].env,
-                preprocess_obs_fn,
-                video_callback_fn,
-                verbose=verbose,
-                render=render,
-                metadata={'episode': ep},
-            )
-            for ep in tqdm(range(num_episodes), desc='Test')
-        ]
+        output = defaultdict(list)
+        for ep in tqdm(range(num_episodes), desc='Test'):
+            envs = make_env_from_yaml(env_config)
+            for env in envs:
+                output[env.name].append(test2(
+                    model,
+                    env.env,
+                    preprocess_obs_fn,
+                    video_callback_fn.get(env.name, None),
+                    verbose=verbose,
+                    render=render,
+                    metadata={'episode': ep, 'task_name': env.name},
+                ))
+        return output
+        #return [
+        #    test2(
+        #        model,
+        #        make_env_from_yaml(env_config)[0].env,
+        #        preprocess_obs_fn,
+        #        video_callback_fn,
+        #        verbose=verbose,
+        #        render=render,
+        #        metadata={'episode': ep},
+        #    )
+        #    for ep in tqdm(range(num_episodes), desc='Test')
+        #]
 
 
 def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False, render=False, metadata={}):
@@ -74,7 +90,7 @@ def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False, 
     hidden = model.init_hidden(1) # type: ignore (???)
     steps_iterator = itertools.count()
     #steps_iterator = range(100+np.random.randint(50)); print('--- DEBUG MODE ---')
-    steps_iterator = range(10); print('--- DEBUG MODE ---')
+    #steps_iterator = range(10); print('--- DEBUG MODE ---')
     #if verbose:
     steps_iterator = tqdm(steps_iterator)
 
@@ -89,7 +105,7 @@ def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False, 
             hidden = model_output['hidden']
 
             action_dist, _ = action_dist_fn(model_output)
-            action = action_dist.sample().cpu().numpy().squeeze()
+            action = action_dist.sample().cpu().numpy()
 
         obs, reward, terminated, truncated, info = env.step(action)
         obs = preprocess_obs_fn(obs)
@@ -121,6 +137,7 @@ def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False, 
                 tqdm.write(f"Step {episode_length}: reward={reward} total={episode_reward}")
 
         if terminated or truncated:
+            tqdm.write(f"Step {episode_length}: total reward={episode_reward}")
             break
 
         if video_callback_fn is not None:
@@ -143,6 +160,11 @@ def concat_images(images: list[PIL.Image.Image], padding=0, direction='h', align
     Args:
         images: list of PIL images or callable functions that return PIL images. The functions must take two arguments: width and height.
     """
+    if len(images) == 0:
+        return PIL.Image.new('RGB', (0, 0))
+    if len(images) == 1:
+        return images[0]
+
     if direction == 'h':
         width = sum([i.size[0] for i in images]) + padding * (len(images) + 1)
         height = max([i.size[1] for i in images]) + padding*2
@@ -253,7 +275,7 @@ def draw_attention_mm1(model_output):
         else:
             images = []
 
-            core_attention = data['attn_output_weights']
+            core_attention = data.get('attn_output_weights')
             if core_attention is None:
                 return draw_text('N/A')
             core_images_concat = draw_grid(core_attention[:,0,:], xlabels=input_labels)
@@ -331,14 +353,25 @@ class VideoCallback:
 
         attn_img = draw_attention_mm1(model_output)
 
+        data_img = concat_images([
+            draw_text(f'Task: {metadata["task_name"]}'),
+            draw_text(f'Episode: {metadata["episode"]}'),
+            draw_text(f'Step: {len(results["reward"])}'),
+            draw_text(f'Total Reward: {np.sum(results["reward"]):.2f}'),
+            draw_text(f'Energy Remaining: {obs.get("obs (energy)", torch.tensor(float("inf"))).item():.2f}'),
+        ], direction='v', padding=2, align=ALIGN_LEFT)
+
         frame_and_attn = concat_images(
             [
                 PIL.Image.fromarray(frame),
-                attn_img,
+                concat_images([
+                    data_img,
+                    attn_img,
+                ], direction='v', align=ALIGN_LEFT),
             ],
             padding = 5,
-            direction = 'v',
-            align = 0,
+            direction = 'h',
+            align = ALIGN_TOP,
         )
 
         final_image = np.array(frame_and_attn)
@@ -390,8 +423,10 @@ def main(args):
     else:
         raise Exception('Environments must be configured via a config file.')
 
-    if len(envs) > 1:
-        raise Exception(f'Only one environment can be tested at a time.')
+    # Validate environment
+    for env in envs:
+        if env.env.num_envs != 1:
+            raise Exception('Test environments must have 1 environment per process.')
 
     # Load model
     device = torch.device('cpu')
@@ -424,7 +459,7 @@ def main(args):
 
     if args.model is not None:
         checkpoint = torch.load(args.model, map_location=device)
-        model.load_state_dict(checkpoint['model'], strict=False)
+        model.load_state_dict(checkpoint['model'], strict=True)
         print(f'Loaded checkpoint from {args.model}')
     else:
         print('No model checkpoint specified, using random initialization.')
@@ -433,14 +468,27 @@ def main(args):
     if 'step' in checkpoint:
         print(f'Checkpoint step: {checkpoint["step"]:,}')
 
-    # Test model
-    video_filename = os.path.abspath(args.video)
-    if args.render or args.no_video:
-        video_callback = None
-    else:
-        video_callback = VideoCallback(video_filename)
+    breakpoint()
 
-    obs_scale = {'obs': 1.0/255.0}
+    # Test model
+    video_filenames = {
+        env.name: os.path.abspath(args.video).format(name=env.name)
+        for env in envs
+    }
+    if args.render or args.no_video:
+        video_callback = {}
+    else:
+        video_callback = {
+            env.name: VideoCallback(video_filenames[env.name])
+            for env in envs
+        }
+        if len(video_callback) != len(set([env.name for env in envs])):
+            raise Exception(f'Task names must be unique: {[env.name for env in envs]}')
+        if len(video_callback) != len(set(video_filenames.values())):
+            raise Exception(f'Multiple tasks are assigned the same video output. Make sure to set the `--video` parameter to include "{{name}}" for the task name.')
+
+    #obs_scale = {'obs': 1.0/255.0}
+    obs_scale = {}
     obs_ignore = ['obs (mission)']
     def preprocess_obs_fn(obs):
         return {
@@ -451,22 +499,37 @@ def main(args):
     test_results = test(model, args.env_config, preprocess_obs_fn, video_callback_fn=video_callback, verbose=args.verbose, num_episodes=args.num_episodes, warmup_episodes=args.warmup_episodes)
 
     if video_callback is not None:
-        video_callback.close()
+        for vc in video_callback.values():
+            vc.close()
 
-    rewards = np.array([r['episode_reward'] for r in test_results])
-    reward_mean = rewards.mean()
-    reward_std = rewards.std()
+    rewards = {
+        k: np.array([r['episode_reward'] for r in v])
+        for k,v in test_results.items()
+    }
+    reward_mean = {k:v.mean() for k,v in rewards.items()}
+    reward_std = {k:v.std() for k,v in rewards.items()}
 
-    if 'step' in checkpoint:
-        print(f'Checkpoint step: {checkpoint["step"]:,}')
-    print(f'Rewards: {rewards.tolist()}')
-    print('')
+    for k in reward_mean.keys():
+        print('-'*80)
+        print(f'Task: {k}')
+        print('-'*80)
+        if 'step' in checkpoint:
+            print(f'Checkpoint step: {checkpoint["step"]:,}')
+        print(f'Rewards: {rewards[k].tolist()}')
+        print('')
 
-    print(f"Reward mean: {reward_mean:.2f}")
-    print(f"Reward std: {reward_std:.2f}")
+        print(f"Reward mean: {reward_mean[k]:.2f}")
+        print(f"Reward std: {reward_std[k]:.2f}")
+        if video_callback is not None:
+            print(f'Video saved to {video_filenames[k]}')
+
+    print('-'*80)
+    print('sftp:')
     if video_callback is not None:
-        print(f'Video saved to {video_filename}')
+        for k in reward_mean.keys():
+            print(f'get {video_filenames[k]}')
 
+    print('-'*80)
     if args.results is not None:
         results_filename = os.path.abspath(args.results)
         torch.save(test_results, results_filename)
