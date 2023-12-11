@@ -194,6 +194,7 @@ class CoreModuleContainer(CoreModule, torch.nn.ModuleList):
 class CoreModuleParallel(CoreModuleContainer):
     def __init__(self, modules: list[CoreModule]):
         super().__init__(modules)
+        self._output_labels = None
 
     def forward(self, key: KeyInputType, value: ValueInputType, hidden: HiddenType) -> CoreModuleOutput:
         split_hidden = self._split_hidden(hidden)
@@ -202,12 +203,18 @@ class CoreModuleParallel(CoreModuleContainer):
         new_value = []
         new_hidden = []
         misc = []
+        output_labels = []
         for m,h in zip(self.core_modules, split_hidden):  # type: ignore
             output = m(key, value, h)
             new_key.append(output['key'])
             new_value.append(output['value'])
             new_hidden.append(output['hidden'])
             misc.append(output.get('misc', None))
+
+            if output.get('misc', {}).get('output_labels', None) is not None:
+                output_labels.extend(output['misc']['output_labels'])
+            else:
+                output_labels.extend(['?'] * len(output['key']))
 
         if all(m is None for m in misc):
             return {
@@ -216,6 +223,7 @@ class CoreModuleParallel(CoreModuleContainer):
                 'hidden': tuple(itertools.chain.from_iterable(new_hidden)),
                 'misc': {
                     'container_type': 'parallel',
+                    'output_labels': output_labels,
                 }
             }
         else:
@@ -226,6 +234,7 @@ class CoreModuleParallel(CoreModuleContainer):
                 'misc': {
                     **{i: m for i,m in enumerate(misc) if m is not None},
                     'container_type': 'parallel',
+                    'output_labels': output_labels,
                 }
             }
 
@@ -241,12 +250,18 @@ class CoreModuleSeries(CoreModuleContainer):
         new_value = value
         new_hidden = []
         misc = []
+        output_labels = []
         for m,h in zip(self.core_modules, split_hidden):  # type: ignore
             output = m(new_key, new_value, h)
             new_key = output['key']
             new_value = output['value']
             new_hidden.append(output['hidden'])
             misc.append(output.get('misc', None))
+
+            if m.output_labels is not None:
+                output_labels = m.output_labels
+            else:
+                output_labels = ['?'] * len(new_key)
 
         if all(m is None for m in misc):
             return {
@@ -255,6 +270,7 @@ class CoreModuleSeries(CoreModuleContainer):
                 'hidden': tuple(itertools.chain.from_iterable(new_hidden)),
                 'misc': {
                     'container_type': 'series',
+                    'output_labels': output_labels,
                 }
             }
         else:
@@ -265,5 +281,6 @@ class CoreModuleSeries(CoreModuleContainer):
                 'misc': {
                     **{i: m for i,m in enumerate(misc) if m is not None},
                     'container_type': 'series',
+                    'output_labels': output_labels,
                 }
             }

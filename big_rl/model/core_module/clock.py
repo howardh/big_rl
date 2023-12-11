@@ -8,13 +8,13 @@ from big_rl.model.core_module.container import CoreModule, CoreModuleOutput
 
 
 class ClockCoreModule(CoreModule):
-    def __init__(self, key_size, value_size, num_heads):
+    def __init__(self, key_size, value_size, num_heads, min_init_period=5, max_init_period=1000):
         super().__init__()
 
         # Model
-        self.period = torch.nn.Parameter(torch.randn(1, 1, key_size))
+        self.period = torch.nn.Parameter(torch.rand(1, 1, key_size) * (max_init_period - min_init_period) + min_init_period)
         self.amplitude = torch.nn.Parameter(torch.randn(1, 1, key_size))
-        self.phase = torch.nn.Parameter(torch.randn(1, 1, key_size))
+        self.phase = torch.nn.Parameter(torch.rand(1, 1, key_size) * self.period)
 
         self.key = torch.nn.Parameter(torch.randn(1, 1, key_size))
 
@@ -37,6 +37,7 @@ class ClockCoreModule(CoreModule):
             'misc': {
                 #'attn_output': None,
                 #'attn_output_weights': None,
+                'output_labels': ['clock'],
             }
         }
 
@@ -44,7 +45,7 @@ class ClockCoreModule(CoreModule):
         device = next(self.parameters()).device
         # Start the clock at random phase
         return (
-            torch.randint(0, int(self.period.abs().prod() * 2 + 1), (batch_size,), device=device).view(1, batch_size, 1),
+            torch.randint(0, int(self.period.abs().max() * 2 + 1), (batch_size,), device=device).view(1, batch_size, 1),
         )
 
     @property

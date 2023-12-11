@@ -1,0 +1,32 @@
+- type: AsyncVectorEnv # AsyncVectorEnv, SyncVectorEnv, or Env
+  envs:
+  - &env_swimmer
+    name: SwimmerForward
+    kwargs: # Arguments for gymnasium.make
+      id: SwimmerForward-v4
+    repeat: 8
+    wrappers:
+    - type: TimeLimit
+      kwargs:
+        max_episode_steps: 1000
+    - type: PadObservation
+      kwargs:
+        shape: [376]
+    - type: PadAction
+      kwargs:
+        shape: [17]
+    - type: MujocoTaskRewardWrapper
+      kwargs:
+        task_reward_key: reward_fwd
+        control_cost_key: reward_ctrl
+        total_energy: 1
+    - type: MetaWrapper
+      kwargs:
+        episode_stack: 1
+        dict_obs: true
+        randomize: false
+    - type: ClipAction
+  - <<: *env_swimmer
+    name: SwimmerBackward
+    kwargs: # Arguments for gymnasium.make
+      id: SwimmerBackward-v4

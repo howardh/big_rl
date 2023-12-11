@@ -84,7 +84,7 @@ class BaseBatchAttentionCoreModule(CoreModule):
     def compute_output(self, attn_output: torch.Tensor, hidden: Tuple[torch.Tensor, ...]) -> dict:
         raise NotImplementedError()
 
-    def _make_mlp(self, sizes, num_duplicates=1):
+    def _make_mlp(self, sizes, num_duplicates=1, start_with_nonlinearity=True):
         layers = []
         for in_size, out_size in zip(sizes[:-1], sizes[1:]):
             layers.append(torch.nn.ReLU())
@@ -93,6 +93,8 @@ class BaseBatchAttentionCoreModule(CoreModule):
                     torch.nn.Linear(in_size, out_size) for _ in range(self._num_modules*num_duplicates)
                 ], default_batch=True),
             )
+        if not start_with_nonlinearity:
+            layers.pop(0) # Remove the first ReLU
         return torch.nn.Sequential(*layers)
 
     def init_hidden(self, batch_size) -> Tuple[torch.Tensor, ...]:

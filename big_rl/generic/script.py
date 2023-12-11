@@ -716,14 +716,6 @@ def main(args):
     # Initialize environments
     if args.env_config is not None:
         envs = make_env_from_yaml(args.env_config)
-        #env_labels = make_env_labels_from_yaml(args.env_config)
-        #env_group_labels = make_env_group_labels_from_yaml(args.env_config)
-        #env_model_mapping = make_env_to_model_mapping_from_yaml(args.env_config)
-        #is_eval_env = make_eval_only_from_yaml(args.env_config)
-        #if isinstance(envs, gymnasium.vector.VectorEnv):
-        #    envs = [envs]
-        #elif isinstance(envs, gymnasium.Env):
-        #    raise ValueError('The environment config file must specify a vectorized environment.')
     else:
         raise Exception('Environments must be configured via a config file.')
 
@@ -806,11 +798,7 @@ def main(args):
     print('-'*80)
     trainer = train(
             model = model,
-            envs = envs, # type: ignore (??? AsyncVectorEnv is not a subtype of VectorEnv ???)
-            #env_labels = [['doot']*len(envs)], # TODO: Make this configurable
-            #env_labels = [[e]*n for e,n in zip(args.envs, args.num_envs)],
-            #env_labels = env_labels, # type: ignore
-            #env_group_labels = env_group_labels,
+            envs = envs,
             optimizer = optimizer,
             lr_scheduler = lr_scheduler,
             max_steps = args.max_steps,
@@ -852,6 +840,7 @@ def main(args):
             # If the path is a directory, generate a unique filename
             raise NotImplementedError()
         while True:
+            x = None
             for _,x in zip(range(args.checkpoint_interval), trainer):
                 pass
             # If x is None, it means no training has occured

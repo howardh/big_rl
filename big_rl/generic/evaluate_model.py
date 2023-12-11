@@ -260,6 +260,7 @@ def draw_attention_mm1(model_output):
 
     output_attention = {k:x['attn_output_weights'] for k,x in model_output['misc']['output'].items()}
     input_labels = model_output['misc']['input']['input_labels']
+    core_labels = model_output['misc']['core']['output_labels']
 
     # Core modules
     def draw_core_attention(data) -> PIL.Image.Image:
@@ -278,7 +279,7 @@ def draw_attention_mm1(model_output):
             core_attention = data.get('attn_output_weights')
             if core_attention is None:
                 return draw_text('N/A')
-            core_images_concat = draw_grid(core_attention[:,0,:], xlabels=input_labels)
+            core_images_concat = draw_grid(core_attention[:,0,:], xlabels=input_labels+core_labels)
             images.append(core_images_concat)
 
             if 'gates' in data:
@@ -468,8 +469,6 @@ def main(args):
     if 'step' in checkpoint:
         print(f'Checkpoint step: {checkpoint["step"]:,}')
 
-    breakpoint()
-
     # Test model
     video_filenames = {
         env.name: os.path.abspath(args.video).format(name=env.name)
@@ -520,18 +519,19 @@ def main(args):
 
         print(f"Reward mean: {reward_mean[k]:.2f}")
         print(f"Reward std: {reward_std[k]:.2f}")
-        if video_callback is not None:
+        if k in video_callback:
             print(f'Video saved to {video_filenames[k]}')
 
     print('-'*80)
     print('sftp:')
-    if video_callback is not None:
+    if len(video_callback) > 0:
         for k in reward_mean.keys():
             print(f'get {video_filenames[k]}')
 
     print('-'*80)
     if args.results is not None:
         results_filename = os.path.abspath(args.results)
+        os.makedirs(os.path.dirname(results_filename), exist_ok=True)
         torch.save(test_results, results_filename)
         print(f'Results saved to {results_filename}')
 

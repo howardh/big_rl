@@ -467,6 +467,8 @@ def _get_space_by_module(envs: list[EnvGroup], model_config: ModelConfig):
         # TODO: Merge all observation/action spaces together and map all modules to the same spaces
         observation_spaces = merge_space(*[env.env.single_observation_space for env in envs])
         action_spaces = merge_space(*[env.env.single_action_space for env in envs])
+        if observation_spaces is None:
+            breakpoint()
         return {
             'input': {
                 'observation_space': observation_spaces,

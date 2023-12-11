@@ -1,0 +1,29 @@
+- type: AsyncVectorEnv # AsyncVectorEnv, SyncVectorEnv, or Env
+  envs:
+  - name: InvertedDoublePendulum
+    kwargs: # Arguments for gymnasium.make
+      id: InvertedDoublePendulum-v4
+    repeat: 8
+    wrappers:
+    - type: TimeLimit
+      kwargs:
+        max_episode_steps: 1000
+    - type: PadObservation
+      kwargs:
+        shape: [376]
+    - type: PadAction
+      kwargs:
+        shape: [17]
+    - type: ToDictObservation
+      kwargs:
+        key: vector
+    - type: AddDummyObservation
+      kwargs:
+        key: energy
+        value: 100
+    - type: MetaWrapper
+      kwargs:
+        episode_stack: 1
+        dict_obs: true
+        randomize: false
+    - type: ClipAction

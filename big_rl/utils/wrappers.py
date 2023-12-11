@@ -64,3 +64,29 @@ class PadAction(gymnasium.ActionWrapper):
             slice(0, s) for s in self.original_shape
         ]
         return action.__getitem__(*indices)
+
+
+class ToDictObservation(gymnasium.ObservationWrapper):
+    def __init__(self, env, key):
+        super().__init__(env)
+        self.key = key
+
+        self.observation_space = gymnasium.spaces.Dict({key: env.observation_space})
+
+    def observation(self, observation: np.ndarray) -> dict:
+        return {self.key: observation}
+
+
+class AddDummyObservation(gymnasium.ObservationWrapper):
+    def __init__(self, env, key, value):
+        super().__init__(env)
+
+        self.key = key
+        self.value = value
+
+        if not isinstance(env.observation_space, gymnasium.spaces.Dict):
+            raise TypeError(f'AddDummyObservation can only be applied to environments with a Dict observation space. Received {type(env.observation_space)}')
+
+    def observation(self, observation: dict) -> dict:
+        observation[self.key] = self.value
+        return observation

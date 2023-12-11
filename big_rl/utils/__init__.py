@@ -3,6 +3,7 @@ import os
 import time
 from typing import Sequence, Iterable, Union, Tuple, Mapping
 
+import numpy as np
 import gymnasium
 import gymnasium.spaces
 import torch
@@ -31,8 +32,13 @@ def merge_space(*spaces):
             for k,v in space.items():
                 if k in new_space:
                     if new_space[k] != v:
-                        #raise ValueError(f"Space mismatch for key {k}: {new_space[k]} != {v}")
-                        return None
+                        # Found keys with different spaces
+                        # If they are the same shape, then we can merge them
+                        if isinstance(new_space[k], gymnasium.spaces.Box) and isinstance(v, gymnasium.spaces.Box) and new_space[k].shape == v.shape:
+                            new_space[k] = gymnasium.spaces.Box(low=v.low * np.nan, high=v.high * np.nan)
+                        else:
+                            #raise ValueError(f"Space mismatch for key {k}: {new_space[k]} != {v}")
+                            return None
                 else:
                     new_space[k] = v
         return gymnasium.spaces.Dict(new_space)
@@ -46,14 +52,17 @@ def merge_space(*spaces):
     elif isinstance(spaces[0], gymnasium.spaces.Box):
         low = spaces[0].low
         high = spaces[0].high
+        mismatched_low = False
+        mismatched_high = False
         for space in spaces:
             if (space.low != low).any():
-                #raise ValueError(f"Space mismatch: {space.low} != {low}")
-                return None
+                mismatched_low = True
             if (space.high != high).any():
-                #raise ValueError(f"Space mismatch: {space.high} != {high}")
-                return None
-        return gymnasium.spaces.Box(low, high)
+                mismatched_high = True
+        return gymnasium.spaces.Box(
+            low * np.nan if mismatched_low else low,
+            high * np.nan if mismatched_high else high,
+        )
     else:
         raise NotImplementedError(f"Space type {type(spaces[0])} not supported")
 

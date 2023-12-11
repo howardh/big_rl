@@ -1,0 +1,45 @@
+type: ModularModel1
+key_size: 512
+value_size: 512
+num_heads: 8
+input_modules:
+  "obs (vector)":
+    type: LinearInput
+    kwargs:
+      input_size:
+        source: 'observation_space'
+        accessor: '["obs (vector)"].high.shape[0]'
+  "obs (energy)":
+    type: UnaryScalarInput
+  reward:
+    type: ScalarInput
+  done:
+    type: IgnoredInput
+  action:
+    type: LinearInput
+    kwargs:
+      input_size:
+        source: 'action_space'
+        accessor: '.high.shape[0]'
+output_modules:
+  value:
+    type: LinearOutput
+    kwargs:
+      output_size: 1
+  action_mean:
+    type: LinearOutput
+    kwargs:
+      output_size:
+        source: 'action_space'
+        accessor: '.high.shape[0]'
+  action_logstd:
+    type: LinearOutput
+    kwargs:
+      output_size:
+        source: 'action_space'
+        accessor: '.high.shape[0]'
+core_modules:
+  type: RecurrentAttention17
+  kwargs:
+    ff_size: [1024]
+    num_modules: 6
