@@ -31,7 +31,7 @@ batch_generalized_hebbian_algorithm = torch.func.vmap(generalized_hebbian_algori
 
 
 class AttentionGHA(BaseAttentionCoreModule):
-    def __init__(self, key_size, value_size, num_heads, num_components: int = 128, learning_rate: float = 0.01):
+    def __init__(self, key_size, value_size, num_heads, num_components: int = 128, learning_rate: float = 0.01, learnable_initial_state: bool = False):
         super().__init__(key_size=key_size, value_size=value_size, num_heads=num_heads)
 
         self._num_components = num_components
@@ -39,6 +39,13 @@ class AttentionGHA(BaseAttentionCoreModule):
         # Model
         self.fc = torch.nn.Linear(num_components, value_size*2) # For producing the key and value from the hidden state
         self.log_learning_rate = torch.nn.Parameter(torch.log(torch.tensor(learning_rate)))
+
+        initial_hidden = torch.rand([
+            1, self._num_components, self._value_size+1])
+        if learnable_initial_state:
+            self.initial_hidden = torch.nn.Parameter(initial_hidden)
+        else:
+            self.register_buffer('initial_hidden', initial_hidden, persistent=True)
 
     def compute_output(self, attn_output: torch.Tensor, hidden: Tuple[torch.Tensor, ...]) -> dict:
         prev_weights = hidden[0]
@@ -60,10 +67,9 @@ class AttentionGHA(BaseAttentionCoreModule):
         }
 
     def init_hidden(self, batch_size) -> Tuple[torch.Tensor, ...]:
-        device = next(self.parameters()).device
-        return (
-            torch.rand([batch_size, self._num_components, self._value_size+1], device=device),
-        )
+        h = self.initial_hidden.expand(batch_size, self._num_components, self._value_size+1)
+        h = h / h.pow(2).sum(dim=2, keepdim=True).sqrt() # Normalize
+        return (h,)
 
     @property
     def n_hidden(self):
@@ -85,10 +91,13 @@ class BatchAttentionGHA(BaseBatchAttentionCoreModule):
         self.log_learning_rate = torch.nn.Parameter(
             torch.log(torch.ones(num_modules) * learning_rate)
         )
+
+        initial_hidden = torch.rand([
+            self._num_modules, 1, self._num_components, self._value_size+1])
         if learnable_initial_state:
-            self.initial_hidden = torch.nn.Parameter(
-                torch.rand([self._num_modules, 1, self._num_components, self._value_size+1])
-            )
+            self.initial_hidden = torch.nn.Parameter(initial_hidden)
+        else:
+            self.register_buffer('initial_hidden', initial_hidden, persistent=True)
 
     def compute_output(self, attn_output: torch.Tensor, hidden: Tuple[torch.Tensor, ...]) -> dict:
         prev_weights = hidden[0]
@@ -117,11 +126,7 @@ class BatchAttentionGHA(BaseBatchAttentionCoreModule):
         }
 
     def init_hidden(self, batch_size) -> Tuple[torch.Tensor, ...]:
-        device = next(self.parameters()).device
-        if self._learnable_initial_state:
-            h = self.initial_hidden.expand(self._num_modules, batch_size, self._num_components, self._value_size+1)
-        else:
-            h = torch.rand([self._num_modules, batch_size, self._num_components, self._value_size+1], device=device)
+        h = self.initial_hidden.expand(self._num_modules, batch_size, self._num_components, self._value_size+1)
         h = h / h.pow(2).sum(dim=3, keepdim=True).sqrt() # Normalize
         return (h,)
 

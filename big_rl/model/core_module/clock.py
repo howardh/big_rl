@@ -18,6 +18,9 @@ class ClockCoreModule(CoreModule):
 
         self.key = torch.nn.Parameter(torch.randn(1, 1, key_size))
 
+        self._seed = int(torch.randint(0, 2**32, (1,), dtype=torch.int64).item())
+        self._some_param = None
+
     def forward(self,
             key: TensorType['seq_len','batch_size','key_size',float],
             value: TensorType['seq_len','batch_size','value_size',float],
@@ -43,9 +46,24 @@ class ClockCoreModule(CoreModule):
 
     def init_hidden(self, batch_size) -> Tuple[torch.Tensor, ...]:
         device = next(self.parameters()).device
+        # Check if the model's parameters have changed
+        # If it hasn't, then make sure the hidden state is the same
+        p = next(self.parameters()).view(-1)[0].item()
+        if self._some_param is None:
+            self._some_param = p
+        if self._some_param != p:
+            self._some_param = p
+            self._seed = (self._seed + 1) % (2**32)
+        generator = torch.Generator(device=device)
+        generator.manual_seed(self._seed)
         # Start the clock at random phase
         return (
-            torch.randint(0, int(self.period.abs().max() * 2 + 1), (batch_size,), device=device).view(1, batch_size, 1),
+            torch.randint(
+                0, int(self.period.abs().max() * 2 + 1),
+                (batch_size,),
+                device=device,
+                generator=generator
+            ).view(1, batch_size, 1),
         )
 
     @property

@@ -28,3 +28,21 @@ def test_works_without_error(cls):
     v = torch.cat([output['value'], v], dim=0)
 
     output = module(k, v, hidden)
+
+
+@pytest.mark.parametrize('cls', [RecurrentAttention17, NonBatchRecurrentAttention17, BatchAttentionGHA, AttentionGHA, ClockCoreModule])
+def test_deterministic_hidden_state(cls):
+    """
+    Verify that the hidden state is a deterministic function.
+    Regression test for the hidden state being different when training, leading to a large action log likelihood difference and a policy gradient loss of infinity.
+    """
+    input_size = 4
+    batch_size = 4
+
+    module = cls(key_size=input_size, value_size=input_size, num_heads=2)
+
+    hidden1 = module.init_hidden(batch_size=batch_size)
+    hidden2 = module.init_hidden(batch_size=batch_size)
+
+    for h1,h2 in zip(hidden1, hidden2):
+        assert (h1 == h2).all()
