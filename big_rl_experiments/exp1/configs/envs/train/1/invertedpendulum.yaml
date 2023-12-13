@@ -21,6 +21,10 @@
       kwargs:
         key: energy
         value: 100
+    - type: AddDummyInfo
+      kwargs:
+        key: energy
+        value: 100
     - type: MetaWrapper
       kwargs:
         episode_stack: 1

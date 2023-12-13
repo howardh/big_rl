@@ -90,3 +90,24 @@ class AddDummyObservation(gymnasium.ObservationWrapper):
     def observation(self, observation: dict) -> dict:
         observation[self.key] = self.value
         return observation
+
+
+class AddDummyInfo(gymnasium.Wrapper):
+    def __init__(self, env, key, value, overwrite=False):
+        super().__init__(env)
+
+        self.key = key
+        self.value = value
+        self.overwrite = overwrite
+
+    def reset(self, *args, **kwargs):
+        observation, info = self.env.reset(*args, **kwargs)
+        if self.overwrite or self.key not in info:
+            info[self.key] = self.value
+        return observation, info
+
+    def step(self, action):
+        observation, reward, terminated, truncated, info = self.env.step(action) # type: ignore
+        if self.overwrite or self.key not in info:
+            info[self.key] = self.value
+        return observation, reward, terminated, truncated, info

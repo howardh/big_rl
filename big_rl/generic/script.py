@@ -2,6 +2,8 @@ import argparse
 from collections import defaultdict
 import os
 import itertools
+import signal
+import sys
 from typing import Optional, Generator, Dict, List, Any, Callable, Union, Tuple, Iterable
 import time
 import yaml
@@ -628,12 +630,18 @@ def train(
         if env_steps > 0:
             elapsed_time = time.time() - start_time
             steps_per_sec = (env_steps - start_step) / elapsed_time
-            if max_steps > 0:
+            if max_steps > 0: # FIXME: I think this one is being calculated wrong
                 remaining_time = int((max_steps - env_steps) / steps_per_sec)
                 remaining_hours = remaining_time // 3600
                 remaining_minutes = (remaining_time % 3600) // 60
                 remaining_seconds = (remaining_time % 3600) % 60
                 print(f"Step {env_steps-start_step:,}/{max_steps:,} \t {int(steps_per_sec):,} SPS \t Remaining: {remaining_hours:02d}:{remaining_minutes:02d}:{remaining_seconds:02d}")
+            elif max_steps_total > 0:
+                remaining_time = int((max_steps_total - env_steps) / steps_per_sec)
+                remaining_hours = remaining_time // 3600
+                remaining_minutes = (remaining_time % 3600) // 60
+                remaining_seconds = (remaining_time % 3600) % 60
+                print(f"Step {env_steps:,}/{max_steps_total:,} \t {int(steps_per_sec):,} SPS \t Remaining: {remaining_hours:02d}:{remaining_minutes:02d}:{remaining_seconds:02d}")
             else:
                 elapsed_time = int(elapsed_time)
                 elapsed_hours = elapsed_time // 3600
@@ -662,8 +670,8 @@ def init_arg_parser():
                         help='Path to a model checkpoint to start training from.')
     parser.add_argument('--model-checkpoint', type=str, default=None,
                         help='Path to a model checkpoint to save the model to.')
-    parser.add_argument('--checkpoint-interval', type=int, default=1000,
-                        help='Number of training steps between checkpoints.')
+    parser.add_argument('--checkpoint-interval', type=int, default=1_000_000,
+                        help='Number of transitions between checkpoints.')
     parser.add_argument('--ignore-checkpoint-optimizer', action='store_true',
                         help='If set, then the optimizer state is not loaded from the checkpoint.')
     parser.add_argument('--sync-vector-env', action='store_true',
@@ -792,7 +800,7 @@ def main(args):
         if lr_scheduler is not None and 'lr_scheduler' in checkpoint:
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         start_step = checkpoint.get('step', 0)
-        print(f'Loaded checkpoint from {args.starting_model}')
+        print(f'Loaded checkpoint successfully. Starting from step {start_step}.')
 
     # Initialize trainer
     print('-'*80)
@@ -826,28 +834,39 @@ def main(args):
     # Run training loop
     x = None
     def save_checkpoint(filename=args.model_checkpoint): # Make this a separate function in case we end up here with the debugger and want to manually save a checkpoint
+        if x is None:
+            return # This occurs if no training has occured (e.g. if we start an experiment that was already completed)
         assert isinstance(x,dict)
         torch_save({
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
             'step': x['step'],
-        }, filename)
+        }, filename+'.tmp')
+        os.replace(filename+'.tmp', filename) # POSIX requires that this is atomic
         print(f'Saved checkpoint to {os.path.abspath(filename)}')
 
+    sigusr1_received = False
+    def handle_sigusr1(signum, frame):
+        nonlocal sigusr1_received
+        sigusr1_received = True
+
+    signal.signal(signal.SIGUSR1, handle_sigusr1) # Save checkpoint on Ctrl+C or when Slurm terminates the job
+
+    checkpoint_count = start_step // args.checkpoint_interval
     if args.model_checkpoint is not None:
         os.makedirs(os.path.dirname(args.model_checkpoint), exist_ok=True)
         if not args.model_checkpoint.endswith('.pt'):
             # If the path is a directory, generate a unique filename
             raise NotImplementedError()
-        while True:
-            x = None
-            for _,x in zip(range(args.checkpoint_interval), trainer):
-                pass
-            # If x is None, it means no training has occured
-            if x is None:
-                break
-            # Only save the model if training has occured
-            save_checkpoint(args.model_checkpoint)
+        for x in trainer:
+            if x['step'] - checkpoint_count * args.checkpoint_interval >= args.checkpoint_interval:
+                save_checkpoint(args.model_checkpoint)
+                checkpoint_count += 1
+            if sigusr1_received:
+                print('Received SIGUSR1. Saving checkpoint...')
+                save_checkpoint(args.model_checkpoint)
+                sys.exit(0)
+        save_checkpoint(args.model_checkpoint)
     else:
         try:
             for x in trainer:

@@ -15,6 +15,7 @@ setup(name='big_rl',
         'tabulate>=0.9.0',
         'tensordict>=0.1.0',
         'pydantic>=2.1.1',
+        'simple_slurm',
 
         # Minigrid
         'minigrid',
