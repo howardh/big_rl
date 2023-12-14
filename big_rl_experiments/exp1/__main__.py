@@ -125,10 +125,10 @@ def run_slurm(args: list[str]):
         output='/network/scratch/h/huanghow/slurm/%A_%a.out',
 
         # Run for five days
-        array=range(5),
+        array='1-5%1',
         time=datetime.timedelta(days=1, hours=0, minutes=0, seconds=0),
 
-        partition='main',
+        #partition='main',
         signal='USR1@120', # Send a signal to the job 120 seconds before it is killed
     )
     #slurm.add_cmd('module load libffi') # Fixes the "ImportError: libffi.so.6: cannot open shared object file: No such file or directory" error
@@ -136,7 +136,8 @@ def run_slurm(args: list[str]):
     slurm.add_cmd('source big_rl/ENV/bin/activate')
     slurm.add_cmd('export PYTHONUNBUFFERED=1')
     # https://stackoverflow.com/questions/76348342/how-to-use-trap-in-my-sbatch-bash-job-script-in-compute-canada
-    slurm.add_cmd("trap 'echo SIGUSR1 1>&2' SIGUSR1")
+    slurm.add_cmd("trap 'echo SIGUSR1 1>&2' SIGUSR1") # Handles time limit
+    slurm.add_cmd("trap 'echo SIGUSR1 1>&2' SIGTERM") # Handles preemption (I think this is needed if PreemptParameters isn't set with send_user_signal enabled. Check if it's set in /etc/slurm/slurm.conf)
     job_id = slurm.sbatch('srun python big_rl/generic/script.py ' + ' '.join(args))
     print('-'*80)
     print(slurm.script())
