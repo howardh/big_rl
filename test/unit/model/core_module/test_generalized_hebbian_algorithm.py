@@ -26,7 +26,7 @@ def test_gradients():
     dummy_loss = output['value'].mean() + output['key'].mean()
     dummy_loss.backward()
 
-    assert module.fc[1].weight.grad is not None
-    assert module.fc[1].bias.grad is not None
+    assert module.fc[0].weight.grad is not None
+    assert module.fc[0].bias.grad is not None
     assert module.log_learning_rate.grad is not None
     assert module.log_learning_rate.grad.item() != 0.0

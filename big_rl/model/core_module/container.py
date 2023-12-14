@@ -258,9 +258,8 @@ class CoreModuleSeries(CoreModuleContainer):
             new_hidden.append(output['hidden'])
             misc.append(output.get('misc', None))
 
-            if m.output_labels is not None:
-                output_labels = m.output_labels
-            else:
+            output_labels = output.get('misc', {}).get('output_labels')
+            if output_labels is None:
                 output_labels = ['?'] * len(new_key)
 
         if all(m is None for m in misc):

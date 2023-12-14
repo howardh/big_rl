@@ -3,14 +3,14 @@ from big_rl.model.core_module.container import CoreModule
 import torch
 
 from big_rl.model.factory import create_core_modules
-from big_rl.model.core_module.lstm import AttentionLSTM
+from big_rl.model.core_module import AVAILABLE_CORE_MODULES
 
 
 KEY_SIZE = 5
 VALUE_SIZE = 5
 
 
-@pytest.mark.parametrize('cls', CoreModule.subclasses)
+@pytest.mark.parametrize('cls', AVAILABLE_CORE_MODULES)
 def test_defaults(cls):
     batch_size = 2
     num_inputs = 3
@@ -39,7 +39,7 @@ def test_defaults(cls):
         output = module(key, value, hidden)
 
 
-@pytest.mark.parametrize('cls', CoreModule.subclasses)
+@pytest.mark.parametrize('cls', AVAILABLE_CORE_MODULES)
 def test_parallel(cls):
     """ Check that parameters (key_size, value_size, num_heads) are properly passed to the module """
     batch_size = 2

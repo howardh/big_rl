@@ -2,12 +2,10 @@ import pytest
 
 import torch
 
-from big_rl.model.core_module.recurrent_attention_17 import RecurrentAttention17, NonBatchRecurrentAttention17
-from big_rl.model.core_module.clock import ClockCoreModule
-from big_rl.model.core_module.generalized_hebbian_algorithm import BatchAttentionGHA, AttentionGHA
+from big_rl.model.core_module import AVAILABLE_CORE_MODULES
 
 
-@pytest.mark.parametrize('cls', [RecurrentAttention17, NonBatchRecurrentAttention17, BatchAttentionGHA, AttentionGHA, ClockCoreModule])
+@pytest.mark.parametrize('cls', AVAILABLE_CORE_MODULES)
 def test_works_without_error(cls):
     """ Initialize the module and pass in random data. Verify that it doesn't error. """
     input_size = 4
@@ -30,7 +28,7 @@ def test_works_without_error(cls):
     output = module(k, v, hidden)
 
 
-@pytest.mark.parametrize('cls', [RecurrentAttention17, NonBatchRecurrentAttention17, BatchAttentionGHA, AttentionGHA, ClockCoreModule])
+@pytest.mark.parametrize('cls', AVAILABLE_CORE_MODULES)
 def test_deterministic_hidden_state(cls):
     """
     Verify that the hidden state is a deterministic function.
