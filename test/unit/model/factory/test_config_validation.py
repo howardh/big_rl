@@ -93,3 +93,17 @@ def test_core_module_specified_container_and_module_params():
 
     with pytest.raises(ValidationError):
         create_model(config)
+
+
+def test_nonmodular_models():
+    """ Non-modular models configs are valid without input/output/core modules """
+    config = {
+        'type': 'LSTMModel1',
+        'kwargs': {
+            'input_size': 7,
+            'hidden_size': 5,
+            'action_size': 3,
+        },
+    }
+
+    create_model(config)

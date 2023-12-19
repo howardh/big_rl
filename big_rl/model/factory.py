@@ -15,6 +15,7 @@ from big_rl.model.input_module.container import InputModuleContainer
 from big_rl.model.core_module.container import CoreModule, CoreModuleContainer, CoreModuleParallel, CoreModuleSeries
 from big_rl.model.output_module.container import OutputModuleContainer
 from big_rl.model.modular_model_1 import ModularModel1
+from big_rl.model.lstm_model_1 import LSTMModel1
 import big_rl.model.core_module
 from big_rl.utils import merge_space
 from big_rl.utils.make_env import EnvGroup
@@ -39,6 +40,11 @@ VALID_INPUT_MODULES = [
 VALID_OUTPUT_MODULES = [
     LinearOutput,
     StateIndependentOutput,
+]
+
+
+VALID_NONMODULAR_MODELS = [
+    LSTMModel1,
 ]
 
 
@@ -116,12 +122,13 @@ class SubModelConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     type: str
+    kwargs: dict = {}
     key_size: PositiveInt = 512
     value_size: PositiveInt = 512
     num_heads: PositiveInt = 8
-    input_modules: dict[str, PeripheralModuleConfig]
-    output_modules: dict[str, PeripheralModuleConfig]
-    core_modules: CoreModuleConfig
+    input_modules: dict[str, PeripheralModuleConfig] | None = None
+    output_modules: dict[str, PeripheralModuleConfig] | None = None
+    core_modules: CoreModuleConfig | None = None
     weight_config: WeightConfig | None = None
 
     submodel_configs: dict[str, SubModelConfig] | None = Field(
@@ -130,6 +137,18 @@ class ModelConfig(BaseModel):
     )
 
     model_config = ConfigDict(extra='forbid')
+
+    @pydantic.model_validator(mode='after')
+    def check_peripheral_modules(self):
+        nonmodular_models = [cls.__name__ for cls in VALID_NONMODULAR_MODELS]
+        if self.type not in nonmodular_models:
+            if self.input_modules is None:
+                raise ValueError('Must specify input modules for modular models.')
+            if self.output_modules is None:
+                raise ValueError('Must specify output modules for modular models.')
+            if self.core_modules is None:
+                raise ValueError('Must specify core modules for modular models.')
+        return self
 
 
 ##################################################
@@ -192,6 +211,12 @@ def create_model(config: dict | ModelConfig, observation_space=None, action_spac
         raise ValueError('Model type must be specified in config')
 
     if config.type == 'ModularModel1':
+        if len(config.kwargs) > 0:
+            raise ValueError('kwargs have been provided, but ModularModel1 does not accept any kwargs')
+        assert config.input_modules is not None
+        assert config.output_modules is not None
+        assert config.core_modules is not None
+
         # Initialize model architecture
         input_modules = create_input_modules(
                 config=config.input_modules,
@@ -241,6 +266,15 @@ def create_model(config: dict | ModelConfig, observation_space=None, action_spac
         init_core_weights(model.core_modules, config.core_modules)
 
         return model
+    elif config.type == 'LSTMModel1':
+        kwargs = config.kwargs
+        kwargs = _preprocess_kwargs(
+                kwargs = kwargs,
+                cls = LSTMModel1,
+                observation_space = observation_space,
+                action_space = action_space,
+        )
+        return LSTMModel1(**kwargs)
     else:
         raise NotImplementedError()
 
