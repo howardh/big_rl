@@ -22,6 +22,7 @@ SHELL = '/bin/bash'
 #GRES = 'gpu:rtx8000:1'
 #GRES = 'gpu:a100l.2g.20gb:1'
 GRES = 'gpu:a100l.3g.40gb:1'
+#GRES = 'gpu:v100:1'
 
 
 #DEBUG = False
@@ -163,7 +164,7 @@ def run_slurm(args: list[str]):
     slurm.add_cmd("trap 'echo SIGUSR1 1>&2' SIGTERM") # Handles preemption (I think this is needed if PreemptParameters isn't set with send_user_signal enabled. Check if it's set in /etc/slurm/slurm.conf)
     job_id = slurm.sbatch('srun python big_rl/generic/script.py ' + ' '.join(args), shell=SHELL)
     print('-'*80)
-    print(slurm.script())
+    print(slurm.script(shell=SHELL))
     print('-'*80)
     return job_id
 
@@ -267,7 +268,7 @@ def eval_slurm(args: list[str], after: list[int] | None = None):
     slurm.add_cmd('export PYTHONUNBUFFERED=1')
     job_id = slurm.sbatch('python big_rl/generic/evaluate_model.py ' + ' '.join(args), shell=SHELL)
     print('-'*80)
-    print(slurm.script())
+    print(slurm.script(shell=SHELL))
     print('-'*80)
     return job_id
 
