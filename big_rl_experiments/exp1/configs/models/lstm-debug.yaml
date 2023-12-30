@@ -1,0 +1,6 @@
+type: LSTMModel1
+kwargs:
+  input_size: 396
+  action_size: 17
+  hidden_size: 16
+  num_layers: 1

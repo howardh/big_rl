@@ -86,9 +86,16 @@ class AddDummyObservation(gymnasium.ObservationWrapper):
 
         if not isinstance(env.observation_space, gymnasium.spaces.Dict):
             raise TypeError(f'AddDummyObservation can only be applied to environments with a Dict observation space. Received {type(env.observation_space)}')
+        if key in env.observation_space.spaces:
+            raise ValueError(f'Key {key} already exists in observation space {env.observation_space}')
+
+        self.observation_space = gymnasium.spaces.Dict({
+            **env.observation_space.spaces,
+            key: gymnasium.spaces.Box(low=-np.inf, high=np.inf, shape=[1], dtype=np.float32),
+        })
 
     def observation(self, observation: dict) -> dict:
-        observation[self.key] = self.value
+        observation[self.key] = [self.value]
         return observation
 
 
