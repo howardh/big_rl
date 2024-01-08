@@ -528,6 +528,8 @@ def main_slurm(args):
             except Exception as e:
                 print(f'Caught exception: {e}')
                 print(f'Failed to generate args for {num_tasks} tasks. Successfully generated args for {len(task_args_list)} tasks.')
+    print(f'Launched {len(job_ids)} jobs')
+    print(f'Job IDs: {job_ids}')
 
     eval_job_ids = []
 

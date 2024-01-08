@@ -34,17 +34,18 @@ def test_GreyscaleImageInput(batch_size):
 
 
 @pytest.mark.parametrize('batch_size', [1, 2])
-def test_ScalarInput(batch_size):
+@pytest.mark.parametrize('module_type', ['ScalarInput', 'UnaryScalarInput'])
+def test_ScalarInput(batch_size, module_type):
     config = {
         MODULE_NAME: {
-            'type': 'ScalarInput',
+            'type': module_type,
             'kwargs': {}
         }
     }
     module = create_input_modules(config, key_size=KEY_SIZE, value_size=VALUE_SIZE)
 
     # Verify that the module can run without errors
-    output = module[MODULE_NAME](torch.zeros(batch_size, 1))
+    output = module[MODULE_NAME](torch.rand(batch_size, 1))
 
     assert 'key' in output
     assert 'value' in output

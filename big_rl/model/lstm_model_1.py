@@ -1,21 +1,30 @@
 import torch
 
-from big_rl.model.core_module.container import CoreModule
-from big_rl.model.input_module.container import InputModuleContainer
-from big_rl.model.output_module.container import OutputModuleContainer
+from big_rl.model.input_module.modules import _scalar_to_log_unary
+from big_rl.model.dense import make_ff_model
 
 
 class LSTMModel1(torch.nn.Module):
-    def __init__(self, input_size: int, action_size: int, hidden_size: int = 128, num_layers: int = 1):
+    def __init__(self, input_size: int, action_size: int, hidden_size: int = 128, num_layers: int = 1, ff_size: list[int] = [], unary_energy: bool = False):
         super().__init__()
 
         self._input_size = input_size
         self._action_size = action_size
         self._hidden_size = hidden_size
         self._num_layers = num_layers
+        self._unary_energy = unary_energy
 
         self._key_order = None
 
+        if unary_energy:
+            self._energy_size = 8
+            input_size = input_size + (self._energy_size - 1)
+
+        if len(ff_size) > 0:
+            self.ff = make_ff_model(input_size=input_size, output_size=ff_size[-1], hidden_size=ff_size[:-1])
+            input_size = ff_size[-1]
+        else:
+            self.ff = lambda x: x
         self.lstm = torch.nn.ModuleList([
             torch.nn.LSTMCell(
                 input_size if i == 0 else hidden_size,
@@ -33,7 +42,12 @@ class LSTMModel1(torch.nn.Module):
         prev_h = hidden[:self._num_layers]
         prev_c = hidden[self._num_layers:]
 
+        if self._unary_energy:
+            x = {**x} # shallow copy
+            x['energy'] = _scalar_to_log_unary(x['energy'], 8)
+
         x = torch.cat([x[key] for key in self._key_order], dim=-1)
+        x = self.ff(x)
 
         new_h = []
         new_c = []

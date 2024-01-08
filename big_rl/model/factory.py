@@ -1,5 +1,6 @@
 from collections import defaultdict
 import copy
+import typing
 from typing import Dict
 import inspect
 import warnings
@@ -472,6 +473,12 @@ def _preprocess_kwargs(kwargs, cls, observation_space=None, action_space=None):
         expected_type = params[param_name].annotation
         if expected_type is inspect.Parameter.empty:
             continue
+        # `isinstance` can't handle parameterized generic types, so we check if `expected_type` has arguments. If it does, replace it with the non parameterized type.
+        # e.g. if `expected_type` is `list[int]`, replace it with `list`
+        # TODO: Should we also check the types of the list elements?
+        if len(typing.get_args(expected_type)) > 0:
+            expected_type = typing.get_origin(expected_type)
+            assert expected_type is not None
         if not isinstance(param_value, expected_type):
             # If there's a type mismatch, check if we can convert the value
             # A dictionary of the format `{'source': 'action/observation_space', 'accessor': 'shape[0]'}` means that the value is to be extracted from the action or observation space.

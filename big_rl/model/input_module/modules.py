@@ -111,26 +111,36 @@ class ScalarInput(InputModule):
         }
 
 
+def _scalar_to_log_unary(value: Float[torch.Tensor, 'batch_size'], output_size: int):
+    """ Convert a scalar to a "unary" tensor. """
+    batch_size = value.shape[0]
+
+    unary_output = torch.zeros([batch_size, output_size], device=value.device)
+    log_value = torch.log(value + 1)
+    for i in range(batch_size):
+        lv = int(log_value[i].item())
+        rem = log_value[i].item() - lv
+        unary_output[i,:lv] = 1
+        unary_output[i,lv] = rem
+    return unary_output
+
+
 class UnaryScalarInput(InputModule):
-    def __init__(self, key_size: int, value_size: int, min_value: float = -1, max_value: float = 1):
+    def __init__(self, key_size: int, value_size: int, min_output_value: float = -1, max_output_value: float = 1, min_input_value: float = 1e-5, max_input_value: float = float('inf')):
         super().__init__()
         self.value_size = value_size
         self.key = torch.nn.Parameter(torch.rand([key_size]))
-        self.min_value = min_value
-        self.max_value = max_value
+        self.min_output_value = min_output_value
+        self.max_output_value = max_output_value
     def forward(self, value: Float[torch.Tensor, 'batch_size']):
         batch_size = int(torch.tensor(value.shape).prod().item())
         batch_shape = value.shape
         assert len(batch_shape) == 2
         assert batch_shape[-1] == 1, 'Last dimension of input to UnaryScalarInput has to be size 1.'
         assert (value >= 0).all(), 'UnaryScalarInput only supports positive values.'
-        unary_output = torch.ones([batch_size, self.value_size], device=value.device) * self.min_value
-        log_value = torch.log(value + 1)
-        for i in range(batch_size):
-            lv = int(log_value[i].item())
-            rem = log_value[i].item() - lv
-            unary_output[i,:lv] = self.max_value
-            unary_output[i,lv] = rem * (self.max_value - self.min_value) + self.min_value
+
+        unary_output = _scalar_to_log_unary(value, self.value_size) * (self.max_output_value - self.min_output_value) + self.min_output_value
+
         return {
             'key': self.key.view(1,-1).expand(batch_size, -1).view(*batch_shape[:-1],-1),
             'value': unary_output
