@@ -1,0 +1,8 @@
+type: LSTMModel1
+kwargs:
+  input_size: 396
+  action_size: 17
+  hidden_size: 4096
+  num_layers: 1
+  ff_size: [1024, 1024]
+  unary_energy: true

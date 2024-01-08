@@ -44,7 +44,7 @@ class LSTMModel1(torch.nn.Module):
 
         if self._unary_energy:
             x = {**x} # shallow copy
-            x['energy'] = _scalar_to_log_unary(x['energy'], 8)
+            x['obs (energy)'] = _scalar_to_log_unary(x['obs (energy)'], 8)
 
         x = torch.cat([x[key] for key in self._key_order], dim=-1)
         x = self.ff(x)
