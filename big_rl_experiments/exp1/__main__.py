@@ -214,10 +214,10 @@ def run_slurm(args: list[str]):
     # https://stackoverflow.com/questions/76348342/how-to-use-trap-in-my-sbatch-bash-job-script-in-compute-canada
     slurm.add_cmd("trap 'echo SIGUSR1 1>&2' SIGUSR1") # Handles time limit
     slurm.add_cmd("trap 'echo SIGUSR1 1>&2' SIGTERM") # Handles preemption (I think this is needed if PreemptParameters isn't set with send_user_signal enabled. Check if it's set in /etc/slurm/slurm.conf)
-    job_id = slurm.sbatch('srun python big_rl/generic/script.py ' + ' '.join(args), shell=SHELL)
     print('-'*80)
     print(slurm.script(shell=SHELL))
     print('-'*80)
+    job_id = slurm.sbatch('srun python big_rl/generic/script.py ' + ' '.join(args), shell=SHELL)
     return job_id
 
 
@@ -301,24 +301,47 @@ def eval_local(args: list[str]):
     eval_generic(args_ns)
 
 
-def eval_slurm(args: list[str], after: list[int] | None = None):
+def eval_slurm(args: list[str], after: list[int] = []):
+    slurm_kwargs = {}
+    if len(after) > 0:
+        slurm_kwargs['dependency'] = dict(afterok=':'.join(str(job_id) for job_id in after))
     slurm = Slurm(
         job_name='eval',
         cpus_per_task=8,
         mem='8G',
-        dependency=dict(afterok=':'.join(str(job_id) for job_id in after)) if after else None,
         output='/network/scratch/h/huanghow/slurm/%A_%a.out',
         time=datetime.timedelta(days=0, hours=1, minutes=0, seconds=0),
+        partition='long-cpu',
+        **slurm_kwargs,
+    )
+    #slurm.add_cmd('module load libffi') # Fixes the "ImportError: libffi.so.6: cannot open shared object file: No such file or directory" error
+    slurm.add_cmd('module load python/3.10')
+    slurm.add_cmd('source big_rl/ENV/bin/activate')
+    slurm.add_cmd('export PYTHONUNBUFFERED=1')
+    print('-'*80)
+    print(slurm.script(shell=SHELL))
+    print('-'*80)
+    job_id = slurm.sbatch('python big_rl/generic/evaluate_model.py ' + ' '.join(args), shell=SHELL)
+    return job_id
+
+
+def eval_random_slurm(argv):
+    slurm = Slurm(
+        job_name='eval_random',
+        cpus_per_task=8,
+        mem='8G',
+        output='/network/scratch/h/huanghow/slurm/%A_%a.out',
+        time=datetime.timedelta(days=1, hours=0, minutes=0, seconds=0),
         partition='long-cpu',
     )
     #slurm.add_cmd('module load libffi') # Fixes the "ImportError: libffi.so.6: cannot open shared object file: No such file or directory" error
     slurm.add_cmd('module load python/3.10')
     slurm.add_cmd('source big_rl/ENV/bin/activate')
     slurm.add_cmd('export PYTHONUNBUFFERED=1')
-    job_id = slurm.sbatch('python big_rl/generic/evaluate_model.py ' + ' '.join(args), shell=SHELL)
     print('-'*80)
     print(slurm.script(shell=SHELL))
     print('-'*80)
+    job_id = slurm.sbatch('python big_rl_experiments/exp1/__main__.py eval_random ' + ' '.join(argv))
     return job_id
 
 
@@ -432,23 +455,26 @@ def plot_results(output_dir, eval_results_dir, eval_random_results_dir, eval_tra
 
 
 def plot_slurm(argv, after):
+    slurm_kwargs = {}
+    if len(after) > 0:
+        slurm_kwargs['dependency'] = dict(afterok=':'.join(str(job_id) for job_id in after))
     slurm = Slurm(
         job_name='plot',
         cpus_per_task=2,
         mem='4G',
-        dependency=dict(afterok=':'.join(str(job_id) for job_id in after)) if after else None,
         output='/network/scratch/h/huanghow/slurm/%A_%a.out',
         time=datetime.timedelta(days=0, hours=1, minutes=0, seconds=0),
         partition='long-cpu',
+        **slurm_kwargs,
     )
     #slurm.add_cmd('module load libffi') # Fixes the "ImportError: libffi.so.6: cannot open shared object file: No such file or directory" error
     slurm.add_cmd('module load python/3.10')
     slurm.add_cmd('source big_rl/ENV/bin/activate')
     slurm.add_cmd('export PYTHONUNBUFFERED=1')
-    job_id = slurm.sbatch('python big_rl_experiments/exp1/__main__.py plot ' + ' '.join(argv))
     print('-'*80)
     print(slurm.script())
     print('-'*80)
+    job_id = slurm.sbatch('python big_rl_experiments/exp1/__main__.py plot ' + ' '.join(argv))
     return job_id
 
 
@@ -502,6 +528,12 @@ def main_slurm(args):
     eval_random_results_dir = os.path.join(results_dir, 'eval_random_results')
     plots_dir = os.path.join(results_dir, 'plots')
 
+    # Get index of arguments after the list of actions
+    argv_start_idx = 0
+    for argv_start_idx, argv in enumerate(sys.argv):
+        if argv.startswith('--'):
+            break
+
     job_ids = []
     if 'train' in args.actions:
         for num_tasks in args.task_counts:
@@ -528,18 +560,16 @@ def main_slurm(args):
             except Exception as e:
                 print(f'Caught exception: {e}')
                 print(f'Failed to generate args for {num_tasks} tasks. Successfully generated args for {len(task_args_list)} tasks.')
-    print(f'Launched {len(job_ids)} jobs')
-    print(f'Job IDs: {job_ids}')
 
     eval_job_ids = []
 
     # Evaluate randomly initialized models
     if 'eval_random' in args.actions:
-        # Check how many times its been evaluated
-        file_count = sum(
-            1 if f.endswith('.pt') else 0
-            for f in os.listdir(eval_random_results_dir)
-        )
+        ## Check how many times its been evaluated
+        #file_count = sum(
+        #    1 if f.endswith('.pt') else 0
+        #    for f in os.listdir(eval_random_results_dir)
+        #)
         ## XXX: Change this to run everything in series.
         #for _ in range(args.num_random_evals - file_count):
         #    task_args = generate_random_args(
@@ -549,13 +579,16 @@ def main_slurm(args):
         #        debug = args.debug,
         #    )
         #    eval_job_ids.append(eval_slurm(task_args, after=job_ids))
+        eval_random_slurm(sys.argv[argv_start_idx:])
 
     # Evaluate all models that were trained on a single task
     # Test on their training task
     if 'eval_train' in args.actions:
         for filename in os.listdir(checkpoint_dir):
+            # Check that only one training task was used for this model
             if filename.count('1') != 1:
                 continue
+            # If it was trained on a single task, evaluate it on that task
             task_args = generate_eval_training_task_args(
                 model_checkpoint = os.path.join(checkpoint_dir, filename),
                 output_dir = eval_training_task_results_dir,
@@ -585,13 +618,14 @@ def main_slurm(args):
 
     # Plot the results
     if 'plot' in args.actions:
-        # Replace actions with only "plot"
-        argv_start_idx = 0
-        for argv_start_idx, argv in enumerate(sys.argv):
-            if argv.startswith('--'):
-                break
         # Call this script (local version) with the same arguments, but with only "plot" as the action
         plot_slurm(sys.argv[argv_start_idx:], after=eval_job_ids)
+
+    print(f'Launched {len(job_ids) + len(eval_job_ids)} jobs (plotting not counted)')
+    if len(job_ids) > 0:
+        print(f'Training job IDs: {job_ids}')
+    if len(eval_job_ids) > 0:
+        print(f'Evaluation job IDs: {eval_job_ids}')
 
 
 def main_local(args):
