@@ -13,7 +13,7 @@ import numpy as np # Imported so that it can be used by TransformObservation's `
 
 from big_rl.minigrid.envs import MinigridPreprocessing, MetaWrapper, ActionShuffle
 from big_rl.mujoco.envs.wrappers import MujocoTaskRewardWrapper
-from big_rl.utils.wrappers import AddDummyInfo, PadObservation, PadAction, ToDictObservation, AddDummyObservation, ShuffleObservation
+from big_rl.utils.wrappers import AddDummyInfo, OccludeObservation, PadObservation, PadAction, ShuffleAction, ToDictObservation, AddDummyObservation, ShuffleObservation
 
 
 WRAPPERS = [
@@ -32,7 +32,7 @@ WRAPPERS = [
     MujocoTaskRewardWrapper,
     # Misc
     MetaWrapper,
-    ActionShuffle,
+    ActionShuffle, # TODO: Deprecate this once ShuffleAction has discrete actions implemented
     TimeLimit,
     PadObservation,
     PadAction,
@@ -40,6 +40,8 @@ WRAPPERS = [
     AddDummyObservation,
     AddDummyInfo,
     ShuffleObservation,
+    ShuffleAction,
+    OccludeObservation,
 ]
 
 

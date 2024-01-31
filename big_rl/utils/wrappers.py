@@ -164,3 +164,141 @@ class ShuffleObservation(gymnasium.Wrapper):
             assert isinstance(observation, dict)
             observation[self.key] = observation[self.key][self.permutation]
             return observation
+
+
+class ShuffleAction(gymnasium.Wrapper):
+    # XXX: Untested
+    def __init__(self, env, key=None):
+        super().__init__(env)
+
+        self.key = key
+
+        if key is None:
+            if not isinstance(env.action_space, gymnasium.spaces.Box):
+                raise TypeError(f'Attempted to shuffle a non-Box action space. Received {type(env.action_space)}')
+            if not len(env.action_space.shape) == 1:
+                raise ValueError(f'Only 1D vector actions can be shuffled. Received action shape {env.action_space.shape}')
+        else:
+            if not isinstance(env.action_space, gymnasium.spaces.Dict):
+                raise TypeError(f'A key was provided, but the action space is not a Dict. Received {type(env.action_space)}')
+            if key not in env.action_space.spaces:
+                raise ValueError(f'The provided key was not found in the action space. Received {key}. Available keys are {env.action_space.spaces.keys()}')
+            if not isinstance(env.action_space.spaces[key], gymnasium.spaces.Box):
+                raise TypeError(f'Attempted to shuffle a non-Box action space. Received {type(env.action_space.spaces[key])}')
+        # TODO: Implement for Discrete action spaces
+
+    def reset(self, *args, **kwargs):
+        if self.key is None:
+            shuffled_action_space = self.action_space
+        else:
+            assert isinstance(self.action_space, gymnasium.spaces.Dict)
+            shuffled_action_space = self.action_space[self.key]
+        assert shuffled_action_space.shape is not None
+        self.permutation = np.random.permutation(np.arange(shuffled_action_space.shape[0]))
+
+        return self.env.reset(*args, **kwargs)
+
+    def step(self, action):
+        action = self.shuffle_action(action) # type: ignore
+        obs, reward, terminated, truncated, info = self.env.step(action) # type: ignore
+        return obs, reward, terminated, truncated, info # type: ignore
+
+    def shuffle_action(self, action: np.ndarray | dict) -> np.ndarray | dict:
+        if self.key is None:
+            assert isinstance(action, np.ndarray)
+            return action[self.permutation]
+        else:
+            assert isinstance(action, dict)
+            action[self.key] = action[self.key][self.permutation]
+            return action
+
+
+def _make_mask(space, p, ignore_unsupported=False):
+    if isinstance(space, gymnasium.spaces.Box):
+        obs_shape = space.shape
+        assert obs_shape is not None
+        obs_size = np.prod(obs_shape)
+        num_non_visible = int(p * obs_size)
+        num_visible = obs_size - num_non_visible
+        visible = np.array([True] * num_visible + [False] * num_non_visible)
+        np.random.shuffle(visible)
+        mask = visible.reshape(obs_shape)
+        return mask
+    if isinstance(space, gymnasium.spaces.Dict):
+        return {
+            key: _make_mask(subspace, p)
+            for key, subspace in space.spaces.items()
+        }
+    if isinstance(space, gymnasium.spaces.Tuple):
+        return tuple(
+            _make_mask(sub_space, p)
+            for sub_space in space.spaces
+        )
+    if ignore_unsupported:
+        return None
+    raise TypeError(f'Unsupported space type {type(space)}')
+
+
+def _apply_mask(x, mask, value, space):
+    if mask is None:
+        return x
+
+    if isinstance(space, gymnasium.spaces.Box):
+        if isinstance(x, list) or isinstance(x, tuple):
+            x = np.array(x)
+        return np.where(mask, x, value)
+    if isinstance(space, gymnasium.spaces.Dict):
+        assert isinstance(x, dict)
+        return {
+            key: _apply_mask(sub_x, mask[key], value, space.spaces[key])
+            for (key, sub_x) in x.items()
+        }
+    if isinstance(space, gymnasium.spaces.Tuple):
+        if isinstance(x, tuple):
+            return tuple(
+                _apply_mask(sub_x, sub_mask, value, sub_space)
+                for (sub_x, sub_mask, sub_space) in zip(x, mask, space.spaces)
+            )
+        if isinstance(x, list):
+            return [
+                _apply_mask(sub_x, sub_mask, value, sub_space)
+                for (sub_x, sub_mask, sub_space) in zip(x, mask, space.spaces)
+            ]
+    raise TypeError(f'Unsupported type {type(x)}')
+
+
+class OccludeObservation(gymnasium.Wrapper):
+    def __init__(self, env, p: float, value: float = 0.0):
+        super().__init__(env)
+
+        self.p = p
+        self.value = value
+
+        ## Create a mask now to make sure it's work. Fail fast and give a good error message.
+        #self.mask = _make_mask(env.observation_space, p)
+
+    def reset(self, *args, **kwargs):
+        obs, info = self.env.reset(*args, **kwargs)
+        self.reset_mask()
+        return self.mask_observation(obs), info # type: ignore
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action) # type: ignore
+        return self.mask_observation(obs), reward, terminated, truncated, info # type: ignore
+
+    def reset_mask(self):
+        #obs_shape = self.observation_space.shape
+        #assert obs_shape is not None
+        #obs_size = np.prod(obs_shape)
+        #num_non_visible = int(self.p * obs_size)
+        #num_visible = obs_size - num_non_visible
+        #visible = np.array([True] * num_visible + [False] * num_non_visible)
+        #np.random.shuffle(visible)
+
+        #self.mask = visible.reshape(obs_shape)
+        self.mask = _make_mask(self.observation_space, self.p, ignore_unsupported=True)
+
+    def mask_observation(self, observation: np.ndarray):
+        #assert isinstance(observation, np.ndarray)
+        #return np.where(self.mask, observation, self.value)
+        return _apply_mask(observation, self.mask, self.value, self.observation_space)

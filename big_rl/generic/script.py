@@ -4,7 +4,7 @@ import os
 import itertools
 import signal
 import sys
-from typing import Optional, Generator, Dict, List, Any, Callable, Union, Tuple, Iterable
+from typing import Optional, Generator, Dict, List, Any, Callable, Union, Tuple, Iterable, NamedTuple
 import time
 import yaml
 
@@ -33,6 +33,11 @@ import big_rl.mujoco.envs # type: ignore (import for the env registration)
 
 
 WANDB_PROJECT_NAME = 'ppo-generic'
+
+
+class Callbacks(NamedTuple):
+    on_model_init: Callable[[Any], None] | None = None
+    on_checkpoint_load: Callable[[Any], None] | None = None
 
 
 def action_dist_discrete(net_output, n=None):
@@ -686,7 +691,7 @@ def init_arg_parser():
     return parser
 
 
-def main(args):
+def main(args, callbacks=Callbacks()):
     # Post-process string arguments
     # Note: Only non-string arguments and args.run_id can be used until the post-processing is done.
     if args.run_id is None:
@@ -766,6 +771,9 @@ def main(args):
     print('Model initialized')
     print(f'Number of parameters: {param_count:,}')
 
+    if callbacks.on_model_init is not None:
+        callbacks.on_model_init(locals())
+
     # Initialize optimizer
     if args.optimizer == 'Adam':
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -782,6 +790,7 @@ def main(args):
     # Load checkpoint
     start_step = 0
     checkpoint = None
+    is_resume = False # Useful info for callbacks
 
     if args.model_checkpoint is not None and os.path.exists(args.model_checkpoint) and os.stat(args.model_checkpoint).st_size > 0:
         assert not os.path.isdir(args.model_checkpoint), 'Model checkpoint must be a file, not a directory'
@@ -789,9 +798,12 @@ def main(args):
         # If the checkpoint file is empty, it means we just created the file and the experiment hasn't started yet.
         checkpoint = torch.load(args.model_checkpoint, map_location=device)
         print(f'Experiment already started. Loading checkpoint from {args.model_checkpoint}')
+        is_resume = True
     elif args.starting_model is not None:
         checkpoint = torch.load(args.starting_model, map_location=device)
         print(f'Loading starting model from {args.starting_model}')
+        is_resume = False
+    print('Resume:', is_resume)
 
     if checkpoint is not None:
         model.load_state_dict(checkpoint['model'], strict=False)
@@ -801,6 +813,9 @@ def main(args):
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         start_step = checkpoint.get('step', 0)
         print(f'Loaded checkpoint successfully. Starting from step {start_step}.')
+
+    if callbacks.on_checkpoint_load is not None:
+        callbacks.on_checkpoint_load(locals())
 
     # Initialize trainer
     print('-'*80)

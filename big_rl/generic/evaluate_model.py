@@ -260,7 +260,7 @@ def draw_attention_mm1(model_output):
 
     output_attention = {k:x['attn_output_weights'] for k,x in model_output['misc']['output'].items()}
     input_labels = model_output['misc']['input']['input_labels']
-    core_labels = model_output['misc']['core']['output_labels']
+    core_labels = model_output['misc']['core'].get('output_labels', [])
 
     # Core modules
     def draw_core_attention(data) -> PIL.Image.Image:
