@@ -61,7 +61,7 @@ def get_performance_episode(results_dir):
     return {k: np.mean(v) for k, v in data.items()}
 
 
-def get_performance_episode_by_num_tasks(results_dir) -> dict[int, dict[str, list[float]]]:
+def get_performance_episode_by_num_tasks(results_dir, mean=False) -> dict[int, dict[str, list[float]]]:
     if not os.path.exists(results_dir):
         return {}
 
@@ -73,6 +73,13 @@ def get_performance_episode_by_num_tasks(results_dir) -> dict[int, dict[str, lis
         results = torch.load(os.path.join(results_dir, filename))
         for task_name, result in results.items():
             data[num_tasks][task_name].extend(r['episode_reward'].item() for r in result)
+    if mean:
+        data = {
+            k: {
+                kk: np.mean(vv)
+                for kk, vv in v.items()
+            } for k, v in data.items()
+        }
     return data
 
 
@@ -358,13 +365,12 @@ def plot_test_vs_train_performance(eval_train_results_dir, eval_train_all_result
 
 
 def plot(output_dir, results_dir):
-    eval_results_dir = ResultsDir.from_results_dir(results_dir)
-    eval_train_results_dir = os.path.join(results_dir, 'eval_train_results')
-    #eval_train_all_results_dir = os.path.join(results_dir, 'eval_train_all_results')
+    eval_test_results_dir = ResultsDir.from_results_dir(os.path.join(results_dir, 'eval_test_results'))
+    eval_train_results_dir = ResultsDir.from_results_dir(os.path.join(results_dir, 'eval_train_results'))
     eval_random_results_dir = os.path.join(results_dir, 'eval_random_results')
 
     random_performance = get_performance_episode(eval_random_results_dir)
-    single_task_performance = get_performance_episode_by_num_tasks(eval_train_results_dir)[1]
+    single_task_performance = get_performance_episode_by_num_tasks(eval_train_results_dir.default, mean=True)[1]
     #single_task_performance = get_performance_episode(eval_train_results_dir)
 
     result_dirs = [
@@ -373,17 +379,20 @@ def plot(output_dir, results_dir):
         #('shuffled action', eval_results_dir.shuffled_action),
         #('shuffled observation and action', eval_results_dir.shuffled_obs_and_action),
         #('occluded obs', eval_results_dir.occluded_obs_100),
-        ('occluded obs action and reward', eval_results_dir.occluded_obs_action_reward_100),
+        #('occluded obs action and reward', eval_test_results_dir.occluded_obs_action_reward_100),
+
+        ('standard setup (training tasks)', eval_train_results_dir.default),
+        ('occluded obs action and reward (training tasks)', eval_train_results_dir.occluded_obs_action_reward_100),
     ]
     for description, result_dir in result_dirs:
         print('#'*80)
         print(f'# Test performance with {description}')
         print('#'*80)
 
-        performance_table(eval_results_dir.default, random_performance, single_task_performance)
+        performance_table(result_dir, random_performance, single_task_performance)
 
-        if not os.path.exists(eval_results_dir.default):
-            print(f'No results found in {eval_results_dir.default}')
+        if not os.path.exists(result_dir):
+            print(f'No results found in {eval_test_results_dir.default}')
             print('  Models have not been evaluated on test tasks yet. Skipping plotting.')
             continue
 

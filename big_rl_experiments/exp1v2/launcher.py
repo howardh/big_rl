@@ -538,7 +538,11 @@ def launch(args):
         #    output_dir=plots_dir,
         #    results_dir=results_dir,
         #)
-        raise NotImplementedError()
+        run_plot([
+            '--results-dir', results_dir,
+            '--output-dir', plots_dir,
+        ])
+        #raise NotImplementedError()
 
     print(f'Launched {len(train_job_ids) + len(eval_job_ids)} jobs (plotting not counted)')
     if len(train_job_ids) > 0:
