@@ -1,6 +1,7 @@
 import pytest
 
 import torch
+from big_rl.model.modular_model_1 import ModularModel1
 import gymnasium
 
 from big_rl.model.factory import create_model
@@ -67,7 +68,13 @@ def test_full_model(batch_size):
                 'kwargs': {
                     'input_size': 3,
                 },
-            }
+            },
+            'foo_recurrent_linear': {
+                'type': 'RecurrentLinearInput',
+                'kwargs': {
+                    'input_size': 4,
+                },
+            },
         },
         'output_modules': {
             'some_output': {
@@ -636,6 +643,8 @@ def test_submodels(batch_size):
     }
     model = create_model(config)
 
+    assert isinstance(model, ModularModel1)
+
     # Verify that the model can run without errors
     outputs = []
     for i in range(3):
@@ -686,6 +695,8 @@ def test_submodels_weight_sharing_hidden_state(batch_size):
         }
     }
     model = create_model(config)
+
+    assert isinstance(model, ModularModel1)
 
     # Do some gradient update
     for i in range(3):
@@ -750,6 +761,8 @@ def test_submodels_shared_optimizer(batch_size):
         }
     }
     model = create_model(config)
+
+    assert isinstance(model, ModularModel1)
 
     # Do some gradient update
     optim = torch.optim.Adam(model.parameters(), lr=1e-3)

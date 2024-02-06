@@ -171,6 +171,10 @@ class RecurrentAttention17(CoreModule):
     def n_hidden(self):
         return len(self.default_hidden)
 
+    @property
+    def hidden_batch_dims(self):
+        return [1] * len(self.default_hidden)
+
     def to_nonbatched(self):
         return _batched_to_nonbatched(self)
 

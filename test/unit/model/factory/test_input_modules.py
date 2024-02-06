@@ -143,6 +143,36 @@ def test_LinearInput_input_size_boundary():
 
 
 @pytest.mark.parametrize('batch_size', [1, 2])
+@pytest.mark.parametrize('input_size', [1, 2])
+@pytest.mark.parametrize('rank', [1, 2])
+@pytest.mark.parametrize('shared_key', [True, False])
+def test_RecurrentLinearInput(batch_size, input_size, rank, shared_key):
+    config = {
+        MODULE_NAME: {
+            'type': 'RecurrentLinearInput',
+            'kwargs': {
+                'input_size': input_size,
+                'weight_diff_rank': rank,
+                'shared_key': shared_key,
+            }
+        }
+    }
+    module = create_input_modules(config, key_size=KEY_SIZE, value_size=VALUE_SIZE)
+
+    # Verify that the module can run without errors
+    x = torch.zeros(batch_size, input_size)
+    h = module[MODULE_NAME].init_hidden(batch_size)
+    output = module[MODULE_NAME](x, h)
+
+    assert 'key' in output
+    assert 'value' in output
+    assert 'hidden' in output
+
+    assert output['key'].shape == (batch_size, KEY_SIZE)
+    assert output['value'].shape == (batch_size, VALUE_SIZE)
+
+
+@pytest.mark.parametrize('batch_size', [1, 2])
 def test_all_modules_together(batch_size):
     config = {
         'greyscale': {

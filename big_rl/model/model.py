@@ -9,7 +9,7 @@ from torch.utils.data.dataloader import default_collate
 #from big_rl.model.recurrent_attention_16 import RecurrentAttention16 # XXX: Causes circular imports
 
 try:
-    import big_rl_cpp
+    import big_rl_cpp # type: ignore
 except ImportError:
     big_rl_cpp = None
 
@@ -715,6 +715,7 @@ class LSTM(torch.nn.Module): # TODO
 
 
 # Batched stuff
+
 
 class NonBatchMultiHeadAttention(torch.nn.Module):
     def __init__(self, modules, key_size, num_heads, default_batch=False):

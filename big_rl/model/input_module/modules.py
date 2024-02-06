@@ -261,3 +261,115 @@ class MatrixInput(InputModule):
             'value': (self.left_value @ x @ self.right_value).view(batch_size, self._value_size)
         }
 
+
+class RecurrentLinearInput(InputModule):
+    def __init__(self, input_size: int, key_size: int, value_size: int, weight_diff_rank: int = 1, shared_key: bool = False):
+        """
+        Args:
+            input_size: The size of the input vector.
+            key_size: The size of the key.
+            value_size: The size of the value.
+            shared_key: If set to True, the same key will be used regardless of input. If set to False, the key will be computed as a linear function of the input.
+        """
+        super().__init__()
+        self._input_size = input_size
+        self._key_size = key_size
+        self._value_size = value_size
+        self._weight_diff_rank = weight_diff_rank
+        self._shared_key = shared_key
+
+        self.initial_weight = torch.nn.Parameter(torch.empty([1, input_size, value_size]))
+        self.initial_bias = torch.nn.Parameter(torch.empty([1, 1, value_size]))
+        torch.nn.init.xavier_uniform_(self.initial_weight)
+        torch.nn.init.zeros_(self.initial_bias)
+        self.lstm_value = torch.nn.LSTMCell(
+            input_size,
+            ( input_size + value_size ) * weight_diff_rank + value_size
+        )
+
+        if shared_key:
+            self.key = torch.nn.Parameter(torch.rand([key_size])-0.5)
+        else:
+            self.lstm_key = torch.nn.LSTMCell(
+                input_size,
+                ( input_size + key_size ) * weight_diff_rank + key_size
+            )
+            self.initial_weight_key = torch.nn.Parameter(torch.empty([input_size, key_size]))
+            self.initial_bias_key = torch.nn.Parameter(torch.empty([key_size]))
+            torch.nn.init.xavier_uniform_(self.initial_weight)
+            torch.nn.init.zeros_(self.initial_bias)
+
+    def forward(self, x: Float[torch.Tensor, 'batch_size input_size'], hidden):
+        batch_size = x.shape[0]
+        input_size = x.shape[1]
+        if input_size != self._input_size:
+            raise ValueError(f'Expected input of size {self._input_size} but got {input_size}.')
+        if len(hidden) != self.n_hidden:
+            raise ValueError(f'Expected hidden to be a tuple of {self.n_hidden} tensors.')
+
+        r = self._weight_diff_rank
+        hv, cv  = self.lstm_value(x, (hidden[0].squeeze(0), hidden[1].squeeze(0)))
+
+        i = 0
+        dw_1 = hv[:,i:self._input_size*r].view(batch_size, self._input_size, r)
+        i += self._input_size * r
+        dw_2 = hv[:,i:i+self._value_size*r].view(batch_size, r, self._value_size)
+        i += self._value_size * r
+        db = hv[:,i:].view(batch_size, 1, self._value_size)
+
+        wv = self.initial_weight + (dw_1 @ dw_2)
+        bv = self.initial_bias + db
+        value = x.unsqueeze(1) @ wv + bv
+        value = value.squeeze(1)
+
+        if self._shared_key:
+            key = self.key.expand(batch_size, -1)
+            new_hidden = (hv.unsqueeze(0), cv.unsqueeze(0))
+        else:
+            hk, ck  = self.lstm_key(x, (hidden[2].squeeze(0), hidden[3].squeeze(0)))
+            
+            i = 0
+            dw_1 = hk[:,i:self._input_size*r].view(batch_size, self._input_size, r)
+            i += self._input_size * r
+            dw_2 = hk[:,i:i+self._key_size*r].view(batch_size, r, self._key_size)
+            i += self._key_size * r
+            db = hk[:,i:].view(batch_size, 1, self._key_size)
+
+            wk = self.initial_weight_key + (dw_1 @ dw_2)
+            bk = self.initial_bias_key + db
+            key = x.unsqueeze(1) @ wk + bk
+            key = key.squeeze(1)
+
+            new_hidden = (
+                hv.unsqueeze(0),
+                cv.unsqueeze(0),
+                hk.unsqueeze(0),
+                ck.unsqueeze(0),
+            )
+
+        return {
+            'key': key,
+            'value': value,
+            'hidden': new_hidden,
+        }
+
+    @property
+    def n_hidden(self) -> int:
+        if self._shared_key:
+            return 2
+        else:
+            return 4
+
+    def init_hidden(self, batch_size) -> tuple[torch.Tensor, ...]:
+        if self._shared_key:
+            return (
+                torch.zeros([1, batch_size, self.lstm_value.hidden_size]),
+                torch.zeros([1, batch_size, self.lstm_value.hidden_size]),
+            )
+        else:
+            return (
+                torch.zeros([1, batch_size, self.lstm_value.hidden_size]),
+                torch.zeros([1, batch_size, self.lstm_value.hidden_size]),
+                torch.zeros([1, batch_size, self.lstm_key.hidden_size]),
+                torch.zeros([1, batch_size, self.lstm_key.hidden_size]),
+            )

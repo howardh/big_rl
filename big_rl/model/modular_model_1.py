@@ -28,22 +28,30 @@ class ModularModel1(torch.nn.Module):
         prev_key = hidden[0]
         prev_value = hidden[1]
 
-        x1 = self.input_modules(x)
+        input_hidden, core_hidden, output_hidden = self._split_hidden(hidden[2:])
+
+        x1 = self.input_modules(x, input_hidden)
 
         x2 = self.core_modules(
                 key = torch.cat([*x1['key'], prev_key], dim=0),
                 value = torch.cat([*x1['value'], prev_value], dim=0),
-                hidden = hidden[2:]
+                hidden = core_hidden,
         )
 
         # Join key and values from x1 and x2
         key = torch.cat([*x1['key'], x2['key']], dim=0)
         value = torch.cat([*x1['value'], x2['value']], dim=0)
 
-        x3 = self.output_modules(key, value)
+        x3 = self.output_modules(key, value, output_hidden)
 
         return {
-            'hidden': tuple([x2['key'], x2['value'], *x2['hidden']]),
+            'hidden': tuple([
+                x2['key'],
+                x2['value'],
+                *x1['hidden'],
+                *x2['hidden'],
+                *x3.pop('hidden', []),
+            ]),
             **x3,
             'misc': {
                 'input': x1.get('misc', {}),
@@ -55,17 +63,27 @@ class ModularModel1(torch.nn.Module):
     def init_hidden(self, batch_size):
         key = self._initial_state['key'].expand(batch_size, -1).view(1, batch_size, -1)
         value = self._initial_state['value'].expand(batch_size, -1).view(1, batch_size, -1)
-        initial_hidden = self.core_modules.init_hidden(batch_size)
-        initial_output = self.core_modules(key, value, initial_hidden)
-        return tuple([
+        initial_hidden_input = self.input_modules.init_hidden(batch_size)
+        initial_hidden_core = self.core_modules.init_hidden(batch_size)
+        initial_hidden_output = self.output_modules.init_hidden(batch_size)
+        initial_output = self.core_modules(key, value, initial_hidden_core)
+        output = tuple([
             initial_output['key'],
             initial_output['value'],
+            *initial_hidden_input,
             *initial_output['hidden'],
+            *initial_hidden_output,
         ])
+        assert len(output) == self.n_hidden
+        return output
 
     @property
     def n_hidden(self):
-        return self.core_modules.n_hidden() + 2
+        return 2 + self.input_modules.n_hidden + self.core_modules.n_hidden + self.output_modules.n_hidden
+
+    @property
+    def hidden_batch_dims(self):
+        return [1, 1] + self.input_modules.hidden_batch_dims + self.core_modules.hidden_batch_dims + self.output_modules.hidden_batch_dims
 
     def init_submodels(self, submodel_configs):
         submodels = {}
@@ -91,3 +109,18 @@ class ModularModel1(torch.nn.Module):
         if self.submodels is None:
             raise Exception('No submodels defined.')
         return self.submodels[key]
+
+    def _split_hidden(self, hidden):
+        input_hidden_size = self.input_modules.n_hidden
+        core_hidden_size = self.core_modules.n_hidden
+        output_hidden_size = self.output_modules.n_hidden
+
+        input_hidden = hidden[:input_hidden_size]
+        core_hidden = hidden[input_hidden_size:input_hidden_size + core_hidden_size]
+        output_hidden = hidden[input_hidden_size + core_hidden_size:]
+
+        assert len(input_hidden) == input_hidden_size
+        assert len(core_hidden) == core_hidden_size
+        assert len(output_hidden) == output_hidden_size
+
+        return input_hidden, core_hidden, output_hidden

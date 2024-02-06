@@ -40,6 +40,36 @@ class Callbacks(NamedTuple):
     on_checkpoint_load: Callable[[Any], None] | None = None
 
 
+def to_tensor(x, device):
+    if isinstance(x, torch.Tensor):
+        return x.to(device).float()
+    elif isinstance(x, np.ndarray):
+        return torch.tensor(x, device=device, dtype=torch.float)
+    elif isinstance(x, (int, float)):
+        return torch.tensor(x, device=device, dtype=torch.float)
+    elif isinstance(x, dict):
+        return {k: to_tensor(v, device) for k,v in x.items()}
+    elif isinstance(x, (list, tuple)):
+        return [to_tensor(v, device) for v in x]
+    elif isinstance(x, (list, list)):
+        return [to_tensor(v, device) for v in x]
+    else:
+        raise ValueError(f'Unknown type: {type(x)}')
+
+
+def reset_hidden(terminal, hidden, initial_hidden, batch_dim):
+    assert len(hidden) == len(initial_hidden)
+    assert len(hidden) == len(batch_dim)
+    output = tuple([
+        torch.where(terminal.view(-1, *([1]*(len(h.shape)-d-1))), init_h, h)
+        for init_h,h,d in zip(initial_hidden, hidden, batch_dim)
+    ])
+    #for h,ih,o,t,d in zip(hidden, initial_hidden, output, terminal, batch_dim):
+    #    assert list(h.shape) == list(ih.shape)
+    #    assert list(h.shape) == list(o.shape)
+    return output
+
+
 def action_dist_discrete(net_output, n=None):
     dist = torch.distributions.Categorical(logits=net_output['action'][:n])
     return dist, dist.log_prob
@@ -90,6 +120,7 @@ def compute_ppo_losses(
     assert isinstance(misc,dict)
     hidden = misc['hidden']
     time_step = misc['t']
+    device = next(model.parameters()).device
 
     n = len(history.obs_history)
     num_training_envs = len(reward[0])
@@ -99,11 +130,21 @@ def compute_ppo_losses(
         net_output = []
         curr_hidden = tuple([h[0].detach() for h in hidden])
         for o,term in zip2(obs,terminal):
-            curr_hidden = tuple([
-                torch.where(term.view(-1, *([1]*(len(h.shape)-2))), init_h, h)
-                for init_h,h in zip(initial_hidden,curr_hidden)
-            ])
-            o = preprocess_input_fn(o) if preprocess_input_fn is not None else o
+            #curr_hidden = tuple([
+            #    torch.where(
+            #        term.view(-1, *([1]*(len(h.shape)-2))), # dim 1 is the number of modules, dim 2 is the batch size. The -2 is to skip those two, then we broadcast over the rest of the dimensions.
+            #        init_h, h
+            #    )
+            #    for init_h,h in zip(initial_hidden,curr_hidden)
+            #])
+            curr_hidden = reset_hidden(
+                    terminal = term,
+                    hidden = curr_hidden,
+                    initial_hidden = initial_hidden,
+                    batch_dim = model.hidden_batch_dims,
+            )
+            #o = preprocess_input_fn(o) if preprocess_input_fn is not None else o
+            o = to_tensor(o, device)
             no = model(o,curr_hidden)
             curr_hidden = no['hidden']
             net_output.append(no)
@@ -133,11 +174,18 @@ def compute_ppo_losses(
         curr_hidden = tuple([h[0].detach() for h in hidden])
         initial_hidden = model.init_hidden(num_training_envs) # type: ignore
         for o,term in zip2(obs,terminal):
-            curr_hidden = tuple([
-                torch.where(term.view(-1, *([1]*(len(h.shape)-2))), init_h, h)
-                for init_h,h in zip(initial_hidden,curr_hidden)
-            ])
-            o = preprocess_input_fn(o) if preprocess_input_fn is not None else o
+            #curr_hidden = tuple([
+            #    torch.where(term.view(-1, *([1]*(len(h.shape)-2))), init_h, h)
+            #    for init_h,h in zip(initial_hidden,curr_hidden)
+            #])
+            curr_hidden = reset_hidden(
+                    terminal = term,
+                    hidden = curr_hidden,
+                    initial_hidden = initial_hidden,
+                    batch_dim = model.hidden_batch_dims,
+            )
+            #o = preprocess_input_fn(o) if preprocess_input_fn is not None else o
+            o = to_tensor(o, device)
             no = model(o,curr_hidden)
             curr_hidden = no['hidden']
             net_output.append(no)
@@ -296,10 +344,10 @@ def train_single_env(
             for k,v in obs.items() if k not in obs_ignore
         }
 
-    assert isinstance(env.observation_space, gymnasium.spaces.Dict)
-    for k in obs_scale.keys():
-        if k not in dict(env.observation_space):
-            raise ValueError(f'observation space does not contain key {k}')
+    #assert isinstance(env.observation_space, gymnasium.spaces.Dict)
+    #for k in obs_scale.keys():
+    #    if k not in dict(env.observation_space):
+    #        raise ValueError(f'observation space does not contain key {k}')
 
     history = VecHistoryBuffer(
             num_envs = num_envs,
@@ -315,7 +363,8 @@ def train_single_env(
     obs, info = env.reset()
     hidden = model.init_hidden(num_envs) # type: ignore (???)
     history.append_obs(
-            {k:v for k,v in obs.items() if k not in obs_ignore},
+            #{k:v for k,v in obs.items() if k not in obs_ignore},
+            obs,
             misc = {'hidden': hidden, 't': episode_steps.copy()},
     )
 
@@ -329,11 +378,12 @@ def train_single_env(
     for _ in range(warmup_steps):
         # Select action
         with torch.no_grad():
-            model_output = model({
-                k: torch.tensor(v, dtype=torch.float, device=device)*obs_scale.get(k,1)
-                for k,v in obs.items()
-                if k not in obs_ignore
-            }, hidden)
+            #model_output = model({
+            #    k: torch.tensor(v, dtype=torch.float, device=device)*obs_scale.get(k,1)
+            #    for k,v in obs.items()
+            #    if k not in obs_ignore
+            #}, hidden)
+            model_output = model(to_tensor(obs, device), hidden)
             hidden = model_output['hidden']
 
             action_dist, _ = action_dist_fn(model_output)
@@ -350,9 +400,15 @@ def train_single_env(
 
         if done.any():
             # Reset hidden state for finished episodes
-            hidden = tuple(
-                    torch.where(torch.tensor(done, device=device).unsqueeze(1), h0, h)
-                    for h0,h in zip(model.init_hidden(num_envs), hidden) # type: ignore (???)
+            #hidden = tuple(
+            #        torch.where(torch.tensor(done, device=device).unsqueeze(1), h0, h)
+            #        for h0,h in zip(model.init_hidden(num_envs), hidden) # type: ignore (???)
+            #)
+            hidden = reset_hidden(
+                    terminal = torch.tensor(done, device=device).unsqueeze(1),
+                    hidden = hidden,
+                    initial_hidden = model.init_hidden(num_envs),
+                    batch_dim = model.hidden_batch_dims,
             )
             # Print stats
             for env_label, env_id in env_label_to_id.items():
@@ -397,11 +453,12 @@ def train_single_env(
 
             # Select action
             with torch.no_grad():
-                model_output = model({
-                    k: torch.tensor(v, dtype=torch.float, device=device)*obs_scale.get(k,1)
-                    for k,v in obs.items()
-                    if k not in obs_ignore
-                }, hidden)
+                #model_output = model({
+                #    k: torch.tensor(v, dtype=torch.float, device=device)*obs_scale.get(k,1)
+                #    for k,v in obs.items()
+                #    if k not in obs_ignore
+                #}, hidden)
+                model_output = model(to_tensor(obs, device), hidden)
                 hidden = model_output['hidden']
 
                 action_dist, _ = action_dist_fn(model_output)
@@ -428,7 +485,8 @@ def train_single_env(
             episode_reward += reward # Sum up reward after clipping
 
             history.append_obs(
-                    {k:v for k,v in obs.items() if k not in obs_ignore}, reward, done,
+                    #{k:v for k,v in obs.items() if k not in obs_ignore}, reward, done,
+                    obs, reward, done,
                     misc = {'hidden': hidden, 't': episode_steps.copy()}
             )
 

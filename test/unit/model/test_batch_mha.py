@@ -7,15 +7,17 @@ from big_rl.model.model import BatchMultiHeadAttentionEinsum, BatchMultiHeadAtte
 
 @pytest.mark.parametrize("batch_mha_cls", [BatchMultiHeadAttentionEinsum, BatchMultiHeadAttentionBroadcast, BatchMultiHeadAttentionVmap])
 def test_same_as_non_batch(batch_mha_cls):
-    modules = [torch.nn.MultiheadAttention(embed_dim=6, num_heads=3) for _ in range(5)]
+    num_modules = 5
+
+    modules = [torch.nn.MultiheadAttention(embed_dim=6, num_heads=3) for _ in range(num_modules)]
     batch_mha = batch_mha_cls(modules, num_heads=3, key_size=6, default_batch=True)
     non_batch_mha = NonBatchMultiHeadAttention(modules, num_heads=3, key_size=6, default_batch=True)
 
     seq_len = 7
     batch_size = 11
-    query = torch.randn(5, batch_size, 6)
-    key = torch.randn(5, seq_len, batch_size, 6)
-    value = torch.randn(5, seq_len, batch_size, 6)
+    query = torch.randn(num_modules, batch_size, 6)
+    key = torch.randn(num_modules, seq_len, batch_size, 6)
+    value = torch.randn(num_modules, seq_len, batch_size, 6)
 
     batch_mha_output = batch_mha(query, key, value)
     non_batch_mha_output = non_batch_mha(query, key, value)

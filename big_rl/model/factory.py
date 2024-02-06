@@ -10,13 +10,14 @@ import torch
 import pydantic
 from pydantic import BaseModel, ConfigDict, FilePath, PositiveInt, Field
 
-from big_rl.model.input_module.modules import IgnoredInput, GreyscaleImageInput, ImageInput56, ImageInput84, ScalarInput, UnaryScalarInput, DiscreteInput, LinearInput, MatrixInput
+from big_rl.model.input_module.modules import IgnoredInput, GreyscaleImageInput, ImageInput56, ImageInput84, ScalarInput, UnaryScalarInput, DiscreteInput, LinearInput, MatrixInput, RecurrentLinearInput
 from big_rl.model.output_module.modules import LinearOutput, StateIndependentOutput
 from big_rl.model.input_module.container import InputModuleContainer
 from big_rl.model.core_module.container import CoreModule, CoreModuleContainer, CoreModuleParallel, CoreModuleSeries
 from big_rl.model.output_module.container import OutputModuleContainer
 from big_rl.model.modular_model_1 import ModularModel1
-from big_rl.model.lstm_model_1 import LSTMModel1
+from big_rl.model.standalone.lstm_model_1 import LSTMModel1
+import big_rl.model.standalone
 import big_rl.model.core_module
 from big_rl.utils import merge_space
 from big_rl.utils.make_env import EnvGroup
@@ -35,6 +36,7 @@ VALID_INPUT_MODULES = [
     DiscreteInput,
     LinearInput,
     MatrixInput,
+    RecurrentLinearInput,
 ]
 
 
@@ -44,9 +46,14 @@ VALID_OUTPUT_MODULES = [
 ]
 
 
-VALID_NONMODULAR_MODELS = [
-    LSTMModel1,
-]
+VALID_NONMODULAR_MODELS = {
+    y.__name__: y
+    for y in [
+        getattr(big_rl.model.standalone, x)
+        for x in dir(big_rl.model.standalone)
+    ]
+    if isinstance(y, type)
+}
 
 
 ##################################################
@@ -141,8 +148,7 @@ class ModelConfig(BaseModel):
 
     @pydantic.model_validator(mode='after')
     def check_peripheral_modules(self):
-        nonmodular_models = [cls.__name__ for cls in VALID_NONMODULAR_MODELS]
-        if self.type not in nonmodular_models:
+        if self.type not in VALID_NONMODULAR_MODELS.keys():
             if self.input_modules is None:
                 raise ValueError('Must specify input modules for modular models.')
             if self.output_modules is None:
@@ -267,15 +273,17 @@ def create_model(config: dict | ModelConfig, observation_space=None, action_spac
         init_core_weights(model.core_modules, config.core_modules)
 
         return model
-    elif config.type == 'LSTMModel1':
+    elif config.type in VALID_NONMODULAR_MODELS.keys():
+        cls = VALID_NONMODULAR_MODELS[config.type]
         kwargs = config.kwargs
+        # TODO: Check that the configs didn't specify a different action/observation space for each module. I think this will break if it did.
         kwargs = _preprocess_kwargs(
                 kwargs = kwargs,
-                cls = LSTMModel1,
-                observation_space = observation_space,
-                action_space = action_space,
+                cls = cls,
+                observation_space=spaces_by_module['input']['observation_space'],
+                action_space=spaces_by_module['input']['action_space'],
         )
-        return LSTMModel1(**kwargs)
+        return cls(**kwargs)
     else:
         raise NotImplementedError()
 

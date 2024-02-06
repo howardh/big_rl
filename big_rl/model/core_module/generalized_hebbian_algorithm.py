@@ -75,6 +75,10 @@ class AttentionGHA(BaseAttentionCoreModule):
     def n_hidden(self):
         return 1
 
+    @property
+    def hidden_batch_dims(self):
+        return [1]
+
 
 class BatchAttentionGHA(BaseBatchAttentionCoreModule):
     def __init__(self, key_size, value_size, num_heads, num_components: int = 128, learning_rate: float = 0.01, num_modules: int = 1, ff_size: list[int] = [], learnable_initial_state: bool = False):
@@ -133,3 +137,7 @@ class BatchAttentionGHA(BaseBatchAttentionCoreModule):
     @property
     def n_hidden(self):
         return 1
+
+    @property
+    def hidden_batch_dims(self):
+        return [1]

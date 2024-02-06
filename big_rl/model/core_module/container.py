@@ -151,6 +151,10 @@ class CoreModule(torch.nn.Module):
         raise NotImplementedError()
 
     @property
+    def hidden_batch_dims(self):
+        raise NotImplementedError()
+
+    @property
     def core_modules(self):
         return self
 
@@ -189,6 +193,12 @@ class CoreModuleContainer(CoreModule, torch.nn.ModuleList):
         if self.core_modules is None:
             return 0
         return sum(m.n_hidden for m in self.core_modules) # type: ignore
+
+    @property
+    def hidden_batch_dims(self) -> list[int]:
+        if self.core_modules is None:
+            return []
+        return list(itertools.chain.from_iterable([m.hidden_batch_dims for m in self.core_modules]))
 
 
 class CoreModuleParallel(CoreModuleContainer):
@@ -276,6 +286,57 @@ class CoreModuleSeries(CoreModuleContainer):
             return {
                 'key': new_key,
                 'value': new_value,
+                'hidden': tuple(itertools.chain.from_iterable(new_hidden)),
+                'misc': {
+                    **{i: m for i,m in enumerate(misc) if m is not None},
+                    'container_type': 'series',
+                    'output_labels': output_labels,
+                }
+            }
+
+
+class CoreModuleSeriesConcat(CoreModuleContainer):
+    """ Same as `CoreModuleSeries`, but concatenates the key and value outputs of all modules as the final output similar to `CoreModuleParallel`. """
+    def __init__(self, modules: list[CoreModule]):
+        super().__init__(modules)
+
+    def forward(self, key: KeyInputType, value: ValueInputType, hidden: HiddenType) -> CoreModuleOutput:
+        split_hidden = self._split_hidden(hidden)
+
+        new_key = []
+        new_value = []
+        new_hidden = []
+        misc = []
+        output_labels = []
+        key_ = key
+        value_ = value
+        for m,h in zip(self.core_modules, split_hidden):  # type: ignore
+            output = m(key_, value_, h)
+            key_ = output['key']
+            value_ = output['value']
+            new_key.append(key_)
+            new_value.append(value_)
+            new_hidden.append(output['hidden'])
+            misc.append(output.get('misc', None))
+
+            output_labels = output.get('misc', {}).get('output_labels')
+            if output_labels is None:
+                output_labels = ['?'] * len(new_key)
+
+        if all(m is None for m in misc):
+            return {
+                'key': torch.cat(new_key, dim=0),
+                'value': torch.cat(new_value, dim=0),
+                'hidden': tuple(itertools.chain.from_iterable(new_hidden)),
+                'misc': {
+                    'container_type': 'series_concat',
+                    'output_labels': output_labels,
+                }
+            }
+        else:
+            return {
+                'key': torch.cat(new_key, dim=0),
+                'value': torch.cat(new_value, dim=0),
                 'hidden': tuple(itertools.chain.from_iterable(new_hidden)),
                 'misc': {
                     **{i: m for i,m in enumerate(misc) if m is not None},

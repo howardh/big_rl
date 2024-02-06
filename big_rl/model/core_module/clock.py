@@ -69,3 +69,7 @@ class ClockCoreModule(CoreModule):
     @property
     def n_hidden(self):
         return 1
+
+    @property
+    def hidden_batch_dims(self):
+        return [1]
