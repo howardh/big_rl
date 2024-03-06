@@ -269,13 +269,16 @@ def log_episode_end(done, info, episode_reward, episode_true_reward, episode_rew
 
         if wandb.run is not None:
             data = {
-                    'remaining_energy': np.mean([x['energy'] for x in info['final_info'][done2]]),
                     f'reward/{env_label}': episode_reward[done2].mean().item(),
                     f'true_reward/{env_label}': episode_true_reward[done2].mean().item(),
                     f'episode_length/{env_label}': episode_steps[done2].mean().item(),
                     'step': global_step_counter[0]-global_step_counter[1],
                     'step_total': global_step_counter[0],
             }
+
+            # Energy
+            if 'energy' in info['final_info'][0]:
+                data['remaining_energy'] = np.mean([x['energy'] for x in info['final_info'][done2]])
 
             # Log individual reward components
             for k,v in episode_reward_components.items():
@@ -405,7 +408,7 @@ def train_single_env(
             #        for h0,h in zip(model.init_hidden(num_envs), hidden) # type: ignore (???)
             #)
             hidden = reset_hidden(
-                    terminal = torch.tensor(done, device=device).unsqueeze(1),
+                    terminal = torch.tensor(done, device=device),
                     hidden = hidden,
                     initial_hidden = model.init_hidden(num_envs),
                     batch_dim = model.hidden_batch_dims,
@@ -504,10 +507,16 @@ def train_single_env(
                         global_step_counter = global_step_counter,
                 )
                 # Reset hidden state for finished episodes
-                hidden = tuple(
-                        #torch.where(torch.tensor(done, device=device).unsqueeze(1), h0, h)
-                        torch.where(torch.tensor(done, device=device).view(-1, *([1]*(len(h.shape)-2))), h0, h)
-                        for h0,h in zip(model.init_hidden(num_envs), hidden) # type: ignore (???)
+                #hidden = tuple(
+                #        #torch.where(torch.tensor(done, device=device).unsqueeze(1), h0, h)
+                #        torch.where(torch.tensor(done, device=device).view(-1, *([1]*(len(h.shape)-2))), h0, h)
+                #        for h0,h in zip(model.init_hidden(num_envs), hidden) # type: ignore (???)
+                #)
+                hidden = reset_hidden(
+                    terminal = torch.tensor(done, device=device),
+                    hidden = hidden,
+                    initial_hidden = model.init_hidden(num_envs),
+                    batch_dim = model.hidden_batch_dims,
                 )
                 # Save episode rewards
                 for r in episode_reward[done]:
@@ -761,6 +770,7 @@ def main(args, callbacks=Callbacks()):
         SLURM_ARRAY_JOB_ID = os.environ.get('SLURM_ARRAY_JOB_ID', None),
         SLURM_ARRAY_TASK_ID = os.environ.get('SLURM_ARRAY_TASK_ID', None),
         SLURM_TASK_ID = os.environ.get('SLURM_PROCID', None),
+        SLURM_STEP_ID = os.environ.get('SLURM_STEP_ID', None),
     )
     substitutions = {k:v.format(**substitutions) for k,v in substitutions.items() if v is not None} # Substitute values in `subsitutions` too in case they also have {} variables. None values are removed.
     for k,v in vars(args).items():

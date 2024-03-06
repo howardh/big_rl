@@ -1,4 +1,6 @@
 from .container import CoreModule, CoreModuleParallel, CoreModuleSeries
+from .headless_container import HeadlessContainer
+from .gated_container import GatedContainer
 from .base_attention import BaseAttentionCoreModule
 from .base_batch_attention import BaseBatchAttentionCoreModule
 from .lstm import AttentionLSTM
@@ -18,6 +20,9 @@ __all__ = [
     'CoreModule',
     'CoreModuleParallel',
     'CoreModuleSeries',
+
+    'HeadlessContainer',
+    'GatedContainer',
 
     'AttentionLSTM',
     'RecurrentAttention17',

@@ -91,3 +91,7 @@ class AttentionLSTM(CoreModule):
     @property
     def n_hidden(self):
         return 2
+
+    @property
+    def hidden_batch_dims(self):
+        return [0, 0]

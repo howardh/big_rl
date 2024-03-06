@@ -97,7 +97,9 @@ class CoreModule(torch.nn.Module):
     def __init_subclass__(cls, **kwargs):
         # If it's a container or a subclass of a container, then do nothing
         # Note: `CoreModuleContainer` has to be defined immediately after `CoreModule` in order for this to work. When `CoreModuleContainer` is defined, only the first condition is evaluated. The second one, which would error because `CoreModuleContainer` is not defined, is skipped.
-        if cls.__name__ == 'CoreModuleContainer' or issubclass(cls, CoreModuleContainer):
+        #if cls.__name__ == 'CoreModuleContainer' or issubclass(cls, CoreModuleContainer):
+        #    return
+        if cls.__name__ in ['CoreModuleContainer', 'CoreModuleParallel', 'CoreModuleSeries', 'CoreModuleSeriesConcat']: # TODO: I don't like this. We need to change two places when we make a new container. How do we handle container modules that also behave like regular core modules (in the sense of having their own learnable parameters and being initialized like other core modules)?
             return
 
         # If it is an abstract class, then do nothing
@@ -177,12 +179,8 @@ class CoreModuleContainer(CoreModule, torch.nn.ModuleList):
 
     def _split_hidden(self, hidden):
         """ Split hidden state into a list of hidden states, one for each core module. """
-        output = []
-        start_idx = 0
-        for m in self.core_modules:  # type: ignore
-            n = int(m.n_hidden)  # type: ignore
-            output.append(hidden[start_idx:start_idx+n])
-            start_idx += n
+        hidden_iter = iter(hidden)
+        output = [list(itertools.islice(hidden_iter, m.n_hidden)) for m in self.core_modules]
         return output
 
     def init_hidden(self, batch_size) -> tuple[torch.Tensor, ...]:

@@ -14,6 +14,7 @@ from big_rl.model.input_module.modules import IgnoredInput, GreyscaleImageInput,
 from big_rl.model.output_module.modules import LinearOutput, StateIndependentOutput
 from big_rl.model.input_module.container import InputModuleContainer
 from big_rl.model.core_module.container import CoreModule, CoreModuleContainer, CoreModuleParallel, CoreModuleSeries
+from big_rl.model.core_module.headless_container import HeadlessContainer
 from big_rl.model.output_module.container import OutputModuleContainer
 from big_rl.model.modular_model_1 import ModularModel1
 from big_rl.model.standalone.lstm_model_1 import LSTMModel1
@@ -98,7 +99,8 @@ class CoreModuleConfig(BaseModel):
     weight_config: WeightConfig | None = None
 
     container: str | None = None
-    modules: list['CoreModuleConfig'] = []
+    modules: list['CoreModuleConfig'] | None = None
+    models: list['ModelConfig'] | None = None # Full models that are passed into a core module with the `models` kwarg.
 
     model_config = ConfigDict(extra='forbid')
 
@@ -109,8 +111,8 @@ class CoreModuleConfig(BaseModel):
         elif self.type is not None and self.container is not None:
             raise ValueError('Cannot specify both a module type ("type") and container type ("container") for a core module.')
         
-        if self.container is None and len(self.modules) > 0:
-            raise ValueError('Cannot specify children modules ("modules") if container type ("container") is not specified for a core module.')
+        #if self.container is None and len(self.modules) > 0:
+        #    raise ValueError('Cannot specify children modules ("modules") if container type ("container") is not specified for a core module.')
 
         return self
 
@@ -237,6 +239,9 @@ def create_model(config: dict | ModelConfig, observation_space=None, action_spac
                 key_size=config.key_size,
                 value_size=config.value_size,
                 num_heads=config.num_heads,
+                observation_space=observation_space,
+                action_space=action_space,
+                envs=envs,
         )
         output_modules = create_output_modules(
                 config=config.output_modules,
@@ -283,7 +288,9 @@ def create_model(config: dict | ModelConfig, observation_space=None, action_spac
                 observation_space=spaces_by_module['input']['observation_space'],
                 action_space=spaces_by_module['input']['action_space'],
         )
-        return cls(**kwargs)
+        model = cls(**kwargs)
+        init_weights(model, config.weight_config, strict=False)
+        return model
     else:
         raise NotImplementedError()
 
@@ -403,7 +410,7 @@ def create_output_modules(config: dict, key_size: int | None = None, value_size:
     return torch.nn.ModuleDict(output_modules)
 
 
-def create_core_modules(config: dict | CoreModuleConfig, key_size=None, value_size=None, num_heads=None) -> CoreModule:
+def create_core_modules(config: dict | CoreModuleConfig, key_size=None, value_size=None, num_heads=None, observation_space=None, action_space=None, envs: list[EnvGroup] | None = None) -> CoreModule:
     if isinstance(config, dict):
         config = CoreModuleConfig.model_validate(config)
 
@@ -414,28 +421,26 @@ def create_core_modules(config: dict | CoreModuleConfig, key_size=None, value_si
     num_heads = config.num_heads or num_heads
 
     if container_type is not None:
+        submodule_configs = config.modules
+        if submodule_configs is None:
+            submodules = []
+        else:
+            submodules =[
+                create_core_modules(
+                    submodule_config,
+                    key_size = key_size,
+                    value_size = value_size,
+                    num_heads = num_heads,
+                    observation_space = observation_space,
+                    action_space = action_space,
+                    envs = envs,
+                )
+                for submodule_config in submodule_configs
+            ] 
         if container_type == 'parallel':
-            submodule_configs = config.modules
-            return CoreModuleParallel([
-                create_core_modules(
-                    submodule_config,
-                    key_size = key_size,
-                    value_size = value_size,
-                    num_heads = num_heads,
-                )
-                for submodule_config in submodule_configs
-            ])
+            return CoreModuleParallel(submodules)
         elif container_type == 'series':
-            submodule_configs = config.modules
-            return CoreModuleSeries([
-                create_core_modules(
-                    submodule_config,
-                    key_size = key_size,
-                    value_size = value_size,
-                    num_heads = num_heads,
-                )
-                for submodule_config in submodule_configs
-            ])
+            return CoreModuleSeries(submodules)
         else:
             raise ValueError(f'Unknown container type: {container_type}')
 
@@ -459,11 +464,37 @@ def create_core_modules(config: dict | CoreModuleConfig, key_size=None, value_si
     else:
         raise ValueError('Unknown recurrence type: {}'.format(class_name))
 
+    kwargs = {}
+    if config.models is not None and len(config.models) > 0:
+        kwargs['models'] = [
+            create_model(
+                submodel_config,
+                observation_space=observation_space,
+                action_space=action_space,
+                envs=envs,
+            )
+            for submodel_config in config.models
+        ]
+    if config.modules is not None and len(config.modules) > 0:
+        kwargs['modules'] = [
+            create_core_modules(
+                submodule_config,
+                key_size = key_size,
+                value_size = value_size,
+                num_heads = num_heads,
+                observation_space = observation_space,
+                action_space = action_space,
+                envs = envs,
+            )
+            for submodule_config in config.modules
+        ]
+
     output = cls(
             key_size=key_size,
             value_size=value_size,
             num_heads=num_heads,
-            **config.kwargs
+            **kwargs,
+            **config.kwargs,
     )
     return output
 

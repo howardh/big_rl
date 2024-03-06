@@ -1019,6 +1019,11 @@ register(
 )
 
 register(
+    id="HalfCheetahNoVelocity-v4",
+    entry_point="big_rl.mujoco.envs.half_cheetah_no_velocity:HalfCheetahNoVelocityEnv_v4",
+)
+
+register(
     id="AntNoVelocity-v4",
     entry_point="big_rl.mujoco.envs.ant_no_velocity:AntNoVelocityEnv_v4",
 )
@@ -1047,6 +1052,20 @@ register(
     entry_point="big_rl.mujoco.envs.half_cheetah_fw_bw:HalfCheetahForwardBackwardEnv",
     max_episode_steps=1000,
     kwargs={'target_direction': -1},
+)
+
+register(
+    id="HalfCheetahNoVelocityForward-v4",
+    entry_point="big_rl.mujoco.envs.half_cheetah_fw_bw:HalfCheetahForwardBackwardEnv",
+    max_episode_steps=1000,
+    kwargs={'target_direction': 1, 'exclude_velocity_from_observation': True},
+)
+
+register(
+    id="HalfCheetahNoVelocityBackward-v4",
+    entry_point="big_rl.mujoco.envs.half_cheetah_fw_bw:HalfCheetahForwardBackwardEnv",
+    max_episode_steps=1000,
+    kwargs={'target_direction': -1, 'exclude_velocity_from_observation': True},
 )
 
 register(

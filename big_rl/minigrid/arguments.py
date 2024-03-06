@@ -32,6 +32,8 @@ def init_parser_trainer(parser: ArgumentParser):
     parser.add_argument('--multitask-dynamic-weight-temperature', type=float, default=10., help='Temperature for dynamic weight for multitask learning.')
     parser.add_argument('--multitask-static-weight', type=float, nargs='*', default=None, help='Relative weight of each task. If the sum is not 1, they will be normalized.')
 
+    parser.add_argument('--l2-reg', type=float, default=0, help='L2 regularization weight. Default is 0.')
+
 
 def init_parser_model(parser: ArgumentParser):
     parser.add_argument('--model-type', type=str, default='ModularPolicy5',
