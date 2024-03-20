@@ -20,7 +20,7 @@ GRES = 'gpu:a100l.2g.20gb:1'
 TRAINING_STEPS = 50_000_000
 
 
-def run_train(args: list[list[str]], slurm: bool = False, subproc: bool = False, mem_per_task=2, dependency=None, max_steps_per_job=5) -> list[int]:
+def run_train(args: list[list[str]], slurm: bool = False, subproc: bool = False, mem_per_task=2, dependency=None, max_steps_per_job: int = 5, duration: int = 5) -> list[int]:
     """
     Args:
         args: List of lists of arguments to pass to the training script. Each sublist is a set of arguments to pass to a single training job.
@@ -29,6 +29,7 @@ def run_train(args: list[list[str]], slurm: bool = False, subproc: bool = False,
         mem_per_task: Memory per task in GB. Used only if `slurm` is True.
         dependency: Job ID to depend on. Used only if `slurm` is True.
         max_steps_per_job: Maximum number of steps to train for per job. Used only if `slurm` is True.
+        duration: Duration of the job in days. Used only if `slurm` is True.
     """
     script = f'big_rl_experiments/{EXP_NAME}/__main__.py'
     action = 'train'
@@ -46,6 +47,8 @@ def run_train(args: list[list[str]], slurm: bool = False, subproc: bool = False,
                 )
                 job_ids.extend(jid)
             return job_ids
+        if duration < 1:
+            raise ValueError('Duration must be at least 1 day')
         slurm_kwargs = {}
         if dependency is not None:
             slurm_kwargs['dependency'] = dependency
@@ -57,7 +60,7 @@ def run_train(args: list[list[str]], slurm: bool = False, subproc: bool = False,
             output='/network/scratch/h/huanghow/slurm/%A.out',
 
             # Run for five days
-            array='1-5%1',
+            array=f'1-{duration}%1',
             time=datetime.timedelta(days=1, hours=0, minutes=0, seconds=0),
 
             #partition='main',
@@ -79,7 +82,7 @@ def run_train(args: list[list[str]], slurm: bool = False, subproc: bool = False,
         ])
         for a in args:
             cmd = f'srun {srun_args} python {script} {action} {" ".join(a)}'
-            s.add_cmd(cmd + '&')
+            s.add_cmd(cmd + ' &')
 
         print('-'*80)
         print(s.script(shell=SHELL))
@@ -136,7 +139,7 @@ def launch(args):
                 '--wandb' if args.wandb else None,
             ]
             task_args = [a for a in task_args if a is not None]
-            job_ids = run_train([task_args] * 5, slurm=args.slurm, subproc=args.subproc)
+            job_ids = run_train([task_args] * 5, slurm=args.slurm, subproc=args.subproc, max_steps_per_job=5, duration=5)
             train_inner_job_ids.extend(job_ids)
             train_job_ids.extend(job_ids)
     train_inner_job_ids = [str(i) for i in train_inner_job_ids] # Convert to str so that it can be used with `str.join` later.
@@ -162,7 +165,7 @@ def launch(args):
             '--wandb' if args.wandb else None,
         ]
         task_args = [a for a in task_args if a is not None]
-        job_ids = run_train([task_args] * 5, slurm=args.slurm)
+        job_ids = run_train([task_args] * 5, slurm=args.slurm, max_steps_per_job=5)
         train_job_ids.extend(job_ids)
 
     # Train vertical hierarchical model (without pre-trained inner model)
@@ -186,7 +189,7 @@ def launch(args):
             '--wandb' if args.wandb else None,
         ]
         task_args = [a for a in task_args if a is not None]
-        job_ids = run_train([task_args] * 5, slurm=args.slurm)
+        job_ids = run_train([task_args] * 5, slurm=args.slurm, max_steps_per_job=5)
         train_job_ids.extend(job_ids)
 
     # Train size-equivalent LSTM
@@ -210,7 +213,7 @@ def launch(args):
             '--wandb' if args.wandb else None,
         ]
         task_args = [a for a in task_args if a is not None]
-        job_ids = run_train([task_args] * 5, slurm=args.slurm)
+        job_ids = run_train([task_args] * 5, slurm=args.slurm, max_steps_per_job=5)
         train_job_ids.extend(job_ids)
 
     if 'train_h_pt' in args.actions:
@@ -242,16 +245,16 @@ def launch(args):
                 '--model-checkpoint',
                     os.path.join(results_dir, 'checkpoints', 'h_pt', '{RUN_ID}.pt'),
                 '--checkpoint-interval', '1_000_000',
-                '--run-id', f'{i}_{j}-{{SLURM_STEP_ID}}', # TODO: Give it a proper name
+                '--run-id', f'{i}_{j}-{step}',
                 '--wandb-id', f'{args.exp_id}_h_pt_{{RUN_ID}}',
                 '--max-steps-total',
                     ('30000' if args.debug else str(args.max_steps_outer)),
                 '--cuda',
                 '--wandb' if args.wandb else None,
             ] if a is not None
-        ] for i,j in itertools.product(range(5), range(5))]
+        ] for step,(i,j) in enumerate(itertools.product(range(5), range(5)))]
         dependency = ':'.join(['afterany', *train_inner_job_ids]) if len(train_inner_job_ids) > 0 else None
-        job_ids = run_train(task_args, slurm=args.slurm, dependency=dependency)
+        job_ids = run_train(task_args, slurm=args.slurm, dependency=dependency, max_steps_per_job=5)
         train_job_ids.extend(job_ids)
 
     if 'train_v_pt' in args.actions:
@@ -283,16 +286,16 @@ def launch(args):
                 '--model-checkpoint',
                     os.path.join(results_dir, 'checkpoints', 'v_pt', '{RUN_ID}.pt'),
                 '--checkpoint-interval', '1_000_000',
-                '--run-id', f'{i}_{j}-{{SLURM_STEP_ID}}',
+                '--run-id', f'{i}_{j}-{step}',
                 '--wandb-id', f'{args.exp_id}_v_pt_{{RUN_ID}}',
                 '--max-steps-total',
                     ('30000' if args.debug else str(args.max_steps_outer)),
                 '--cuda',
                 '--wandb' if args.wandb else None,
             ] if a is not None
-        ] for i,j in itertools.product(range(5), range(5))]
+        ] for step,(i,j) in enumerate(itertools.product(range(5), range(5)))]
         dependency = ':'.join(['afterany', *train_inner_job_ids]) if len(train_inner_job_ids) > 0 else None
-        job_ids = run_train(task_args, slurm=args.slurm, dependency=dependency)
+        job_ids = run_train(task_args, slurm=args.slurm, dependency=dependency, max_steps_per_job=5)
         train_job_ids.extend(job_ids)
 
     # TODO: Evaluation?
