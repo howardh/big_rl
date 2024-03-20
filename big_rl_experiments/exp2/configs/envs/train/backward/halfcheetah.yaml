@@ -1,0 +1,10 @@
+- type: AsyncVectorEnv # AsyncVectorEnv, SyncVectorEnv, or Env
+  envs:
+  - kwargs: # Arguments for gymnasium.make
+      id: HalfCheetahNoVelocityBackward-v4
+    repeat: 8
+    wrappers:
+    - type: TimeLimit
+      kwargs:
+        max_episode_steps: 1000
+    - type: ClipAction

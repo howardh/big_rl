@@ -1,0 +1,72 @@
+type: ModularModel1
+key_size: 64
+value_size: 64
+num_heads: 4
+input_modules:
+  "obs":
+    type: LinearInput
+    kwargs:
+      input_size:
+        source: 'observation_space'
+        accessor: '["obs"].shape[0]'
+  reward:
+    type: ScalarInput
+  done:
+    type: IgnoredInput
+  action:
+    type: LinearInput
+    kwargs:
+      input_size:
+        source: 'action_space'
+        accessor: '.shape[0]'
+output_modules:
+  value:
+    type: LinearOutput
+    kwargs:
+      output_size: 1
+  action_mean:
+    type: LinearOutput
+    kwargs:
+      output_size:
+        source: 'action_space'
+        accessor: '.shape[0]'
+  action_logstd:
+    type: LinearOutput
+    kwargs:
+      output_size:
+        source: 'action_space'
+        accessor: '.shape[0]'
+core_modules:
+  container: parallel
+  modules:
+  - type: HeadlessContainer
+    models:
+    - type: LSTMModel4
+      kwargs:
+        input_size:
+          source: 'observation_space'
+          accessor: '["obs"].shape[0]'
+        action_size: 
+          source: 'action_space'
+          accessor: '.shape[0]'
+        ff_size: [256, 256]
+    kwargs:
+      decapitate_kwargs:
+        remove_input_head: false
+  - type: HeadlessContainer
+    models:
+    - type: LSTMModel4
+      kwargs:
+        input_size:
+          source: 'observation_space'
+          accessor: '["obs"].shape[0]'
+        action_size: 
+          source: 'action_space'
+          accessor: '.shape[0]'
+        ff_size: [256, 256]
+    kwargs:
+      decapitate_kwargs:
+        remove_input_head: false
+  - type: AttentionLSTM
+    kwargs:
+      hidden_size: 64

@@ -1,0 +1,9 @@
+type: LSTMModel4
+kwargs:
+  input_size:
+    source: 'observation_space'
+    accessor: '.shape[0]'
+  action_size: 
+    source: 'action_space'
+    accessor: '.shape[0]'
+  ff_size: [16, 16]
