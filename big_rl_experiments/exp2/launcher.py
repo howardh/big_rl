@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import itertools
+import math
 import os
 import logging
 import subprocess
@@ -20,7 +21,7 @@ GRES = 'gpu:a100l.2g.20gb:1'
 TRAINING_STEPS = 50_000_000
 
 
-def run_train(args: list[list[str]], slurm: bool = False, subproc: bool = False, mem_per_task=2, dependency=None, max_steps_per_job: int = 5, duration: int = 5) -> list[int]:
+def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subproc: bool = False, mem_per_task=2, dependency=None, max_steps_per_job: int = 5, duration: int = 5) -> list[int]:
     """
     Args:
         args: List of lists of arguments to pass to the training script. Each sublist is a set of arguments to pass to a single training job.
@@ -39,6 +40,7 @@ def run_train(args: list[list[str]], slurm: bool = False, subproc: bool = False,
             for i in range(0, len(args), max_steps_per_job):
                 jid = run_train(
                         args[i:i+max_steps_per_job],
+                        job_name=job_name,
                         slurm=slurm,
                         subproc=subproc,
                         mem_per_task=mem_per_task,
@@ -53,7 +55,7 @@ def run_train(args: list[list[str]], slurm: bool = False, subproc: bool = False,
         if dependency is not None:
             slurm_kwargs['dependency'] = dependency
         s = Slurm(
-            job_name='train',
+            job_name=job_name,
             cpus_per_task=2*len(args),
             mem=f'{mem_per_task*len(args)}G',
             gres=[GRES],
@@ -139,7 +141,14 @@ def launch(args):
                 '--wandb' if args.wandb else None,
             ]
             task_args = [a for a in task_args if a is not None]
-            job_ids = run_train([task_args] * 5, slurm=args.slurm, subproc=args.subproc, max_steps_per_job=5, duration=5)
+            job_ids = run_train(
+                    [task_args] * 5,
+                    job_name=f'train_inner_{direction}',
+                    slurm=args.slurm,
+                    subproc=args.subproc,
+                    max_steps_per_job=5,
+                    duration=5,
+            )
             train_inner_job_ids.extend(job_ids)
             train_job_ids.extend(job_ids)
     train_inner_job_ids = [str(i) for i in train_inner_job_ids] # Convert to str so that it can be used with `str.join` later.
@@ -165,7 +174,13 @@ def launch(args):
             '--wandb' if args.wandb else None,
         ]
         task_args = [a for a in task_args if a is not None]
-        job_ids = run_train([task_args] * 5, slurm=args.slurm, max_steps_per_job=5)
+        job_ids = run_train(
+                [task_args] * 5,
+                job_name='train_h_tr',
+                slurm=args.slurm,
+                max_steps_per_job=5,
+                duration=math.ceil(args.max_steps_outer / 15_000_000) + 2, # Run approximately 17M steps per day. Assume 15M and add 2 days as buffer.
+        )
         train_job_ids.extend(job_ids)
 
     # Train vertical hierarchical model (without pre-trained inner model)
@@ -189,7 +204,13 @@ def launch(args):
             '--wandb' if args.wandb else None,
         ]
         task_args = [a for a in task_args if a is not None]
-        job_ids = run_train([task_args] * 5, slurm=args.slurm, max_steps_per_job=5)
+        job_ids = run_train(
+                [task_args] * 5,
+                job_name='train_v_tr',
+                slurm=args.slurm,
+                max_steps_per_job=5,
+                duration=math.ceil(args.max_steps_outer / 15_000_000) + 2, # Run approximately 17M steps per day. Assume 15M and add 2 days as buffer.
+        )
         train_job_ids.extend(job_ids)
 
     # Train size-equivalent LSTM
@@ -213,7 +234,13 @@ def launch(args):
             '--wandb' if args.wandb else None,
         ]
         task_args = [a for a in task_args if a is not None]
-        job_ids = run_train([task_args] * 5, slurm=args.slurm, max_steps_per_job=5)
+        job_ids = run_train(
+                [task_args] * 5,
+                job_name='train_lstm',
+                slurm=args.slurm,
+                max_steps_per_job=5,
+                duration=math.ceil(args.max_steps_outer / 25_000_000) + 2, # Run approximately 27M steps per day. Assume 25M and add 2 days as buffer.
+        )
         train_job_ids.extend(job_ids)
 
     if 'train_h_pt' in args.actions:
@@ -254,7 +281,14 @@ def launch(args):
             ] if a is not None
         ] for step,(i,j) in enumerate(itertools.product(range(5), range(5)))]
         dependency = ':'.join(['afterany', *train_inner_job_ids]) if len(train_inner_job_ids) > 0 else None
-        job_ids = run_train(task_args, slurm=args.slurm, dependency=dependency, max_steps_per_job=5)
+        job_ids = run_train(
+                task_args,
+                job_name='train_h_pt',
+                slurm=args.slurm,
+                dependency=dependency,
+                max_steps_per_job=5,
+                duration=math.ceil(args.max_steps_outer / 15_000_000) + 2, # Run approximately 17M steps per day. Assume 15M and add 2 days as buffer.
+        )
         train_job_ids.extend(job_ids)
 
     if 'train_v_pt' in args.actions:
@@ -295,7 +329,14 @@ def launch(args):
             ] if a is not None
         ] for step,(i,j) in enumerate(itertools.product(range(5), range(5)))]
         dependency = ':'.join(['afterany', *train_inner_job_ids]) if len(train_inner_job_ids) > 0 else None
-        job_ids = run_train(task_args, slurm=args.slurm, dependency=dependency, max_steps_per_job=5)
+        job_ids = run_train(
+                task_args,
+                job_name='train_v_pt',
+                slurm=args.slurm,
+                dependency=dependency,
+                max_steps_per_job=5,
+                duration=math.ceil(args.max_steps_outer / 15_000_000) + 2, # Run approximately 17M steps per day. Assume 15M and add 2 days as buffer.
+        )
         train_job_ids.extend(job_ids)
 
     # TODO: Evaluation?
