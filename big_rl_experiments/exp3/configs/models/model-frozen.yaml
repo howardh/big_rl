@@ -1,0 +1,96 @@
+type: ModularModel1
+key_size: 64
+value_size: 64
+num_heads: 4
+submodel_configs:
+  fw:
+    input_modules:
+      obs: obs
+      reward: reward
+      done: done
+      action: action
+    output_modules:
+      value: value
+      action_mean: action_mean
+      action_logstd: action_logstd
+  bw:
+    input_modules:
+      obs: obs
+      reward: reward
+      done: done
+      action: action
+    output_modules:
+      value: value
+      action_mean: action_mean
+      action_logstd: action_logstd
+  fwbw:
+    input_modules:
+      obs: obs
+      reward: reward
+      done: done
+      action: action
+    output_modules:
+      value: value
+      action_mean: action_mean
+      action_logstd: action_logstd
+input_modules:
+  "obs":
+    type: LinearInput
+    kwargs:
+      input_size:
+        source: 'observation_space'
+        accessor: '["obs"].shape[0]'
+  reward:
+    type: ScalarInput
+  done:
+    type: IgnoredInput
+  action:
+    type: LinearInput
+    kwargs:
+      input_size:
+        source: 'action_space'
+        accessor: '.shape[0]'
+output_modules:
+  value:
+    type: LinearOutput
+    kwargs:
+      dynamic_query: true
+      output_size: 1
+  action_mean:
+    type: LinearOutput
+    kwargs:
+      dynamic_query: true
+      output_size:
+        source: 'action_space'
+        accessor: '.shape[0]'
+  action_logstd:
+    type: LinearOutput
+    kwargs:
+      dynamic_query: true
+      output_size:
+        source: 'action_space'
+        accessor: '.shape[0]'
+core_modules:
+  container: parallel
+  kwargs:
+    submodels:
+      fw: [0]
+      bw: [1]
+      fwbw: [0,1,2]
+  modules:
+  - type: AttentionLSTM
+    kwargs:
+      hidden_size: 64
+      dynamic_query: true
+    weight_config:
+      freeze: true
+  - type: AttentionLSTM
+    kwargs:
+      hidden_size: 64
+      dynamic_query: true
+    weight_config:
+      freeze: true
+  - type: AttentionLSTM
+    kwargs:
+      hidden_size: 64
+      dynamic_query: true
