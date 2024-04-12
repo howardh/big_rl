@@ -1025,7 +1025,8 @@ register(
 
 register(
     id="AntNoVelocity-v4",
-    entry_point="big_rl.mujoco.envs.ant_no_velocity:AntNoVelocityEnv_v4",
+    entry_point="big_rl.mujoco.envs.ant_no_velocity:AntOptionalVelocityEnv_v4",
+    kwargs={'exclude_velocity_from_observation': True},
 )
 
 register(

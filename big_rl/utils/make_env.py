@@ -82,7 +82,8 @@ class EnvGroupConfig(BaseModel):
     """ Defines how many environments to create and how to group them together. A group can be a single environment. """
     type: EnvType = EnvType.sync_vector_env
     envs: list[SingleEnvConfig] = []
-    eval_only: bool = Field(default=False, description='If set to True, then the environment will not be used for training. Instead, we only run the model on it for evaluation purposes.')
+    train_enabled: bool = Field(default=True, description='If set to True, then the environment will be used for training. The environment may also be used for evaluation purposes if you set `eval_enabled` to `True`. You may want to set both to False if the environments are only used for model initialization purposes.')
+    eval_enabled: bool = Field(default=False, description='If set to True, then the environment will be used for evaluation. The environment may also be used for training purposes if you set `train_enabled` to `True. You may want to set both to False if the environments are only used for model initialization purposes.')
     name: str | None = Field(default=None, description='Human-readable name of the environment or group of environments. Used for logging purposes, as well as for mapping submodels to groups of environments to train it on.')
     model_name: str | None = Field(default=None, description='Name of the submodel to use for this environment or group of environments. If not specified, then the parent model will be used.')
 
@@ -101,7 +102,8 @@ class EnvGroup(NamedTuple):
     env: gymnasium.vector.VectorEnv
     env_labels: list[str] # Names of the environments in `env`
     name: str | None # Name for this entire group of envs
-    eval_only: bool
+    train_enabled: bool
+    eval_enabled: bool
     model_name: str | None
 
     #def __getattribute__(self, __name: str) -> Any:
@@ -193,7 +195,8 @@ def make_env_group(config: dict | EnvGroupConfig) -> EnvGroup:
 
     return EnvGroup(
         env = vec_env_cls([lambda c=env_config: make_single_env(c) for env_config in env_configs]),
-        eval_only = config.eval_only,
+        train_enabled = config.train_enabled,
+        eval_enabled = config.eval_enabled,
         name = config.name,
         model_name = config.model_name,
         env_labels = list(itertools.chain.from_iterable([[e.name or e.kwargs['id']] * e.repeat for e in config.envs]))

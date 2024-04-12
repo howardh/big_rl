@@ -3,10 +3,11 @@ import torch
 from jaxtyping import Float
 
 from .base import OutputModule
+from big_rl.model.attention_input import AttentionInput
 
 
 class LinearOutput(OutputModule):
-    def __init__(self, key_size: int, value_size: int, num_heads: int, output_size: int = 1):
+    def __init__(self, key_size: int, value_size: int, num_heads: int, output_size: int = 1, dynamic_query: bool = False):
         torch.nn.Module.__init__(self)
 
         if key_size != value_size:
@@ -14,9 +15,7 @@ class LinearOutput(OutputModule):
 
         self.output_size = output_size
 
-        self.query = torch.nn.Parameter((torch.rand([key_size])-0.5)*0.01)
-        self.attention = torch.nn.MultiheadAttention(
-                key_size, num_heads=num_heads, batch_first=False)
+        self.query_attn = AttentionInput(key_size, value_size, num_heads, dynamic_query=dynamic_query)
         self.ff = torch.nn.Linear(key_size, output_size)
     def forward(self,
             key: Float[torch.Tensor, 'num_blocks batch_size hidden_size'],
@@ -24,12 +23,10 @@ class LinearOutput(OutputModule):
             ) -> dict[str,torch.Tensor|dict]:
         assert len(key.shape) == 3, f'Key shape must be [num_blocks,batch_size,hidden_size]. Got {key.shape}'
         assert len(value.shape) == 3, f'Value shape must be [num_blocks,batch_size,hidden_size]. Got {value.shape}'
-        attn_output, attn_output_weights = self.attention(
-                self.query.expand(1, key.shape[1], -1),
-                key,
-                value
-        ) # (1, batch_size, value_size)
-        output = self.ff(attn_output.squeeze(0))
+        x = self.query_attn(key, value)
+        attn_output = x['attn_output']
+        attn_output_weights = x['attn_output_weights']
+        output = self.ff(attn_output)
         return {
             'output': output,
             'misc': {

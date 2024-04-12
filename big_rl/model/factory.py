@@ -143,7 +143,7 @@ class ModelConfig(BaseModel):
 
     submodel_configs: dict[str, SubModelConfig] | None = Field(
         default=None,
-        description='Used to define multiple submodels that share the same core modules with each other and the parent model. Each submodel can have its own input and output modules, but they must share the same core modules.',
+        description='Used to define multiple submodels that share the same core modules with each other and the parent model. Each submodel can have its own input and output modules, but they must share the same core modules unless otherwise specified in the core module configs.',
     )
 
     model_config = ConfigDict(extra='forbid')
@@ -438,9 +438,9 @@ def create_core_modules(config: dict | CoreModuleConfig, key_size=None, value_si
                 for submodule_config in submodule_configs
             ] 
         if container_type == 'parallel':
-            return CoreModuleParallel(submodules)
+            return CoreModuleParallel(submodules, **config.kwargs)
         elif container_type == 'series':
-            return CoreModuleSeries(submodules)
+            return CoreModuleSeries(submodules, **config.kwargs)
         else:
             raise ValueError(f'Unknown container type: {container_type}')
 

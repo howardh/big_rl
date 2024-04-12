@@ -11,10 +11,11 @@ import torch
 from torchtyping.tensor_type import TensorType
 
 from big_rl.model.core_module.container import CoreModule, CoreModuleOutput
+from big_rl.model.attention_input import AttentionInput
 
 
 class AttentionLSTM(CoreModule):
-    def __init__(self, key_size, value_size, num_heads, hidden_size: int = 128):
+    def __init__(self, key_size, value_size, num_heads, hidden_size: int = 128, dynamic_query: bool = False):
         super().__init__()
 
         # Preprocess and validate parameters
@@ -26,9 +27,10 @@ class AttentionLSTM(CoreModule):
         self._value_size = value_size
         self._num_heads = num_heads
         self._hidden_size = hidden_size
+        self._dynamic_query = dynamic_query
 
         # Model
-        self.query = torch.nn.Parameter(torch.randn(1, 1, key_size))
+        self.attention_input = AttentionInput(key_size=key_size, value_size=value_size, num_heads=num_heads, dynamic_query=dynamic_query)
         self.fc = torch.nn.Linear(hidden_size, value_size*2) # For producing the key and value from the hidden state
         self.attention = torch.nn.MultiheadAttention(key_size, num_heads=num_heads, batch_first=False)
         self.lstm = torch.nn.LSTMCell(
@@ -46,18 +48,14 @@ class AttentionLSTM(CoreModule):
         prev_hidden_state = hidden[0]
         prev_cell_state = hidden[1]
 
-        # attn_output: (num_blocks, 1, batch_size, value_size)
-        # attn_output_weights: (num_blocks, batch_size, 1, seq_len)
-        # The extra size 1 dimension is the number of queries. We only provide 1 query per module, so it's size 1.
-        attn_output, attn_output_weights = self.attention(
-                query=self.query.expand(1, batch_size, self._key_size),
+        # attn_output: (1, batch_size, value_size)
+        # attn_output_weights: (batch_size, seq_len)
+        x = self.attention_input(
                 key=key,
                 value=value,
         )
-
-        # Remove the extra query dimension
-        attn_output = attn_output.squeeze(0) # (batch_size, value_size)
-        attn_output_weights = attn_output_weights.squeeze(1) # (batch_size, seq_len)
+        attn_output = x['attn_output']
+        attn_output_weights = x['attn_output_weights']
 
         new_hidden_state, new_cell_state = self.lstm(
                 attn_output, 

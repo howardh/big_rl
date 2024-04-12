@@ -93,7 +93,7 @@ class ModularModel1(torch.nn.Module):
                         input_name: self.input_modules.input_modules[module_name]
                         for module_name, input_name in submodel_config.input_modules.items()
                     })),
-                    core_modules=self.core_modules,
+                    core_modules=self.core_modules.submodel(submodel_name),
                     output_modules=OutputModuleContainer(torch.nn.ModuleDict({
                         output_name: self.output_modules.output_modules[module_name]
                         for module_name, output_name in submodel_config.output_modules.items()
@@ -106,7 +106,7 @@ class ModularModel1(torch.nn.Module):
         return submodels
 
     def __getitem__(self, key):
-        if self.submodels is None:
+        if not hasattr(self, 'submodels'):
             raise Exception('No submodels defined.')
         return self.submodels[key]
 

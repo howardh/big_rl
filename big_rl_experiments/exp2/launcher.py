@@ -139,6 +139,8 @@ def launch(args):
                     ('30000' if args.debug else str(args.max_steps_inner)),
                 '--cuda',
                 '--wandb' if args.wandb else None,
+                '--wandb-project', 'big_rl_exp2',
+                '--wandb-group', 'inner',
             ]
             task_args = [a for a in task_args if a is not None]
             job_ids = run_train(
@@ -172,6 +174,8 @@ def launch(args):
                 ('30000' if args.debug else str(args.max_steps_outer)),
             '--cuda',
             '--wandb' if args.wandb else None,
+            '--wandb-project', 'big_rl_exp2',
+            '--wandb-group', 'train_h_tr',
         ]
         task_args = [a for a in task_args if a is not None]
         job_ids = run_train(
@@ -202,6 +206,8 @@ def launch(args):
                 ('30000' if args.debug else str(args.max_steps_outer)),
             '--cuda',
             '--wandb' if args.wandb else None,
+            '--wandb-project', 'big_rl_exp2',
+            '--wandb-group', 'train_v_tr',
         ]
         task_args = [a for a in task_args if a is not None]
         job_ids = run_train(
@@ -232,6 +238,8 @@ def launch(args):
                 ('30000' if args.debug else str(args.max_steps_outer)),
             '--cuda',
             '--wandb' if args.wandb else None,
+            '--wandb-project', 'big_rl_exp2',
+            '--wandb-group', 'train_lstm',
         ]
         task_args = [a for a in task_args if a is not None]
         job_ids = run_train(
@@ -278,6 +286,8 @@ def launch(args):
                     ('30000' if args.debug else str(args.max_steps_outer)),
                 '--cuda',
                 '--wandb' if args.wandb else None,
+                '--wandb-project', 'big_rl_exp2',
+                '--wandb-group', 'train_h_pt',
             ] if a is not None
         ] for step,(i,j) in enumerate(itertools.product(range(5), range(5)))]
         dependency = ':'.join(['afterany', *train_inner_job_ids]) if len(train_inner_job_ids) > 0 else None
@@ -326,6 +336,8 @@ def launch(args):
                     ('30000' if args.debug else str(args.max_steps_outer)),
                 '--cuda',
                 '--wandb' if args.wandb else None,
+                '--wandb-project', 'big_rl_exp2',
+                '--wandb-group', 'train_v_pt',
             ] if a is not None
         ] for step,(i,j) in enumerate(itertools.product(range(5), range(5)))]
         dependency = ':'.join(['afterany', *train_inner_job_ids]) if len(train_inner_job_ids) > 0 else None

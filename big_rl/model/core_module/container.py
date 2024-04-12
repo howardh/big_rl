@@ -95,6 +95,8 @@ class CoreModule(torch.nn.Module):
         return _core_module_subclasses
 
     def __init_subclass__(cls, **kwargs):
+        # This is called whenever we define a subclass of `CoreModule`
+
         # If it's a container or a subclass of a container, then do nothing
         # Note: `CoreModuleContainer` has to be defined immediately after `CoreModule` in order for this to work. When `CoreModuleContainer` is defined, only the first condition is evaluated. The second one, which would error because `CoreModuleContainer` is not defined, is skipped.
         #if cls.__name__ == 'CoreModuleContainer' or issubclass(cls, CoreModuleContainer):
@@ -160,6 +162,11 @@ class CoreModule(torch.nn.Module):
     def core_modules(self):
         return self
 
+    def submodel(self, name):
+        # Return the core modules that belong to the sub-model with the given name
+        # Only container modules should have different modules for each sub-model.
+        return self
+
 
 class CoreModuleContainer(CoreModule, torch.nn.ModuleList):
     def __init__(self, modules: list[CoreModule]):
@@ -168,6 +175,7 @@ class CoreModuleContainer(CoreModule, torch.nn.ModuleList):
         """
         torch.nn.ModuleList.__init__(self, modules)
 
+        # Check that all core modules have the required methods
         for m in modules:
             if not hasattr(m, 'init_hidden'):
                 raise ValueError(f'Core module {m} does not have `init_hidden()` method')
@@ -200,9 +208,21 @@ class CoreModuleContainer(CoreModule, torch.nn.ModuleList):
 
 
 class CoreModuleParallel(CoreModuleContainer):
-    def __init__(self, modules: list[CoreModule]):
+    def __init__(self, modules: list[CoreModule], submodels: dict[str, list[int]] | None = None):
         super().__init__(modules)
         self._output_labels = None
+        self._submodel_config = submodels
+        self._submodel_modules = self._init_submodels(submodels)
+
+    def _init_submodels(self, submodel_config) -> dict[str, CoreModuleParallel]:
+        if submodel_config is None:
+            return defaultdict(lambda: self)
+        submodels = {}
+        for name, indices in submodel_config.items():
+            submodels[name] = CoreModuleParallel([
+                list(self)[i] for i in indices
+            ])
+        return submodels
 
     def forward(self, key: KeyInputType, value: ValueInputType, hidden: HiddenType) -> CoreModuleOutput:
         split_hidden = self._split_hidden(hidden)
@@ -245,6 +265,9 @@ class CoreModuleParallel(CoreModuleContainer):
                     'output_labels': output_labels,
                 }
             }
+
+    def submodel(self, name):
+        return self._submodel_modules[name]
 
 
 class CoreModuleSeries(CoreModuleContainer):

@@ -2,9 +2,10 @@ import argparse
 from collections import defaultdict
 import os
 import itertools
+import json
 import signal
 import sys
-from typing import Optional, Generator, Dict, List, Any, Callable, Union, Tuple, Iterable, NamedTuple
+from typing import Optional, Generator, Dict, List, Any, Callable, Union, Tuple, NamedTuple
 import time
 import yaml
 
@@ -637,11 +638,11 @@ def train(
             backtrack = backtrack,
         )
         for env in envs
-        if not env.eval_only
+        if env.train_enabled
     ]
 
     # TODO: Eval envs
-    #evaluators = [... for env in envs if env.eval_only]
+    #evaluators = [... for env in envs if env.eval_enabled]
 
     start_time = time.time()
     for _, losses in enumerate(zip(*trainers)):
@@ -754,6 +755,11 @@ def init_arg_parser():
     parser.add_argument('--wandb', action='store_true', help='Save results to W&B.')
     parser.add_argument('--wandb-id', type=str, default=None,
                         help='W&B run ID. Defaults to the run ID.')
+    parser.add_argument('--wandb-project', type=str,
+                        default=WANDB_PROJECT_NAME,
+                        help='W&B project name.')
+    parser.add_argument('--wandb-group', type=str, default='null',
+                        help='JSON data used to group runs together in W&B.')
 
     return parser
 
@@ -763,6 +769,10 @@ def main(args, callbacks=Callbacks()):
     # Note: Only non-string arguments and args.run_id can be used until the post-processing is done.
     if args.run_id is None:
         args.run_id = generate_id(slurm_split = args.slurm_split)
+    try:
+        args.wandb_group = json.loads(args.wandb_group)
+    except:
+        pass # If it's invalid json, then just treat it as a string. We're not doing anything with this besides passing it to wandb.config.update().
 
     substitutions = dict(
         RUN_ID = args.run_id,
@@ -786,12 +796,12 @@ def main(args, callbacks=Callbacks()):
     # Initialize W&B
     if args.wandb:
         if args.wandb_id is not None:
-            wandb.init(project=WANDB_PROJECT_NAME, id=args.wandb_id, resume='allow')
+            wandb.init(project=args.wandb_project, id=args.wandb_id, resume='allow')
         elif args.model_checkpoint is not None: # XXX: Questionable decision. Maybe it should be explicitly specified as a CLI argument if we want to use the same W&B ID. This is causing more problems than it solves.
             wandb_id = os.path.basename(args.model_checkpoint).split('.')[0]
-            wandb.init(project=WANDB_PROJECT_NAME, id=wandb_id, resume='allow')
+            wandb.init(project=args.wandb_project, id=wandb_id, resume='allow')
         else:
-            wandb.init(project=WANDB_PROJECT_NAME)
+            wandb.init(project=args.wandb_project)
         wandb.config.update({k:v for k,v in args.__dict__.items() if k != 'model_config'})
 
     # Initialize environments
