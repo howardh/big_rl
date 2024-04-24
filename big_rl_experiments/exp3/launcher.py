@@ -1,13 +1,9 @@
 import argparse
 from collections import defaultdict
 import datetime
-import itertools
-import math
 import os
 import logging
 import subprocess
-from torch import sub
-import yaml
 
 from simple_slurm import Slurm
 
@@ -73,7 +69,7 @@ def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subp
         )
         #slurm.add_cmd('module load libffi') # Fixes the "ImportError: libffi.so.6: cannot open shared object file: No such file or directory" error
         s.add_cmd('module load python/3.10')
-        s.add_cmd('source big_rl/ENV2204/bin/activate')
+        s.add_cmd('source ENV2204/bin/activate')
         s.add_cmd('export PYTHONUNBUFFERED=1')
         #ps://stackoverflow.com/questions/76348342/how-to-use-trap-in-my-sbatch-bash-job-script-in-compute-canada
         s.add_cmd("trap 'echo SIGUSR1 1>&2' SIGUSR1") # Handles time limit
@@ -94,6 +90,138 @@ def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subp
 
         job_id = s.sbatch('wait', shell=SHELL)
         return [job_id]
+    elif subproc:
+        for a in args:
+            cmd = f'python3 {script} {action} {" ".join(a)}'
+
+            print(cmd)
+
+            p = subprocess.Popen(cmd, shell=True) # if shell=True, then the subprocesses will have the same environment variables as this process. Needed to pass the CUDA_VISIBLE_DEVICES variable.
+            p.wait()
+        return []
+    else:
+        for i,a in enumerate(args):
+            os.environ.update({'SLURM_STEP_ID': str(i)})
+            main([action, *a])
+        return []
+
+
+def run_eval(args: list[list[str]], job_name='eval', slurm: bool = False, subproc: bool = False, mem_per_task=2, dependency=None) -> list[int]:
+    """
+    Args:
+        args: List of lists of arguments to pass to the training script. Each sublist is a set of arguments to pass to a single training job.
+        slurm: If True, submit the jobs to slurm. If False, run the jobs locally.
+        subproc: If True, run the jobs locally as subprocesses. If False, run the jobs in the current process.
+        mem_per_task: Memory per task in GB. Used only if `slurm` is True.
+        dependency: Job ID to depend on. Used only if `slurm` is True.
+        max_steps_per_job: Maximum number of steps to train for per job. Used only if `slurm` is True.
+    """
+    script = f'big_rl_experiments/{EXP_NAME}/__main__.py'
+    action = 'eval'
+    if slurm:
+        slurm_kwargs = {}
+        if dependency is not None:
+            slurm_kwargs['dependency'] = dependency
+        s = Slurm(
+            job_name=job_name,
+            cpus_per_task=1,
+            mem=f'{mem_per_task}G',
+            #gres=[GRES],
+            output='/network/scratch/h/huanghow/slurm/%A.out',
+
+            time='12:00:00',
+
+            partition='unkillable-cpu',
+            signal='USR1@120', # Send a signal to the job 120 seconds before it is killed
+
+            **slurm_kwargs,
+        )
+        #slurm.add_cmd('module load libffi') # Fixes the "ImportError: libffi.so.6: cannot open shared object file: No such file or directory" error
+        s.add_cmd('module load python/3.10')
+        s.add_cmd('source ENV2204/bin/activate')
+        s.add_cmd('export PYTHONUNBUFFERED=1')
+        #ps://stackoverflow.com/questions/76348342/how-to-use-trap-in-my-sbatch-bash-job-script-in-compute-canada
+        s.add_cmd("trap 'echo SIGUSR1 1>&2' SIGUSR1") # Handles time limit
+        s.add_cmd("trap 'echo SIGUSR1 1>&2' SIGTERM") # Handles preemption (I think this is needed if PreemptParameters isn't set with send_user_signal enabled. Check if it's set in /etc/slurm/slurm.conf)
+        job_ids = []
+        for a in args:
+            cmd = f'python {script} {action} {" ".join(a)}'
+
+            print('-'*80)
+            print(s.script(shell=SHELL))
+            print(cmd)
+            print('-'*80)
+
+            job_id = s.sbatch(cmd, shell=SHELL)
+            job_ids.append(job_id)
+        return job_ids
+    elif subproc:
+        for a in args:
+            cmd = f'python3 {script} {action} {" ".join(a)}'
+
+            print(cmd)
+
+            p = subprocess.Popen(cmd, shell=True) # if shell=True, then the subprocesses will have the same environment variables as this process. Needed to pass the CUDA_VISIBLE_DEVICES variable.
+            p.wait()
+        return []
+    else:
+        for i,a in enumerate(args):
+            os.environ.update({'SLURM_STEP_ID': str(i)})
+            main([action, *a])
+        return []
+
+
+def run_analysis(args: list[list[str]], job_name='analysis', slurm: bool = False, subproc: bool = False, mem_per_task=2, dependency=None) -> list[int]:
+    """
+    Args:
+        args: List of lists of arguments to pass to the training script. Each sublist is a set of arguments to pass to a single training job.
+        slurm: If True, submit the jobs to slurm. If False, run the jobs locally.
+        subproc: If True, run the jobs locally as subprocesses. If False, run the jobs in the current process.
+        mem_per_task: Memory per task in GB. Used only if `slurm` is True.
+        dependency: Job ID to depend on. Used only if `slurm` is True.
+        max_steps_per_job: Maximum number of steps to train for per job. Used only if `slurm` is True.
+        duration: Duration of the job in days. Used only if `slurm` is True.
+    """
+    script = f'big_rl_experiments/{EXP_NAME}/__main__.py'
+    action = 'analysis'
+    if slurm:
+        slurm_kwargs = {}
+        if dependency is not None:
+            slurm_kwargs['dependency'] = dependency
+        s = Slurm(
+            job_name=job_name,
+            cpus_per_task=1,
+            mem=f'{mem_per_task}G',
+            output='/network/scratch/h/huanghow/slurm/%A.out',
+
+            # Ask for 1h (Should take about 5min)
+            time='1:00:00',
+
+            #partition='main',
+            partition='unkillable-cpu',
+            signal='USR1@120', # Send a signal to the job 120 seconds before it is killed
+
+            **slurm_kwargs,
+        )
+        #slurm.add_cmd('module load libffi') # Fixes the "ImportError: libffi.so.6: cannot open shared object file: No such file or directory" error
+        s.add_cmd('module load python/3.10')
+        s.add_cmd('source ENV2204/bin/activate')
+        s.add_cmd('export PYTHONUNBUFFERED=1')
+        #ps://stackoverflow.com/questions/76348342/how-to-use-trap-in-my-sbatch-bash-job-script-in-compute-canada
+        s.add_cmd("trap 'echo SIGUSR1 1>&2' SIGUSR1") # Handles time limit
+        s.add_cmd("trap 'echo SIGUSR1 1>&2' SIGTERM") # Handles preemption (I think this is needed if PreemptParameters isn't set with send_user_signal enabled. Check if it's set in /etc/slurm/slurm.conf)
+        job_ids = []
+        for a in args:
+            cmd = f'srun python {script} {action} {" ".join(a)}'
+
+            print('-'*80)
+            print(s.script(shell=SHELL))
+            print(cmd)
+            print('-'*80)
+
+            job_id = s.sbatch(cmd, shell=SHELL)
+            job_ids.append(job_id)
+        return job_ids
     elif subproc:
         for a in args:
             cmd = f'python3 {script} {action} {" ".join(a)}'
@@ -273,7 +401,56 @@ def launch(args):
         )
         job_ids_by_task[task_name].extend(job_ids)
 
-    # TODO: Evaluation?
+    # TODO: Evaluation (eval each model on test task so we can compare their performance to the mutual info between hiden state and task)
+    task_name = 'eval'
+    if task_name in args.actions:
+        checkpoint_subdirs = ['train_multi_task_pt', 'train_multi_task_pt_frozen', 'train_multi_task_tr', 'train_single_task']
+        checkpoint_dir = os.path.join(results_dir, 'checkpoints')
+        task_args=[
+            [
+                '--env-config',
+                    os.path.join(args.env_config_dir, 'test/halfcheetah_single.yaml'),
+                '--model-config',
+                    os.path.join(args.model_config_dir, 'model.yaml'),
+                '--model',
+                    os.path.join(checkpoint_dir, subdir, checkpoint),
+                '--no-video',
+                '--num-episodes', '10',
+                '--results', os.path.join(results_dir, 'eval', subdir, checkpoint),
+                '--cache-results',
+            ]
+            for subdir in checkpoint_subdirs
+            for checkpoint in os.listdir(os.path.join(checkpoint_dir, subdir))
+        ]
+        job_ids = run_eval(
+                task_args,
+                job_name=task_name,
+                slurm=args.slurm,
+                subproc=args.subproc,
+        )
+        job_ids_by_task[task_name].extend(job_ids)
+
+    task_name = 'analyse'
+    if task_name in args.actions:
+        checkpoint_subdirs = ['train_multi_task_pt', 'train_multi_task_pt_frozen', 'train_multi_task_tr', 'train_single_task']
+        task_args = [[
+            '--model-config-dir', args.model_config_dir,
+            '--checkpoint',
+                os.path.join(results_dir, 'checkpoints', subdir, f'{i}.pt'),
+            '--results-dir', os.path.join(results_dir, 'analysis', subdir, str(i)),
+            '--num-episodes', '50',
+            '--num-epochs', '10_000',
+            '--cache-dataset',
+        ] for subdir in checkpoint_subdirs for i in range(5)]
+        job_id = run_analysis(
+                task_args,
+                job_name=task_name,
+                slurm=args.slurm,
+                subproc=args.subproc,
+                mem_per_task=2,
+                dependency=None,
+        )
+        job_ids_by_task[task_name].extend(job_id)
 
     print(f'Launched {sum(len(v) for v in job_ids_by_task.values())} jobs (plotting not counted)')
     for k,v in job_ids_by_task.items():
@@ -289,7 +466,8 @@ def init_arg_parser():
 
     parser.add_argument('--exp-id', type=str, required=True,
                         help='Identifier for the current experiment set.')
-    parser.add_argument('--max-steps-single-task', type=int, default=50_000_000,
+    parser.add_argument('--max-steps-single-task',
+                        type=int, default=50_000_000,
                         help='Maximum number of steps to train for (applies to single task training only, but the number of steps is split between the two tasks).')
     parser.add_argument('--max-steps-multi-task', type=int, default=50_000_000,
                         help='Maximum number of steps to train for (applies to multi-task training only).')

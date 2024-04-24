@@ -1,0 +1,73 @@
+- type: SyncVectorEnv # AsyncVectorEnv, SyncVectorEnv, or Env
+  name: fw
+  model_name: fw
+  train_enabled: false
+  eval_enabled: true
+  envs:
+  - kwargs: # Arguments for gymnasium.make
+      id: HalfCheetahNoVelocityForward-v4
+    name: forward
+    repeat: 1
+    wrappers:
+    - type: TimeLimit
+      kwargs:
+        max_episode_steps: 100
+    - type: MetaWrapper
+      kwargs:
+        episode_stack: 1
+        dict_obs: true
+        randomize: false
+    - type: ClipAction
+- type: SyncVectorEnv # AsyncVectorEnv, SyncVectorEnv, or Env
+  name: bw
+  model_name: bw
+  train_enabled: false
+  eval_enabled: true
+  envs:
+  - kwargs: # Arguments for gymnasium.make
+      id: HalfCheetahNoVelocityBackward-v4
+    name: backward
+    repeat: 1
+    wrappers:
+    - type: TimeLimit
+      kwargs:
+        max_episode_steps: 100
+    - type: MetaWrapper
+      kwargs:
+        episode_stack: 1
+        dict_obs: true
+        randomize: false
+    - type: ClipAction
+- type: SyncVectorEnv # AsyncVectorEnv, SyncVectorEnv, or Env
+  model_name: fwbw
+  train_enabled: false
+  eval_enabled: false
+  envs:
+  - kwargs: # Arguments for gymnasium.make
+      id: HalfCheetahNoVelocityForward-v4
+    name: forward
+    repeat: 1
+    wrappers:
+    - type: TimeLimit
+      kwargs:
+        max_episode_steps: 100
+    - type: MetaWrapper
+      kwargs:
+        episode_stack: 1
+        dict_obs: true
+        randomize: false
+    - type: ClipAction
+  - kwargs: # Arguments for gymnasium.make
+      id: HalfCheetahNoVelocityBackward-v4
+    name: backward
+    repeat: 1
+    wrappers:
+    - type: TimeLimit
+      kwargs:
+        max_episode_steps: 100
+    - type: MetaWrapper
+      kwargs:
+        episode_stack: 1
+        dict_obs: true
+        randomize: false
+    - type: ClipAction

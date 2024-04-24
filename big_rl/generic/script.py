@@ -825,15 +825,15 @@ def main(args, callbacks=Callbacks()):
             model_config = yaml.safe_load(f)
         if wandb.run is not None:
             wandb.config.update({'model_config': model_config}, allow_val_change=True)
-        observation_spaces = defaultdict(lambda: [])
-        action_spaces = defaultdict(lambda: [])
-        for env in envs:
-            if env.model_name is None:
-                continue
-            observation_spaces[env.model_name].append(env.env.single_observation_space)
-            action_spaces[env.model_name].append(env.env.single_action_space)
-        observation_spaces = {k: merge_space(*v) for k,v in observation_spaces.items()}
-        action_spaces = {k: merge_space(*v) for k,v in action_spaces.items()}
+        #observation_spaces = defaultdict(lambda: [])
+        #action_spaces = defaultdict(lambda: [])
+        #for env in envs:
+        #    if env.model_name is None:
+        #        continue
+        #    observation_spaces[env.model_name].append(env.env.single_observation_space)
+        #    action_spaces[env.model_name].append(env.env.single_action_space)
+        #observation_spaces = {k: merge_space(*v) for k,v in observation_spaces.items()}
+        #action_spaces = {k: merge_space(*v) for k,v in action_spaces.items()}
 
         model = model_factory.create_model(
             model_config,

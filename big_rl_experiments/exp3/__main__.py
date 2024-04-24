@@ -15,9 +15,8 @@ from tabulate import tabulate
 
 from big_rl.generic.script import main as train_generic, Callbacks
 from big_rl.generic.script import init_arg_parser as init_train_arg_parser
-from big_rl.generic.evaluate_model import main as eval_generic
-from big_rl.generic.evaluate_model import init_arg_parser as init_eval_arg_parser
-from big_rl_experiments.exp1v2.common import ResultsDir, TOTAL_NUM_TASKS
+from big_rl_experiments.exp3.eval_module_belief import main as analyse_main, init_arg_parser as init_analyse_arg_parser
+from big_rl.generic.evaluate_model import main as eval_main, init_arg_parser as init_eval_arg_parser
 
 
 class ModelWrapper(torch.nn.Module):
@@ -44,8 +43,19 @@ def on_model_init(locals_):
 def run_train(args: list[str]):
     parser = init_train_arg_parser()
     args_ns = parser.parse_args(args)
-    #print(' ', args_ns.env_config)
     train_generic(args_ns, callbacks=Callbacks(on_model_init=on_model_init))
+
+
+def run_eval(args: list[str]):
+    parser = init_eval_arg_parser()
+    args_ns = parser.parse_args(args)
+    eval_main(args_ns)
+
+
+def run_analysis(args: list[str]):
+    parser = init_analyse_arg_parser()
+    args_ns = parser.parse_args(args)
+    analyse_main(args_ns)
 
 
 ##################################################
@@ -62,13 +72,14 @@ def main(argv):
     if action == 'train':
         run_train(argv)
     elif action == 'eval':
-        #run_eval(argv)
-        ...
+        run_eval(argv)
+    elif action == 'analysis':
+        run_analysis(argv)
     elif action == 'plot':
         #run_plot(argv)
         ...
     else:
-        valid_actions = ['train', 'eval', 'plot']
+        valid_actions = ['train', 'eval', 'analysis', 'plot']
         raise ValueError(f'Unknown action {action}. Valid actions are {valid_actions}.')
 
 

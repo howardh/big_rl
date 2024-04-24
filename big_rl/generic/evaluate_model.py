@@ -3,7 +3,7 @@ from collections import defaultdict
 from enum import Enum
 import itertools
 import os
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Callable, Any, NamedTuple
 import yaml
 
 import cv2
@@ -31,11 +31,19 @@ ALIGN_BOTTOM = 1
 ALIGN_CENTER = 0
 
 
-def test(model, env_config, preprocess_obs_fn, video_callback_fn={}, verbose=False, render=False, num_episodes=1, warmup_episodes=0):
+class Callbacks(NamedTuple):
+    on_model_init: Callable[[Any], None] | None = None
+    on_checkpoint_load: Callable[[Any], None] | None = None
+    on_step: Callable[[Any], None] | None = None
+
+
+def test(model, env_config, preprocess_obs_fn, callbacks: Callbacks, video_callback_fn={}, verbose=False, render=False, num_episodes=1, warmup_episodes=0):
     if warmup_episodes > 0:
         envs = make_env_from_yaml(env_config)
         output = defaultdict(list)
         for env in envs:
+            if not env.eval_enabled:
+                continue
             for _ in tqdm(range(warmup_episodes), desc='Warmup'):
                 test2(model, env, preprocess_obs_fn, video_callback_fn, verbose)
             for _ in tqdm(range(num_episodes), desc='Test'):
@@ -48,11 +56,14 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn={}, verbose=Fal
         for ep in tqdm(range(num_episodes), desc='Test'):
             envs = make_env_from_yaml(env_config)
             for env in envs:
+                if not env.eval_enabled:
+                    continue
                 output[env.name].append(test2(
                     model,
                     env.env,
                     preprocess_obs_fn,
-                    video_callback_fn.get(env.name, None),
+                    callbacks=callbacks,
+                    video_callback_fn=video_callback_fn.get(env.name, None),
                     verbose=verbose,
                     render=render,
                     metadata={'episode': ep, 'task_name': env.name},
@@ -72,7 +83,7 @@ def test(model, env_config, preprocess_obs_fn, video_callback_fn={}, verbose=Fal
         #]
 
 
-def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False, render=False, metadata={}):
+def test2(model, env, preprocess_obs_fn, callbacks: Callbacks, video_callback_fn=None, verbose=False, render=False, metadata={}):
     action_dist_fn = get_action_dist_function(env.single_action_space)
 
     episode_reward = 0 # total reward for the current episode
@@ -111,6 +122,9 @@ def test2(model, env, preprocess_obs_fn, video_callback_fn=None, verbose=False, 
         obs = preprocess_obs_fn(obs)
         if render:
             env.render()
+
+        if callbacks.on_step is not None:
+            callbacks.on_step(locals())
 
         results['reward'].append(reward)
         results['regret'].append(info.get('regret', None))
@@ -413,11 +427,19 @@ def init_arg_parser():
                         help='Do not save a video of the episode. By default, a video is saved to "test.webm".')
     parser.add_argument('--results', type=str, default=None,
                         help='Path to a file to save results.')
+    parser.add_argument('--cache-results', action='store_true',
+                        help='If set to true and --results is specified and the file already exists, then do nothing.')
     init_parser_model(parser)
     return parser
 
 
-def main(args):
+def main(args: argparse.Namespace, callbacks=Callbacks()):
+    # Cache
+    if args.cache_results and args.results is not None:
+        if os.path.isfile(args.results):
+            print(f'File {args.results} already exists. Exiting.')
+            return
+
     # Create environment
     if args.env_config is not None:
         envs = make_env_from_yaml(args.env_config)
@@ -426,6 +448,8 @@ def main(args):
 
     # Validate environment
     for env in envs:
+        if not env.eval_enabled:
+            continue
         if env.env.num_envs != 1:
             raise Exception('Test environments must have 1 environment per process.')
 
@@ -458,6 +482,9 @@ def main(args):
     print('Model initialized')
     print(f'Number of parameters: {param_count:,}')
 
+    if callbacks.on_model_init is not None:
+        callbacks.on_model_init(locals())
+
     if args.model is not None:
         checkpoint = torch.load(args.model, map_location=device)
         model.load_state_dict(checkpoint['model'], strict=True)
@@ -468,6 +495,9 @@ def main(args):
 
     if 'step' in checkpoint:
         print(f'Checkpoint step: {checkpoint["step"]:,}')
+
+    if callbacks.on_checkpoint_load is not None:
+        callbacks.on_checkpoint_load(locals())
 
     # Test model
     video_filenames = {
@@ -495,7 +525,7 @@ def main(args):
             for k,v in obs.items() if k not in obs_ignore
         }
 
-    test_results = test(model, args.env_config, preprocess_obs_fn, video_callback_fn=video_callback, verbose=args.verbose, num_episodes=args.num_episodes, warmup_episodes=args.warmup_episodes)
+    test_results = test(model, args.env_config, preprocess_obs_fn, callbacks=callbacks, video_callback_fn=video_callback, verbose=args.verbose, num_episodes=args.num_episodes, warmup_episodes=args.warmup_episodes)
 
     if video_callback is not None:
         for vc in video_callback.values():
