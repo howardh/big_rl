@@ -1,10 +1,13 @@
 import argparse
 from collections import defaultdict
 import datetime
+import glob
 import os
 import logging
 import subprocess
 
+import numpy as np
+import torch
 from simple_slurm import Slurm
 
 from big_rl_experiments.exp3.__main__ import main
@@ -451,6 +454,29 @@ def launch(args):
                 dependency=None,
         )
         job_ids_by_task[task_name].extend(job_id)
+
+    task_name = 'results'
+    if task_name in args.actions:
+        # Aggregate results
+        eval_results = {}
+        for filename in glob.iglob(os.path.join(results_dir, 'eval', '**', '*.pt'), recursive=True):
+            result = torch.load(filename)
+            key = '/'.join(filename.split('/')[-2:])[:-3]
+            eval_results[key] = {
+                'fw': np.mean([r['episode_reward'] for r in result['fw']]),
+                'bw': np.mean([r['episode_reward'] for r in result['bw']]),
+            }
+
+        anal_results = {}
+        for filename in glob.iglob(os.path.join(results_dir, 'analysis', '**', 'results.pt'), recursive=True):
+            result = torch.load(filename)
+            key = '/'.join(filename.split('/')[-3:-1])
+            anal_results[key] = result
+        
+        # Look at the results below:
+        # {k: [f'{x:.3}' for x in v] for k,v in anal_results.items()}
+        # eval_results
+        breakpoint()
 
     print(f'Launched {sum(len(v) for v in job_ids_by_task.values())} jobs (plotting not counted)')
     for k,v in job_ids_by_task.items():

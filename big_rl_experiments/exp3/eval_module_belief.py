@@ -11,6 +11,7 @@ import torch
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib._color_data as mcd
 from tqdm import tqdm
 
 from big_rl.model import factory as model_factory
@@ -49,7 +50,7 @@ def generate_splits(n, k):
         yield train, val
 
 
-def train_belief_model(data, num_epochs=10, plot: str | None = None):
+def train_belief_model(data, num_epochs=10, plot_dir: str | None = None):
     """ Train and return score """
 
     # Train with LOOCV on the dataset for each module
@@ -63,12 +64,14 @@ def train_belief_model(data, num_epochs=10, plot: str | None = None):
             }
             for _ in range(num_core_modules)
     ]
+    losses_over_time = [[] for _ in range(num_core_modules)]
 
     for m in range(num_core_modules):
         x1 = torch.stack(data['fw'][m])
         x2 = torch.stack(data['bw'][m])
         x = torch.cat([x1,x2])
         y = torch.tensor([0.] * len(x1) + [1.] * len(x2))
+        t = torch.tensor(data['fw_t'][m] + data['bw_t'][m])
 
         for split_idx, (train_indices, val_indices) in enumerate(generate_splits(len(x), num_splits)):
             bce = torch.nn.BCEWithLogitsLoss()
@@ -76,7 +79,7 @@ def train_belief_model(data, num_epochs=10, plot: str | None = None):
             model = torch.nn.Linear(in_features=x.shape[1], out_features=1)
             optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-            best_val_loss = float('inf')
+            # Train model
             for _ in tqdm(range(num_epochs), desc=f'Module {m} split {split_idx}'):
                 y_pred = model(x[train_indices])
                 train_loss = bce(y_pred.squeeze(), y[train_indices])
@@ -87,14 +90,46 @@ def train_belief_model(data, num_epochs=10, plot: str | None = None):
                 y_pred = model(x[val_indices])
                 val_loss = bce(y_pred.squeeze(), y[val_indices])
 
-                #best_val_loss = min(best_val_loss, val_loss.item())
-
                 loss_history[m]['train'][split_idx].append(train_loss.item())
                 loss_history[m]['val'][split_idx].append(val_loss.item())
 
-            #results[m].append(best_val_loss)
+            # Evaluate model (How do they perform relative to time?)
+            bce = torch.nn.BCEWithLogitsLoss(reduction='none')
+            y_pred = model(x)
+            losses = bce(y_pred.squeeze(), y)
+            losses_over_time[m].append(
+                torch.stack([losses[t == i] for i in range(t.max() + 1)]).detach().cpu().numpy()
+            )
 
-    if plot is not None:
+    if plot_dir is not None:
+        # Plot loss wrt step
+        colors = list(mcd.TABLEAU_COLORS.values())
+        plt.figure()
+        for i in range(num_core_modules):
+            for j in range(num_splits):
+                plt.plot(
+                    losses_over_time[i][j],
+                    c=colors[j],
+                    alpha=0.03,
+                )
+        for i in range(num_core_modules):
+            plt.plot(
+                # axis 2 = number of episodes, axis 0 = train-val split
+                np.array(losses_over_time[i]).mean(axis=2).mean(axis=0),
+                label=f'Module {i}',
+                c=colors[i],
+            )
+        plt.xlabel('Step')
+        plt.ylabel('Loss')
+        plt.yscale('log')
+        plt.grid()
+        plt.legend()
+        filename = os.path.join(plot_dir, 'loss_over_time.png')
+        plt.savefig(filename)
+        print(f'Plot saved to {os.path.abspath(filename)}')
+        plt.close()
+
+        # Plot loss over time
         _, ax = plt.subplots(1, num_core_modules, figsize=(5*num_core_modules, 5), sharey=True)
         for i in range(num_core_modules):
             ax[i].plot(
@@ -123,7 +158,9 @@ def train_belief_model(data, num_epochs=10, plot: str | None = None):
             ax[i].set_yscale('log')
             ax[i].grid()
             ax[i].legend()
-        plt.savefig(plot)
+        filename = os.path.join(plot_dir, 'loss.png')
+        plt.savefig(filename)
+        print(f'Plot saved to {os.path.abspath(filename)}')
         plt.close()
 
     results = [np.mean(l['val'], axis=0).min() for l in loss_history]
@@ -167,7 +204,7 @@ def main(args):
     os.makedirs(args.results_dir, exist_ok=True)
     dataset_filename = os.path.join(args.results_dir, 'dataset.pt')
     results_filename = os.path.join(args.results_dir, 'results.pt')
-    plot_filename = os.path.join(args.results_dir, 'plot.png')
+    plot_dir = os.path.join(args.results_dir)
 
     def get_dataset():
         data = None
@@ -229,13 +266,13 @@ def main(args):
         return data
 
     # Train belief model on each dataset
-    if isfile(results_filename):
+    if isfile(results_filename) and False: # XXX: Debug (remove False)
         results = torch.load(results_filename)
     else:
         results = train_belief_model(
             get_dataset(),
             num_epochs=args.num_epochs,
-            plot=plot_filename,
+            plot_dir=plot_dir,
         )
         torch.save(results, results_filename)
 

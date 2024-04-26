@@ -17,21 +17,26 @@
   </asset>
   <worldbody>
     <light cutoff="100" diffuse="1 1 1" dir="-0 0 -1.3" directional="true" exponent="1" pos="0 0 1.3" specular=".1 .1 .1"/>
-    <geom conaffinity="1" condim="3" material="MatPlane" name="floor" pos="0 0 0" rgba="0.8 0.9 0.8 1" size="40 40 40" type="plane"/>
+    <geom conaffinity="1" condim="3" material="MatPlane" name="floor" pos="0 0 0" rgba="0.8 0.9 0.8 1" size="40 40 40" type="plane" />
     <body name="torso_inner" pos="0 0 0.75">
       <camera name="track" mode="trackcom" pos="0 -3 0.3" xyaxes="1 0 0 0 0 1"/>
       <camera name="first_person" mode="fixed" pos="0 0 0" axisangle="1 0 0 90"/>
       <geom name="torso_geom_inner" pos="0 0 0" size="0.2" type="sphere" conaffinity="0" />
-      <joint armature="0" damping="0.01" limited="false" margin="0.01" name="root" pos="0 0 0" type="free"/>
+      <joint armature="0" damping="0.1" limited="false" margin="0.01" name="root" pos="0 0 0" type="free"/>
       <body name="torso_outer" pos="0 0 0">
         <geom name="torso_geom_outer" pos="0 0 0" size="0.25" type="sphere" contype="1" material="geom" />
-        <geom name="stick" pos="0 0 0" size="0.01 1" axisangle="1 0 0 90" type="capsule" contype="1" mass="0" friction="0 1 1"/>
+        <!-- The stick is meant to stabilize the ball so that it stays upright. Otherwise, if it rolls forward and turns at the same time, the momentum will cause it to roll in the wrong direction. -->
+        <geom name="stick" pos="0 0 0" size="0.25 1" axisangle="1 0 0 90" type="capsule" contype="1" mass="0" density="0" rgba="0 0 0 0"/>
         <joint armature="0" damping="0.01" limited="false" margin="0.01" name="roll" pos="0 0 0" axis="0 1 0" type="hinge"/>
       </body>
     </body>
   </worldbody>
+  <contact>
+    <!-- No friction between the stabilizing stick and the floor -->
+    <pair name="stick_to_floor" geom1="floor" geom2="stick" friction="0 0 0 0 0" />
+  </contact>
   <actuator>
-    <velocity joint="root" name="turn" gear="0 0 0 0 0 0.1" />
-    <motor joint="roll" name="roll" />
+    <velocity joint="root" name="turn" gear="0 0 0 0 0 1.5" />
+    <velocity joint="roll" name="roll" gear="0.5 0 0 0 0 0" />
   </actuator>
 </mujoco>
