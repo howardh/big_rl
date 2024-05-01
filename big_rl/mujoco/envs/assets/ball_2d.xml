@@ -2,7 +2,7 @@
   <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
   <option integrator="RK4" timestep="0.01"/>
   <custom>
-    <numeric data="0.0 0.0 0.55 1.0 0.0 0.0 0.0 0.0 1.0 0.0 -1.0 0.0 -1.0 0.0 1.0" name="init_qpos"/>
+    <numeric data="0.0 0.0 0.55" name="init_qpos"/>
   </custom>
   <default>
     <joint armature="1" damping="1" limited="true"/>
@@ -20,7 +20,7 @@
     <geom conaffinity="1" condim="3" material="MatPlane" name="floor" pos="0 0 0" rgba="0.8 0.9 0.8 1" size="40 40 40" type="plane" />
     <body name="torso_inner" pos="0 0 0.75">
       <camera name="track" mode="trackcom" pos="0 -3 0.3" xyaxes="1 0 0 0 0 1"/>
-      <camera name="first_person" mode="fixed" pos="0 0 0" axisangle="1 0 0 90"/>
+      <camera name="first_person" mode="trackcom" pos="0 0 0" xyaxes="0 -1 0 0 0 1"/>
       <geom name="torso_geom_inner" pos="0 0 0" size="0.2" type="sphere" conaffinity="0" />
       <joint armature="0" damping="0.1" limited="false" margin="0.01" name="root" pos="0 0 0" type="free"/>
       <body name="torso_outer" pos="0 0 0">

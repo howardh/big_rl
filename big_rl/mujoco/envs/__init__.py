@@ -1128,6 +1128,27 @@ register(
 )
 
 
+register(
+    id="Ball-v4",
+    entry_point="big_rl.mujoco.envs.ball_fw_bw:BallEnv",
+    kwargs={'target_direction': 1},
+)
+
+
+register(
+    id="BallNoVelocityForward-v4",
+    entry_point="big_rl.mujoco.envs.ball_fw_bw:BallEnv",
+    kwargs={'exclude_velocity_from_observation': True, 'target_direction': 1},
+)
+
+
+register(
+    id="BallNoVelocityBackward-v4",
+    entry_point="big_rl.mujoco.envs.ball_fw_bw:BallEnv",
+    kwargs={'exclude_velocity_from_observation': True, 'target_direction': -1},
+)
+
+
 if __name__ == '__main__':
     env = gym.make('ArmFetch-v0', render_mode='human', num_objs=6, camera_fov=90, camera_distance=0)
     #env = gym.make('AntBaseline-v0', render_mode='human')

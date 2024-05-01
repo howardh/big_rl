@@ -615,6 +615,11 @@ def train(
         print(f'Start step ({start_step}) is greater than max_steps_total ({max_steps_total}). Exiting.')
         return
 
+    # Check that there is at least one environment to train on
+    if not any(env.train_enabled for env in envs):
+        print('No environments are enabled for training. Exiting.')
+        return
+
     trainers = [
         train_single_env(
             global_step_counter = global_step_counter,

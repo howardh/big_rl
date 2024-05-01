@@ -40,11 +40,11 @@ setup(name='big_rl',
     ],
     packages=find_packages(),
     #package_dir={'': '.'},
-    #package_data={
-    #    #'big_rl': ['big_rl/mujoco/envs/assets/*.xml']
-    #    'big_rl.mujoco.envs.assets': ['*.xml']
-    #    #'big_rl': ['*.xml']
-    #},
+    package_data={
+        #'big_rl': ['big_rl/mujoco/envs/assets/*.xml']
+        'big_rl.mujoco.envs.assets': ['*.xml']
+        #'big_rl': ['*.xml']
+    },
     #ext_modules=[
     #    cpp_extension.CppExtension(
     #        name='big_rl_cpp',

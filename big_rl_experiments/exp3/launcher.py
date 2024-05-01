@@ -5,6 +5,7 @@ import glob
 import os
 import logging
 import subprocess
+import yaml
 
 import numpy as np
 import torch
@@ -21,7 +22,7 @@ GRES = 'gpu:a100l.2g.20gb:1'
 TRAINING_STEPS = 50_000_000
 
 
-def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subproc: bool = False, mem_per_task=2, dependency=None, max_steps_per_job: int = 5, duration: int = 5, time_per_job=datetime.timedelta(days=1, hours=0, minutes=0, seconds=0)) -> list[int]:
+def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subproc: bool = False, cpus_per_task=2, mem_per_task=2, dependency=None, max_steps_per_job: int = 5, duration: int = 5, time_per_job=datetime.timedelta(days=1, hours=0, minutes=0, seconds=0)) -> list[int]:
     """
     Args:
         args: List of lists of arguments to pass to the training script. Each sublist is a set of arguments to pass to a single training job.
@@ -43,6 +44,7 @@ def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subp
                         job_name=job_name,
                         slurm=slurm,
                         subproc=subproc,
+                        cpus_per_task=cpus_per_task,
                         mem_per_task=mem_per_task,
                         dependency=dependency,
                         max_steps_per_job=max_steps_per_job,
@@ -56,7 +58,7 @@ def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subp
             slurm_kwargs['dependency'] = dependency
         s = Slurm(
             job_name=job_name,
-            cpus_per_task=2*len(args),
+            cpus_per_task=cpus_per_task*len(args),
             mem=f'{mem_per_task*len(args)}G',
             gres=[GRES],
             output='/network/scratch/h/huanghow/slurm/%A.out',
@@ -477,6 +479,89 @@ def launch(args):
         # {k: [f'{x:.3}' for x in v] for k,v in anal_results.items()}
         # eval_results
         breakpoint()
+
+    task_name = 'train_ball_tr'
+    if task_name in args.actions:
+        task_args = [
+            '--env-config',
+                os.path.join(args.env_config_dir, 'train/ball.yaml'),
+            '--model-config',
+                os.path.join(args.model_config_dir, 'model-ball.yaml'),
+            '--optimizer', 'Adam',
+            '--model-checkpoint',
+                os.path.join(results_dir, 'checkpoints', task_name, '{RUN_ID}.pt'),
+            '--checkpoint-interval', '1_000_000',
+            '--run-id', f'{{SLURM_STEP_ID}}',
+            '--wandb-id', f'{args.exp_id}__{task_name}__{{RUN_ID}}__test0', # XXX: We're just trying to figure out how long it takes to train the model for now
+            '--cuda',
+            '--wandb' if args.wandb else None,
+            '--wandb-project', f'big_rl_{EXP_NAME}',
+            '--wandb-group', task_name,
+        ]
+        task_args = [a for a in task_args if a is not None]
+        job_ids = run_train(
+                [task_args] * 5,
+                job_name=task_name,
+                slurm=args.slurm,
+                subproc=args.subproc,
+                cpus_per_task=1,
+                mem_per_task=1,
+                max_steps_per_job=10,
+                duration=5,
+                time_per_job=time_per_job,
+        )
+        job_ids_by_task[task_name].extend(job_ids)
+
+    task_name = 'train_ball_pt'
+    if task_name in args.actions:
+        # Generate model config files
+        model_config_template_path = os.path.join(args.model_config_dir, 'model-ball-pt.yaml')
+        with open(model_config_template_path, 'r') as f:
+            model_config_template = yaml.safe_load(f)
+        checkpoint_subdirs = ['train_multi_task_pt', 'train_multi_task_pt_frozen', 'train_multi_task_tr', 'train_single_task']
+        checkpoint_dir = os.path.join(results_dir, 'checkpoints')
+        task_args = []
+        for subdir in checkpoint_subdirs:
+            for checkpoint in os.listdir(os.path.join(checkpoint_dir, subdir)):
+                checkpoint_filename = os.path.join(checkpoint_dir, subdir, checkpoint)
+                model_config_template['input_modules']['reward']['weight_config']['filename'] = checkpoint_filename
+                model_config_template['core_modules']['weight_config']['filename'] = checkpoint_filename
+                for i in range(3):
+                    model_config_template['core_modules']['weight_config']['key_prefix'] = f'core_modules.{i}'
+                    model_config_filename = os.path.join(results_dir, 'eval_ball', 'model_configs', subdir, f'{i}.yaml')
+                    os.makedirs(os.path.dirname(model_config_filename), exist_ok=True)
+                    with open(model_config_filename, 'w') as f:
+                        yaml.dump(model_config_template, f)
+                    new_checkpoint_filename = os.path.join(results_dir, 'checkpoints', task_name, subdir, f'{i}.pt')
+                    task_args.append([a for a in [
+                        '--env-config',
+                            os.path.join(args.env_config_dir, 'train/ball.yaml'),
+                        '--model-config',
+                            model_config_filename,
+                        '--optimizer', 'Adam',
+                        '--model-checkpoint',
+                            new_checkpoint_filename,
+                        '--checkpoint-interval', '1_000_000',
+                        '--run-id', f'module_{i}',
+                        '--wandb-id', f'{args.exp_id}__{task_name}__{{RUN_ID}}__test0', # XXX: We're just trying to figure out how long it takes to train the model for now
+                        '--cuda',
+                        '--wandb' if args.wandb else None,
+                        '--wandb-project', f'big_rl_{EXP_NAME}',
+                        '--wandb-group', task_name,
+                    ] if a is not None])
+        # Train with these models
+        job_ids = run_train(
+                task_args,
+                job_name=task_name,
+                slurm=args.slurm,
+                subproc=args.subproc,
+                cpus_per_task=1,
+                mem_per_task=1,
+                max_steps_per_job=10,
+                duration=5,
+                time_per_job=time_per_job,
+        )
+        job_ids_by_task[task_name].extend(job_ids)
 
     print(f'Launched {sum(len(v) for v in job_ids_by_task.values())} jobs (plotting not counted)')
     for k,v in job_ids_by_task.items():
