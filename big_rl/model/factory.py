@@ -11,7 +11,7 @@ import pydantic
 from pydantic import BaseModel, ConfigDict, FilePath, PositiveInt, Field
 
 from big_rl.model.input_module.modules import IgnoredInput, GreyscaleImageInput, ImageInput56, ImageInput84, ScalarInput, UnaryScalarInput, DiscreteInput, LinearInput, MatrixInput, RecurrentLinearInput
-from big_rl.model.output_module.modules import LinearOutput, StateIndependentOutput
+from big_rl.model.output_module.modules import ConstantOutput, LinearOutput, StateIndependentOutput
 from big_rl.model.input_module.container import InputModuleContainer
 from big_rl.model.core_module.container import CoreModule, CoreModuleContainer, CoreModuleParallel, CoreModuleSeries
 from big_rl.model.core_module.headless_container import HeadlessContainer
@@ -44,6 +44,7 @@ VALID_INPUT_MODULES = [
 VALID_OUTPUT_MODULES = [
     LinearOutput,
     StateIndependentOutput,
+    ConstantOutput,
 ]
 
 

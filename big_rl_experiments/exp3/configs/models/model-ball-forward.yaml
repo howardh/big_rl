@@ -1,0 +1,43 @@
+type: ModularModel1
+key_size: 8
+value_size: 8
+num_heads: 2
+input_modules:
+  obs:
+    type: LinearInput
+    kwargs:
+      input_size:
+        source: 'observation_space'
+        accessor: '["obs"].shape[0]'
+  reward:
+    type: ScalarInput
+  done:
+    type: IgnoredInput
+  action:
+    type: LinearInput
+    kwargs:
+      input_size:
+        source: 'action_space'
+        accessor: '.shape[0]'
+output_modules:
+  value:
+    type: LinearOutput
+    kwargs:
+      dynamic_query: true
+      output_size: 1
+  action_mean:
+    type: ConstantOutput
+    kwargs:
+      output: [100.]
+  action_logstd:
+    type: LinearOutput
+    kwargs:
+      dynamic_query: true
+      output_size:
+        source: 'action_space'
+        accessor: '.shape[0]'
+core_modules:
+  type: AttentionLSTM
+  kwargs:
+    hidden_size: 8
+    dynamic_query: true

@@ -36,7 +36,7 @@
     <pair name="stick_to_floor" geom1="floor" geom2="stick" friction="0 0 0 0 0" />
   </contact>
   <actuator>
-    <velocity joint="root" name="turn" gear="0 0 0 0 0 1.5" />
-    <velocity joint="roll" name="roll" gear="0.5 0 0 0 0 0" />
+    <velocity ctrllimited="true" ctrlrange="-1.0 1.0" joint="root" name="turn" gear="0 0 0 0 0 1.5" />
+    <velocity ctrllimited="true" ctrlrange="-1.0 1.0" joint="roll" name="roll" gear="0.5 0 0 0 0 0" />
   </actuator>
 </mujoco>

@@ -57,3 +57,29 @@ class StateIndependentOutput(OutputModule):
                 'attn_output_weights': torch.zeros([1, batch_size, num_blocks], device=device),
             }
         }
+
+
+class ConstantOutput(OutputModule):
+    def __init__(self, key_size: int, value_size: int, num_heads: int, output: list[float]):
+        torch.nn.Module.__init__(self)
+        self.output = torch.tensor(output)
+        self._device = torch.device('cpu')
+
+    def forward(self,
+            key: Float[torch.Tensor, 'num_blocks batch_size hidden_size'],
+            value: Float[torch.Tensor, 'num_blocks batch_size hidden_size'],
+            ) -> dict[str,torch.Tensor|dict]:
+        assert len(key.shape) == 3, f'Key shape must be [num_blocks,batch_size,hidden_size]. Got {key.shape}'
+        assert len(value.shape) == 3, f'Value shape must be [num_blocks,batch_size,hidden_size]. Got {value.shape}'
+        num_blocks = key.shape[0]
+        batch_size = key.shape[1]
+        return {
+            'output': self.output.expand(batch_size, -1),
+            'misc': {
+                'attn_output_weights': torch.zeros([1, batch_size, num_blocks], device=self._device),
+            }
+        }
+
+    def to(self, device: torch.device):
+        self._device = device
+        return self

@@ -26,6 +26,6 @@
     </body>
   </worldbody>
   <actuator>
-    <velocity joint="root" />
+    <velocity ctrllimited="true" ctrlrange="-1.0 1.0" joint="root" />
   </actuator>
 </mujoco>

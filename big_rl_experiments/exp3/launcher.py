@@ -492,7 +492,7 @@ def launch(args):
                 os.path.join(results_dir, 'checkpoints', task_name, '{RUN_ID}.pt'),
             '--checkpoint-interval', '1_000_000',
             '--run-id', f'{{SLURM_STEP_ID}}',
-            '--wandb-id', f'{args.exp_id}__{task_name}__{{RUN_ID}}__test0', # XXX: We're just trying to figure out how long it takes to train the model for now
+            '--wandb-id', f'{args.exp_id}__{task_name}__{{RUN_ID}}__test2', # XXX: We're just trying to figure out how long it takes to train the model for now
             '--cuda',
             '--wandb' if args.wandb else None,
             '--wandb-project', f'big_rl_{EXP_NAME}',
@@ -505,7 +505,7 @@ def launch(args):
                 slurm=args.slurm,
                 subproc=args.subproc,
                 cpus_per_task=1,
-                mem_per_task=1,
+                mem_per_task=2,
                 max_steps_per_job=10,
                 duration=5,
                 time_per_job=time_per_job,
@@ -542,8 +542,8 @@ def launch(args):
                         '--model-checkpoint',
                             new_checkpoint_filename,
                         '--checkpoint-interval', '1_000_000',
-                        '--run-id', f'module_{i}',
-                        '--wandb-id', f'{args.exp_id}__{task_name}__{{RUN_ID}}__test0', # XXX: We're just trying to figure out how long it takes to train the model for now
+                        '--run-id', f'{subdir}{checkpoint.split(".")[0]}_m{i}',
+                        '--wandb-id', f'{args.exp_id}__{task_name}__{{RUN_ID}}__test2', # XXX: We're just trying to figure out how long it takes to train the model for now
                         '--cuda',
                         '--wandb' if args.wandb else None,
                         '--wandb-project', f'big_rl_{EXP_NAME}',
@@ -556,7 +556,7 @@ def launch(args):
                 slurm=args.slurm,
                 subproc=args.subproc,
                 cpus_per_task=1,
-                mem_per_task=1,
+                mem_per_task=2,
                 max_steps_per_job=10,
                 duration=5,
                 time_per_job=time_per_job,

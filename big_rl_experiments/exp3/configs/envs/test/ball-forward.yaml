@@ -1,0 +1,19 @@
+- type: SyncVectorEnv # AsyncVectorEnv, SyncVectorEnv, or Env
+  train_enabled: false
+  eval_enabled: true
+  envs:
+  - kwargs: # Arguments for gymnasium.make
+      id: BallNoVelocityForward-v4
+      render_mode: rgb_array
+    name: forward
+    repeat: 1
+    wrappers:
+    - type: TimeLimit
+      kwargs:
+        max_episode_steps: 1000
+    - type: MetaWrapper
+      kwargs:
+        episode_stack: 1
+        dict_obs: true
+        randomize: false
+    - type: ClipAction
