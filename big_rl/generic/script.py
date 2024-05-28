@@ -7,12 +7,12 @@ import signal
 import sys
 from typing import Optional, Generator, Dict, List, Any, Callable, Union, Tuple, NamedTuple
 import time
+import uuid
 import yaml
 
 import gymnasium
 import gymnasium.spaces
 import gymnasium.vector
-from gymnasium.wrappers import AtariPreprocessing, FrameStack
 import torch
 from torch.utils.data.dataloader import default_collate
 import torch.nn
@@ -25,12 +25,12 @@ from frankenstein.advantage.gae import generalized_advantage_estimate
 from frankenstein.loss.policy_gradient import clipped_advantage_policy_gradient_loss
 
 from big_rl.minigrid.arguments import init_parser_trainer, init_parser_model
-from big_rl.minigrid.envs import MetaWrapper, ActionShuffle
 from big_rl.utils import torch_save, zip2, merge_space, generate_id
 from big_rl.utils.make_env import EnvGroup, get_config_from_yaml, make_env_from_yaml#, make_env_labels_from_yaml, make_env_group_labels_from_yaml, make_env_to_model_mapping_from_yaml, make_eval_only_from_yaml
-from big_rl.atari.common import init_model, env_config_presets
 from big_rl.model import factory as model_factory
 import big_rl.mujoco.envs # type: ignore (import for the env registration)
+from .evaluate_model import main as evaluate_model_main_, init_arg_parser as evaluate_model_init_arg_parser_
+from .common import to_tensor, reset_hidden, get_action_dist_function
 
 
 WANDB_PROJECT_NAME = 'ppo-generic'
@@ -39,57 +39,6 @@ WANDB_PROJECT_NAME = 'ppo-generic'
 class Callbacks(NamedTuple):
     on_model_init: Callable[[Any], None] | None = None
     on_checkpoint_load: Callable[[Any], None] | None = None
-
-
-def to_tensor(x, device):
-    if isinstance(x, torch.Tensor):
-        return x.to(device).float()
-    elif isinstance(x, np.ndarray):
-        return torch.tensor(x, device=device, dtype=torch.float)
-    elif isinstance(x, (int, float)):
-        return torch.tensor(x, device=device, dtype=torch.float)
-    elif isinstance(x, dict):
-        return {k: to_tensor(v, device) for k,v in x.items()}
-    elif isinstance(x, (list, tuple)):
-        return [to_tensor(v, device) for v in x]
-    elif isinstance(x, (list, list)):
-        return [to_tensor(v, device) for v in x]
-    else:
-        raise ValueError(f'Unknown type: {type(x)}')
-
-
-def reset_hidden(terminal, hidden, initial_hidden, batch_dim):
-    assert len(hidden) == len(initial_hidden)
-    assert len(hidden) == len(batch_dim)
-    output = tuple([
-        torch.where(terminal.view(-1, *([1]*(len(h.shape)-d-1))), init_h, h)
-        for init_h,h,d in zip(initial_hidden, hidden, batch_dim)
-    ])
-    #for h,ih,o,t,d in zip(hidden, initial_hidden, output, terminal, batch_dim):
-    #    assert list(h.shape) == list(ih.shape)
-    #    assert list(h.shape) == list(o.shape)
-    return output
-
-
-def action_dist_discrete(net_output, n=None):
-    dist = torch.distributions.Categorical(logits=net_output['action'][:n])
-    return dist, dist.log_prob
-
-
-def action_dist_continuous(net_output, n=None):
-    action_mean = net_output['action_mean'][:n]
-    action_logstd = net_output['action_logstd'][:n].clamp(-10, 10)
-    dist = torch.distributions.Normal(action_mean, action_logstd.exp())
-    return dist, lambda x: dist.log_prob(x).sum(-1)
-
-
-def get_action_dist_function(action_space: gymnasium.Space):
-    if isinstance(action_space, gymnasium.spaces.Discrete):
-        return action_dist_discrete
-    elif isinstance(action_space, gymnasium.spaces.Box):
-        return action_dist_continuous
-    else:
-        raise NotImplementedError(f'Unknown action space: {action_space}')
 
 
 def compute_ppo_losses(
@@ -105,7 +54,7 @@ def compute_ppo_losses(
         target_kl : Optional[float],
         num_epochs : int,
         backtrack : bool,
-        action_dist_fn : Callable = action_dist_discrete) -> Generator[Dict[str,Union[torch.Tensor,Tuple[torch.Tensor,...]]],None,None]:
+        action_dist_fn : Callable) -> Generator[Dict[str,Union[torch.Tensor,Tuple[torch.Tensor,...]]],None,None]:
     """
     Compute the losses for PPO.
     """
@@ -728,6 +677,24 @@ def train(
                 print(f"Step {env_steps-start_step:,} \t {int(steps_per_sec):,} SPS \t Elapsed: {elapsed_hours:02d}:{elapsed_minutes:02d}:{elapsed_seconds:02d}")
 
 
+def evaluate(model: torch.nn.Module, env_config, model_config, num_episodes: int, results_filename: str | None, tempdir: str):
+    os.makedirs(tempdir, exist_ok=True)
+    checkpoint_filename = os.path.join(tempdir, f'model-{uuid.uuid4()}.pt')
+    torch.save({'model': model.state_dict()}, checkpoint_filename)
+
+    argparser = evaluate_model_init_arg_parser_()
+    args = [
+        '--env-config', env_config,
+        '--model-config', model_config,
+        '--model', checkpoint_filename,
+        '--num-episodes', str(num_episodes),
+        '--no-video',
+    ]
+    if results_filename is not None:
+        args.extend(['--results', results_filename])
+    evaluate_model_main_(argparser.parse_args(args))
+
+
 def init_arg_parser():
     parser = argparse.ArgumentParser()
 
@@ -750,6 +717,12 @@ def init_arg_parser():
                         help='Path to a model checkpoint to save the model to.')
     parser.add_argument('--checkpoint-interval', type=int, default=1_000_000,
                         help='Number of transitions between checkpoints.')
+    parser.add_argument('--eval-interval', type=int, default=1_000_000,
+                        help='Number of transitions between evaluations.')
+    parser.add_argument('--eval-episodes', type=int, default=10,
+                        help='Number of episodes to evaluate the model for.')
+    parser.add_argument('--eval-results-dir', type=str, default=None,
+                        help='Directory in which to save evaluation results. If not specified, then the results are not saved.')
     parser.add_argument('--ignore-checkpoint-optimizer', action='store_true',
                         help='If set, then the optimizer state is not loaded from the checkpoint.')
     parser.add_argument('--sync-vector-env', action='store_true',
@@ -950,12 +923,40 @@ def main(args, callbacks=Callbacks()):
 
     signal.signal(signal.SIGUSR1, handle_sigusr1) # Save checkpoint on Ctrl+C or when Slurm terminates the job
 
+    eval_count = start_step // args.eval_interval
+    tempdir = os.environ.get('SLURM_TMPDIR', '/tmp')
+    tempdir = os.path.join(tempdir, uuid.uuid4().hex)
+    def maybe_eval_model():
+        """ Evaluate the model if it's time to do so. Otherwise do nothing. """
+        nonlocal eval_count, x
+        if args.eval_episodes <= 0:
+            return
+        step = x['step'] if x is not None else start_step
+        if step - (eval_count - 1) * args.eval_interval < args.eval_interval: # We want to evaluate once at step 0, then every `args.eval_interval` steps after that
+            return
+
+        if args.eval_results_dir is None:
+            results_filename = None
+        else:
+            results_filename = os.path.join(args.eval_results_dir, f'eval-{step}.pt')
+
+        evaluate(
+            model=model,
+            env_config=args.env_config,
+            model_config=args.model_config,
+            num_episodes=args.eval_episodes,
+            results_filename=results_filename,
+            tempdir=tempdir,
+        )
+        eval_count += 1
+
     checkpoint_count = start_step // args.checkpoint_interval
     if args.model_checkpoint is not None:
         os.makedirs(os.path.dirname(args.model_checkpoint), exist_ok=True)
         if not args.model_checkpoint.endswith('.pt'):
-            # If the path is a directory, generate a unique filename
+            # TODO: If the path is a directory, generate a unique filename
             raise NotImplementedError()
+        maybe_eval_model() # Evaluate the model at the start of training
         for x in trainer:
             if x['step'] - checkpoint_count * args.checkpoint_interval >= args.checkpoint_interval:
                 save_checkpoint(args.model_checkpoint)
@@ -964,11 +965,13 @@ def main(args, callbacks=Callbacks()):
                 print('Received SIGUSR1. Saving checkpoint...')
                 save_checkpoint(args.model_checkpoint)
                 sys.exit(0)
+            maybe_eval_model()
         save_checkpoint(args.model_checkpoint)
     else:
         try:
+            maybe_eval_model()
             for x in trainer:
-                pass
+                maybe_eval_model()
         except KeyboardInterrupt:
             print('Interrupted')
             pass

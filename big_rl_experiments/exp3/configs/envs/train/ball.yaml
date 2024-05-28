@@ -29,3 +29,41 @@
         dict_obs: true
         randomize: false
     - type: ClipAction
+- type: SyncVectorEnv # AsyncVectorEnv, SyncVectorEnv, or Env
+  train_enabled: false
+  eval_enabled: true
+  name: backward
+  envs:
+  - kwargs: # Arguments for gymnasium.make
+      id: BallNoVelocityBackward-v4
+      render_mode: rgb_array
+    repeat: 1
+    wrappers:
+    - type: TimeLimit
+      kwargs:
+        max_episode_steps: 1000
+    - type: MetaWrapper
+      kwargs:
+        episode_stack: 1
+        dict_obs: true
+        randomize: false
+    - type: ClipAction
+- type: SyncVectorEnv # AsyncVectorEnv, SyncVectorEnv, or Env
+  train_enabled: false
+  eval_enabled: true
+  name: forward
+  envs:
+  - kwargs: # Arguments for gymnasium.make
+      id: BallNoVelocityForward-v4
+      render_mode: rgb_array
+    repeat: 1
+    wrappers:
+    - type: TimeLimit
+      kwargs:
+        max_episode_steps: 1000
+    - type: MetaWrapper
+      kwargs:
+        episode_stack: 1
+        dict_obs: true
+        randomize: false
+    - type: ClipAction

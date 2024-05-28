@@ -7,6 +7,7 @@ import numpy as np
 import gymnasium
 import gymnasium.spaces
 import torch
+import scipy.interpolate
 
 
 def torch_save(obj, path):
@@ -278,3 +279,43 @@ class ConfigMerge:
 class ConfigDelete:
     ...
 
+
+##################################################
+# Data Processing
+##################################################
+
+def resample_series(data: list[tuple[list,list]], truncate: bool = False) -> tuple[list[float], list[list[float]]]:
+    """ Given a list of time-series data with different indepdent variables (i.e. x), interpolate the data to have the same independent variables.
+
+    Args:
+        data (list[tuple[list[float],list[float]]): A list of tuples where the first element is the x values and the second element is the y values.
+        truncate (bool): If True, truncate the longer curves to the length of the shortest curve. If False, pad the shorter curves with NaNs.
+    """
+
+    # Validation
+    # Each x-y pair must have matching lengths
+    for i,(x,y) in enumerate(data):
+        if len(x) != len(y):
+            raise ValueError(f"Data pair {i} has mismatched lengths: {len(x) = }, {len(y) = }")
+
+    # Check if all curves have the same length
+    # If not, then truncate the longer curves
+    if truncate:
+        max_x = min(max(curve[0]) for curve in data)
+        selected_indices = [np.array(curve[0]) <= max_x for curve in data]
+        x_truncated = [np.array(curve[0])[indices] for curve,indices in zip(data,selected_indices)]
+        y_truncated = [np.array(curve[1])[indices] for curve,indices in zip(data,selected_indices)]
+    else:
+        x_truncated = [curve[0] for curve in data]
+        y_truncated = [curve[1] for curve in data]
+
+    # Collect the unique x values
+    x_set = set()
+    for x_ in x_truncated:
+        x_set.update(x_)
+    x_interp = sorted(list(x_set))
+    y_interp = []
+    for x,y in zip(x_truncated,y_truncated):
+        lin = scipy.interpolate.interp1d(x, y, kind='linear')
+        y_interp.append(lin(x_interp))
+    return x_interp, y_interp

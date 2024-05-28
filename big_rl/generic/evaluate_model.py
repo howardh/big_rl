@@ -21,7 +21,7 @@ from big_rl.mujoco.common import env_config_presets, init_model
 from big_rl.utils import merge_space
 from big_rl.model import factory as model_factory
 from big_rl.utils.make_env import EnvGroup, get_config_from_yaml, make_env_from_yaml
-from big_rl.generic.script import get_action_dist_function
+from big_rl.generic.common import get_action_dist_function
 
 
 ALIGN_LEFT = -1

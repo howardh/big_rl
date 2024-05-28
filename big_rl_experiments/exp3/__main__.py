@@ -17,6 +17,7 @@ from big_rl.generic.script import main as train_generic, Callbacks
 from big_rl.generic.script import init_arg_parser as init_train_arg_parser
 from big_rl_experiments.exp3.eval_module_belief import main as analyse_main, init_arg_parser as init_analyse_arg_parser
 from big_rl.generic.evaluate_model import main as eval_main, init_arg_parser as init_eval_arg_parser
+from big_rl_experiments.exp3.plot_ball_learning_curve import main as plot_ball_main, init_arg_parser as init_plot_ball_arg_parser
 
 
 class ModelWrapper(torch.nn.Module):
@@ -58,15 +59,21 @@ def run_analysis(args: list[str]):
     analyse_main(args_ns)
 
 
+def run_plot_ball(args: list[str]):
+    """ Plot learning curves for ball task """
+    from big_rl_experiments.exp3.plot_ball_learning_curve import main as main_, init_arg_parser as init_arg_parser_
+
+    parser = init_arg_parser_()
+    args_ns = parser.parse_args(args)
+    main_(args_ns)
+
+
 ##################################################
 # Main
 ##################################################
 
 
 def main(argv):
-    #parser = init_arg_parser()
-    #args = parser.parse_args()
-
     action = argv[0]
     argv = argv[1:]
     if action == 'train':
@@ -78,6 +85,8 @@ def main(argv):
     elif action == 'plot':
         #run_plot(argv)
         ...
+    elif action == 'plot_ball_learning_curve':
+        run_plot_ball(argv)
     else:
         valid_actions = ['train', 'eval', 'analysis', 'plot']
         raise ValueError(f'Unknown action {action}. Valid actions are {valid_actions}.')

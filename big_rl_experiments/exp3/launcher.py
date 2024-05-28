@@ -5,6 +5,7 @@ import glob
 import os
 import logging
 import subprocess
+import sys
 import yaml
 
 import numpy as np
@@ -22,7 +23,60 @@ GRES = 'gpu:a100l.2g.20gb:1'
 TRAINING_STEPS = 50_000_000
 
 
-def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subproc: bool = False, cpus_per_task=2, mem_per_task=2, dependency=None, max_steps_per_job: int = 5, duration: int = 5, time_per_job=datetime.timedelta(days=1, hours=0, minutes=0, seconds=0)) -> list[int]:
+def make_dependency_string(job_ids: list[int], dependency_type: str = 'afterany') -> str | None:
+    if len(job_ids) == 0:
+        return None
+    return f'{dependency_type}:{":".join([str(x) for x in job_ids])}'
+
+
+def relaunch(actions: list[str], job_name: str | None = None, slurm: bool = False, subproc: bool = False, dependency=None) -> list[int]:
+    """ Call this script again with a different set of tasks. Useful in scenarios where the arguments for the task depends the results of another task. """
+    script = f'big_rl_experiments/{EXP_NAME}/launcher.py'
+    args = actions + get_args(with_tasks=False)
+
+    if job_name is None:
+        job_name = f'launch[{",".join(actions)}]'
+
+    if slurm:
+        slurm_kwargs = {}
+        if dependency is not None:
+            slurm_kwargs['dependency'] = dependency
+        s = Slurm(
+            job_name=job_name,
+            cpus_per_task=1,
+            mem='1G',
+            output='/network/scratch/h/huanghow/slurm/%A.out',
+
+            time='1:00:00',
+
+            **slurm_kwargs,
+        )
+        s.add_cmd('module load python/3.10')
+        s.add_cmd('source ENV2204/bin/activate')
+        s.add_cmd('export PYTHONUNBUFFERED=1')
+
+        cmd = f'python {script} {" ".join(args)}'
+        print('-'*80)
+        print(s.script(shell=SHELL))
+        print(cmd)
+        print('-'*80)
+        job_id = s.sbatch(cmd, shell=SHELL)
+        return [job_id]
+    elif subproc:
+        for a in args:
+            cmd = f'python3 {script} {" ".join(args)}'
+
+            print(cmd)
+
+            p = subprocess.Popen(cmd, shell=True) # if shell=True, then the subprocesses will have the same environment variables as this process. Needed to pass the CUDA_VISIBLE_DEVICES variable.
+            p.wait()
+        return []
+    else:
+        launch(init_arg_parser().parse_args(args))
+        return []
+
+
+def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subproc: bool = False, cpus_per_task=2, mem_per_task=2, gres: list | str | None = [GRES], dependency=None, max_steps_per_job: int = 5, duration: int = 5, time_per_job=datetime.timedelta(days=1, hours=0, minutes=0, seconds=0)) -> list[int]:
     """
     Args:
         args: List of lists of arguments to pass to the training script. Each sublist is a set of arguments to pass to a single training job.
@@ -35,6 +89,12 @@ def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subp
     """
     script = f'big_rl_experiments/{EXP_NAME}/__main__.py'
     action = 'train'
+
+    if isinstance(gres, str):
+        gres = [gres]
+    elif gres == []:
+        gres = None
+
     if slurm:
         if len(args) > max_steps_per_job:
             job_ids = []
@@ -46,8 +106,11 @@ def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subp
                         subproc=subproc,
                         cpus_per_task=cpus_per_task,
                         mem_per_task=mem_per_task,
+                        gres=gres,
                         dependency=dependency,
                         max_steps_per_job=max_steps_per_job,
+                        duration=duration,
+                        time_per_job=time_per_job,
                 )
                 job_ids.extend(jid)
             return job_ids
@@ -60,7 +123,7 @@ def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subp
             job_name=job_name,
             cpus_per_task=cpus_per_task*len(args),
             mem=f'{mem_per_task*len(args)}G',
-            gres=[GRES],
+            gres=gres,
             output='/network/scratch/h/huanghow/slurm/%A.out',
 
             # Run for five days
@@ -79,25 +142,35 @@ def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subp
         #ps://stackoverflow.com/questions/76348342/how-to-use-trap-in-my-sbatch-bash-job-script-in-compute-canada
         s.add_cmd("trap 'echo SIGUSR1 1>&2' SIGUSR1") # Handles time limit
         s.add_cmd("trap 'echo SIGUSR1 1>&2' SIGTERM") # Handles preemption (I think this is needed if PreemptParameters isn't set with send_user_signal enabled. Check if it's set in /etc/slurm/slurm.conf)
-        srun_args = ' '.join([
-                '--overlap',
-                f'--gres=gpu',
-                '--output', '/network/scratch/h/huanghow/slurm/%A_%s_%a.out',
-        ])
-        for a in args:
-            cmd = f'srun {srun_args} python {script} {action} {" ".join(a)}'
-            s.add_cmd(cmd + ' &')
+        if len(args) > 1:
+            srun_args = ' '.join([
+                    '--overlap',
+                    f'--gres=gpu',
+                    '--output', '/network/scratch/h/huanghow/slurm/%A_%s_%a.out',
+            ])
+            for a in args:
+                a = [a_ for a_ in a if a_ is not None]
+                cmd = f'srun {srun_args} python {script} {action} {" ".join(a)}'
+                s.add_cmd(cmd + ' &')
 
-        print('-'*80)
-        print(s.script(shell=SHELL))
-        print('wait')
-        print('-'*80)
+            print('-'*80)
+            print(s.script(shell=SHELL))
+            print('wait')
+            print('-'*80)
 
-        job_id = s.sbatch('wait', shell=SHELL)
+            job_id = s.sbatch('wait', shell=SHELL)
+        else:
+            a = [a_ for a_ in args[0] if a_ is not None]
+            cmd = f'python {script} {action} {" ".join(a)}'
+            print('-'*80)
+            print(s.script(shell=SHELL))
+            print(cmd)
+            print('-'*80)
+            job_id = s.sbatch(cmd, shell=SHELL)
         return [job_id]
     elif subproc:
         for a in args:
-            cmd = f'python3 {script} {action} {" ".join(a)}'
+            cmd = f'python3 {script} {action} {" ".join([a_ for a_ in a if a_ is not None])}'
 
             print(cmd)
 
@@ -107,7 +180,7 @@ def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subp
     else:
         for i,a in enumerate(args):
             os.environ.update({'SLURM_STEP_ID': str(i)})
-            main([action, *a])
+            main([action, *[a_ for a_ in a if a_ is not None]])
         return []
 
 
@@ -243,6 +316,70 @@ def run_analysis(args: list[list[str]], job_name='analysis', slurm: bool = False
         return []
 
 
+def run_setup_ball_pt(args: list[str], job_name='setup_ball_pt', slurm: bool = False, subproc: bool = False, dependency=None) -> list[int]:
+    ...
+
+
+def run_plot_ball_learning_curve(args: list[str], job_name='plot_ball_learning_curve', slurm: bool = False, subproc: bool = False, dependency=None) -> list[int]:
+    script = f'big_rl_experiments/{EXP_NAME}/__main__.py'
+    action = 'plot_ball_learning_curve'
+    if slurm:
+        slurm_kwargs = {}
+        if dependency is not None:
+            slurm_kwargs['dependency'] = dependency
+        s = Slurm(
+            job_name=job_name,
+            cpus_per_task=1,
+            mem=f'1G',
+            output='/network/scratch/h/huanghow/slurm/%A.out',
+
+            # Ask for 1h
+            time='1:00:00',
+
+            #partition='main',
+            partition='unkillable-cpu',
+            signal='USR1@120', # Send a signal to the job 120 seconds before it is killed
+
+            **slurm_kwargs,
+        )
+        #slurm.add_cmd('module load libffi') # Fixes the "ImportError: libffi.so.6: cannot open shared object file: No such file or directory" error
+        s.add_cmd('module load python/3.10')
+        s.add_cmd('source ENV2204/bin/activate')
+        s.add_cmd('export PYTHONUNBUFFERED=1')
+        #ps://stackoverflow.com/questions/76348342/how-to-use-trap-in-my-sbatch-bash-job-script-in-compute-canada
+        s.add_cmd("trap 'echo SIGUSR1 1>&2' SIGUSR1") # Handles time limit
+        s.add_cmd("trap 'echo SIGUSR1 1>&2' SIGTERM") # Handles preemption (I think this is needed if PreemptParameters isn't set with send_user_signal enabled. Check if it's set in /etc/slurm/slurm.conf)
+        
+        cmd = f'srun python {script} {action} {" ".join(args)}'
+
+        print('-'*80)
+        print(s.script(shell=SHELL))
+        print(cmd)
+        print('-'*80)
+
+        job_id = s.sbatch(cmd, shell=SHELL)
+        return [job_id]
+    elif subproc:
+        cmd = f'python3 {script} {action} {" ".join(args)}'
+
+        print(cmd)
+
+        p = subprocess.Popen(cmd, shell=True) # if shell=True, then the subprocesses will have the same environment variables as this process. Needed to pass the CUDA_VISIBLE_DEVICES variable.
+        p.wait()
+        return []
+    else:
+        main([action, *args])
+        return []
+
+
+def get_args(with_tasks: bool = True):
+    args = sys.argv[1:]
+    if not with_tasks:
+        while not args[0].startswith('--'):
+            args = args[1:]
+    return args
+
+
 def launch(args):
     if os.uname().nodename == 'howard-pc':
         results_dir = os.path.join(os.environ['HOME'], 'tmp', 'results', 'big_rl_experiments', EXP_NAME, args.exp_id)
@@ -286,7 +423,7 @@ def launch(args):
                 slurm=args.slurm,
                 subproc=args.subproc,
                 max_steps_per_job=5,
-                duration=5,
+                duration=7,
                 time_per_job=time_per_job,
         )
         job_ids_by_task[task_name].extend(job_ids)
@@ -319,7 +456,7 @@ def launch(args):
                 slurm=args.slurm,
                 subproc=args.subproc,
                 max_steps_per_job=5,
-                duration=5,
+                duration=7,
                 time_per_job=time_per_job,
         )
         job_ids_by_task[task_name].extend(job_ids)
@@ -329,10 +466,6 @@ def launch(args):
     if task_name in args.actions:
         starting_models_dir = os.path.join(results_dir, 'checkpoints', 'train_single_task')
         #starting_models = [os.path.join(starting_models_dir, f'{i}.pt') for i in range(5)]
-        if len(job_ids_by_task['train_single_task']) == 0:
-            dependency = None
-        else:
-            dependency = ':'.join(['afterany'] + [str(x) for x in job_ids_by_task['train_single_task']])
         task_args = [
             '--env-config',
                 os.path.join(args.env_config_dir, f'train/halfcheetah_multi.yaml'),
@@ -358,9 +491,9 @@ def launch(args):
                 job_name=task_name,
                 slurm=args.slurm,
                 subproc=args.subproc,
-                dependency=dependency,
+                dependency=make_dependency_string(job_ids_by_task['train_single_task']),
                 max_steps_per_job=5,
-                duration=5,
+                duration=7,
                 time_per_job=time_per_job,
         )
         job_ids_by_task[task_name].extend(job_ids)
@@ -370,10 +503,6 @@ def launch(args):
     if task_name in args.actions:
         starting_models_dir = os.path.join(results_dir, 'checkpoints', 'train_single_task')
         #starting_models = [os.path.join(starting_models_dir, f'{i}.pt') for i in range(5)]
-        if len(job_ids_by_task['train_single_task']) == 0:
-            dependency = None
-        else:
-            dependency = ':'.join(['afterany'] + [str(x) for x in job_ids_by_task['train_single_task']])
         task_args = [
             '--env-config',
                 os.path.join(args.env_config_dir, f'train/halfcheetah_multi.yaml'),
@@ -399,14 +528,25 @@ def launch(args):
                 job_name=task_name,
                 slurm=args.slurm,
                 subproc=args.subproc,
-                dependency=dependency,
+                dependency=make_dependency_string(job_ids_by_task['train_single_task']),
                 max_steps_per_job=5,
                 duration=5,
                 time_per_job=time_per_job,
         )
         job_ids_by_task[task_name].extend(job_ids)
 
-    # TODO: Evaluation (eval each model on test task so we can compare their performance to the mutual info between hiden state and task)
+    # Evaluation (eval each model on test task so we can compare their performance to the mutual info between hiden state and task)
+    task_name = 'eval--launcher'
+    if task_name in args.actions:
+        checkpoint_subdirs = ['train_multi_task_pt', 'train_multi_task_pt_frozen', 'train_multi_task_tr', 'train_single_task']
+        job_ids = relaunch(
+            actions = ['eval'],
+            dependency = make_dependency_string(sum([job_ids_by_task[k] for k in checkpoint_subdirs], [])),
+            slurm = args.slurm,
+            subproc = args.subproc,
+        )
+        job_ids_by_task[task_name].extend(job_ids)
+
     task_name = 'eval'
     if task_name in args.actions:
         checkpoint_subdirs = ['train_multi_task_pt', 'train_multi_task_pt_frozen', 'train_multi_task_tr', 'train_single_task']
@@ -432,6 +572,7 @@ def launch(args):
                 job_name=task_name,
                 slurm=args.slurm,
                 subproc=args.subproc,
+                dependency=make_dependency_string(sum([job_ids_by_task[k] for k in checkpoint_subdirs], [])),
         )
         job_ids_by_task[task_name].extend(job_ids)
 
@@ -453,7 +594,7 @@ def launch(args):
                 slurm=args.slurm,
                 subproc=args.subproc,
                 mem_per_task=2,
-                dependency=None,
+                dependency=make_dependency_string(sum([job_ids_by_task[k] for k in checkpoint_subdirs], [])),
         )
         job_ids_by_task[task_name].extend(job_id)
 
@@ -482,7 +623,7 @@ def launch(args):
 
     task_name = 'train_ball_tr'
     if task_name in args.actions:
-        task_args = [
+        task_args = [[
             '--env-config',
                 os.path.join(args.env_config_dir, 'train/ball.yaml'),
             '--model-config',
@@ -491,24 +632,39 @@ def launch(args):
             '--model-checkpoint',
                 os.path.join(results_dir, 'checkpoints', task_name, '{RUN_ID}.pt'),
             '--checkpoint-interval', '1_000_000',
-            '--run-id', f'{{SLURM_STEP_ID}}',
-            '--wandb-id', f'{args.exp_id}__{task_name}__{{RUN_ID}}__test2', # XXX: We're just trying to figure out how long it takes to train the model for now
+            '--max-steps-total', '10_000_000',
+            '--eval-interval', '100_000',
+            '--eval-results-dir',
+                os.path.join(results_dir, 'learning_curve', task_name, '{RUN_ID}'),
+            '--run-id', f'{i}',
+            '--wandb-id', f'{args.exp_id}__{task_name}__{{RUN_ID}}',
             '--cuda',
             '--wandb' if args.wandb else None,
             '--wandb-project', f'big_rl_{EXP_NAME}',
             '--wandb-group', task_name,
-        ]
+        ] for i in range(5)]
         task_args = [a for a in task_args if a is not None]
         job_ids = run_train(
-                [task_args] * 5,
+                task_args,
                 job_name=task_name,
                 slurm=args.slurm,
                 subproc=args.subproc,
                 cpus_per_task=1,
-                mem_per_task=2,
-                max_steps_per_job=10,
-                duration=5,
+                mem_per_task=3,
+                gres=None,
+                max_steps_per_job=1,
+                duration=2,
                 time_per_job=time_per_job,
+        )
+        job_ids_by_task[task_name].extend(job_ids)
+
+    task_name = 'train_ball_pt--launcher'
+    if task_name in args.actions:
+        job_ids = relaunch(
+            actions = ['train_ball_pt'],
+            dependency = make_dependency_string(job_ids_by_task['train_multi_task_pt_frozen']),
+            slurm = args.slurm,
+            subproc = args.subproc,
         )
         job_ids_by_task[task_name].extend(job_ids)
 
@@ -518,22 +674,25 @@ def launch(args):
         model_config_template_path = os.path.join(args.model_config_dir, 'model-ball-pt.yaml')
         with open(model_config_template_path, 'r') as f:
             model_config_template = yaml.safe_load(f)
-        checkpoint_subdirs = ['train_multi_task_pt', 'train_multi_task_pt_frozen', 'train_multi_task_tr', 'train_single_task']
+        #checkpoint_subdirs = ['train_multi_task_pt', 'train_multi_task_pt_frozen', 'train_multi_task_tr', 'train_single_task']
+        checkpoint_subdirs = ['train_multi_task_pt_frozen']
         checkpoint_dir = os.path.join(results_dir, 'checkpoints')
         task_args = []
         for subdir in checkpoint_subdirs:
             for checkpoint in os.listdir(os.path.join(checkpoint_dir, subdir)):
                 checkpoint_filename = os.path.join(checkpoint_dir, subdir, checkpoint)
+                checkpoint_num = int(checkpoint.split('.')[0])
                 model_config_template['input_modules']['reward']['weight_config']['filename'] = checkpoint_filename
                 model_config_template['core_modules']['weight_config']['filename'] = checkpoint_filename
                 for i in range(3):
                     model_config_template['core_modules']['weight_config']['key_prefix'] = f'core_modules.{i}'
-                    model_config_filename = os.path.join(results_dir, 'eval_ball', 'model_configs', subdir, f'{i}.yaml')
+                    model_config_filename = os.path.join(results_dir, 'eval_ball', 'model_configs', subdir, f'{checkpoint_num}_{i}.yaml')
                     os.makedirs(os.path.dirname(model_config_filename), exist_ok=True)
                     with open(model_config_filename, 'w') as f:
                         yaml.dump(model_config_template, f)
-                    new_checkpoint_filename = os.path.join(results_dir, 'checkpoints', task_name, subdir, f'{i}.pt')
-                    task_args.append([a for a in [
+                    new_checkpoint_filename = os.path.join(results_dir, 'checkpoints', task_name, subdir, f'{checkpoint_num}_{i}.pt')
+                    print(model_config_filename)
+                    task_args.append([
                         '--env-config',
                             os.path.join(args.env_config_dir, 'train/ball.yaml'),
                         '--model-config',
@@ -542,13 +701,17 @@ def launch(args):
                         '--model-checkpoint',
                             new_checkpoint_filename,
                         '--checkpoint-interval', '1_000_000',
-                        '--run-id', f'{subdir}{checkpoint.split(".")[0]}_m{i}',
-                        '--wandb-id', f'{args.exp_id}__{task_name}__{{RUN_ID}}__test2', # XXX: We're just trying to figure out how long it takes to train the model for now
+                        '--max-steps-total', '10_000_000',
+                        '--eval-interval', '100_000',
+                        '--eval-results-dir',
+                            os.path.join(results_dir, 'learning_curve', task_name, '{RUN_ID}'),
+                        '--run-id', f'{subdir}{checkpoint_num}_m{i}',
+                        '--wandb-id', f'{args.exp_id}__{task_name}__{{RUN_ID}}',
                         '--cuda',
                         '--wandb' if args.wandb else None,
                         '--wandb-project', f'big_rl_{EXP_NAME}',
                         '--wandb-group', task_name,
-                    ] if a is not None])
+                    ])
         # Train with these models
         job_ids = run_train(
                 task_args,
@@ -556,14 +719,44 @@ def launch(args):
                 slurm=args.slurm,
                 subproc=args.subproc,
                 cpus_per_task=1,
-                mem_per_task=2,
-                max_steps_per_job=10,
-                duration=5,
+                mem_per_task=3,
+                gres=None,
+                max_steps_per_job=1,
+                duration=2,
                 time_per_job=time_per_job,
+                dependency=make_dependency_string(sum([job_ids_by_task[k] for k in checkpoint_subdirs], [])),
         )
         job_ids_by_task[task_name].extend(job_ids)
 
-    print(f'Launched {sum(len(v) for v in job_ids_by_task.values())} jobs (plotting not counted)')
+    task_name = 'plot_ball_learning_curve'
+    if task_name in args.actions:
+        task_args = [
+            '--plot-dir', os.path.join(results_dir, 'learning_curve'),
+            '--directories-tr', *[
+                os.path.join(results_dir, 'learning_curve', 'train_ball_tr', str(i))
+                for i in range(5)
+            ],
+            '--directories-pt-0', *[
+                os.path.join(results_dir, 'learning_curve', 'train_ball_pt', 'train_multi_task_pt_frozen', f'{i}_0')
+                for i in range(5)
+            ],
+            '--directories-pt-1', *[
+                os.path.join(results_dir, 'learning_curve', 'train_ball_pt', 'train_multi_task_pt_frozen', f'{i}_1')
+                for i in range(5)
+            ],
+            '--directories-pt-2', *[
+                os.path.join(results_dir, 'learning_curve', 'train_ball_pt', 'train_multi_task_pt_frozen', f'{i}_2')
+                for i in range(5)
+            ],
+        ]
+        run_plot_ball_learning_curve(
+                task_args, job_name=task_name,
+                slurm=args.slurm,
+                subproc=args.subproc,
+                dependency=make_dependency_string(job_ids_by_task['train_ball_pt'] + job_ids_by_task['train_ball_tr']),
+        )
+
+    print(f'Launched {sum(len(v) for v in job_ids_by_task.values())} jobs')
     for k,v in job_ids_by_task.items():
         print(f'{k}: {v}')
 
@@ -572,7 +765,7 @@ def init_arg_parser():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('actions', type=str, nargs='*',
-                        default=['train_single_task', 'train_multi_task_tr', 'train_multi_task_pt', 'train_multi_task_pt_frozen'],
+                        default=['train_single_task', 'train_multi_task_tr', 'train_multi_task_pt', 'train_multi_task_pt_frozen', 'eval--launcher', 'analyse', 'train_ball_tr', 'train_ball_pt--launcher'],
                         help='')
 
     parser.add_argument('--exp-id', type=str, required=True,
