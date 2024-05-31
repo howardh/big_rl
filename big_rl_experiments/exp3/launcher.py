@@ -76,7 +76,7 @@ def relaunch(actions: list[str], job_name: str | None = None, slurm: bool = Fals
         return []
 
 
-def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subproc: bool = False, cpus_per_task=2, mem_per_task=2, gres: list | str | None = [GRES], dependency=None, max_steps_per_job: int = 5, duration: int = 5, time_per_job=datetime.timedelta(days=1, hours=0, minutes=0, seconds=0)) -> list[int]:
+def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subproc: bool = False, cpus_per_task=2, mem_per_task=3, gres: list | str | None = [GRES], dependency=None, max_steps_per_job: int = 5, duration: int = 5, time_per_job=datetime.timedelta(days=1, hours=0, minutes=0, seconds=0)) -> list[int]:
     """
     Args:
         args: List of lists of arguments to pass to the training script. Each sublist is a set of arguments to pass to a single training job.
