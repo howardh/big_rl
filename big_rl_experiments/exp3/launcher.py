@@ -135,7 +135,7 @@ def run_train(args: list[list[str]], job_name='train', slurm: bool = False, subp
 
             **slurm_kwargs,
         )
-        #slurm.add_cmd('module load libffi') # Fixes the "ImportError: libffi.so.6: cannot open shared object file: No such file or directory" error
+        s.add_cmd('module load libffi') # Fixes the "ImportError: libffi.so.6: cannot open shared object file: No such file or directory" error
         s.add_cmd('module load python/3.10')
         s.add_cmd('source ENV2204/bin/activate')
         s.add_cmd('export PYTHONUNBUFFERED=1')
@@ -249,7 +249,7 @@ def run_eval(args: list[list[str]], job_name='eval', slurm: bool = False, subpro
         return []
 
 
-def run_analysis(args: list[list[str]], job_name='analysis', slurm: bool = False, subproc: bool = False, mem_per_task=2, dependency=None) -> list[int]:
+def run_probe_module_beliefs(args: list[list[str]], job_name='analysis', slurm: bool = False, subproc: bool = False, mem_per_task=2, dependency=None) -> list[int]:
     """
     Args:
         args: List of lists of arguments to pass to the training script. Each sublist is a set of arguments to pass to a single training job.
@@ -262,6 +262,73 @@ def run_analysis(args: list[list[str]], job_name='analysis', slurm: bool = False
     """
     script = f'big_rl_experiments/{EXP_NAME}/__main__.py'
     action = 'analysis'
+    if slurm:
+        slurm_kwargs = {}
+        if dependency is not None:
+            slurm_kwargs['dependency'] = dependency
+        s = Slurm(
+            job_name=job_name,
+            cpus_per_task=1,
+            mem=f'{mem_per_task}G',
+            output='/network/scratch/h/huanghow/slurm/%A.out',
+
+            # Ask for 1h (Should take about 5min)
+            time='1:00:00',
+
+            #partition='main',
+            partition='unkillable-cpu',
+            signal='USR1@120', # Send a signal to the job 120 seconds before it is killed
+
+            **slurm_kwargs,
+        )
+        #slurm.add_cmd('module load libffi') # Fixes the "ImportError: libffi.so.6: cannot open shared object file: No such file or directory" error
+        s.add_cmd('module load python/3.10')
+        s.add_cmd('source ENV2204/bin/activate')
+        s.add_cmd('export PYTHONUNBUFFERED=1')
+        #ps://stackoverflow.com/questions/76348342/how-to-use-trap-in-my-sbatch-bash-job-script-in-compute-canada
+        s.add_cmd("trap 'echo SIGUSR1 1>&2' SIGUSR1") # Handles time limit
+        s.add_cmd("trap 'echo SIGUSR1 1>&2' SIGTERM") # Handles preemption (I think this is needed if PreemptParameters isn't set with send_user_signal enabled. Check if it's set in /etc/slurm/slurm.conf)
+        job_ids = []
+        for a in args:
+            cmd = f'srun python {script} {action} {" ".join(a)}'
+
+            print('-'*80)
+            print(s.script(shell=SHELL))
+            print(cmd)
+            print('-'*80)
+
+            job_id = s.sbatch(cmd, shell=SHELL)
+            job_ids.append(job_id)
+        return job_ids
+    elif subproc:
+        for a in args:
+            cmd = f'python3 {script} {action} {" ".join(a)}'
+
+            print(cmd)
+
+            p = subprocess.Popen(cmd, shell=True) # if shell=True, then the subprocesses will have the same environment variables as this process. Needed to pass the CUDA_VISIBLE_DEVICES variable.
+            p.wait()
+        return []
+    else:
+        for i,a in enumerate(args):
+            os.environ.update({'SLURM_STEP_ID': str(i)})
+            main([action, *a])
+        return []
+
+
+def run_plot_module_beliefs(args: list[list[str]], job_name='plot_module_beliefs', slurm: bool = False, subproc: bool = False, mem_per_task=2, dependency=None) -> list[int]:
+    """
+    Args:
+        args: List of lists of arguments to pass to the training script. Each sublist is a set of arguments to pass to a single training job.
+        slurm: If True, submit the jobs to slurm. If False, run the jobs locally.
+        subproc: If True, run the jobs locally as subprocesses. If False, run the jobs in the current process.
+        mem_per_task: Memory per task in GB. Used only if `slurm` is True.
+        dependency: Job ID to depend on. Used only if `slurm` is True.
+        max_steps_per_job: Maximum number of steps to train for per job. Used only if `slurm` is True.
+        duration: Duration of the job in days. Used only if `slurm` is True.
+    """
+    script = f'big_rl_experiments/{EXP_NAME}/__main__.py'
+    action = 'plot_module_beliefs'
     if slurm:
         slurm_kwargs = {}
         if dependency is not None:
@@ -372,6 +439,58 @@ def run_plot_ball_learning_curve(args: list[str], job_name='plot_ball_learning_c
         return []
 
 
+def run_archive(args: list[str], job_name='archive', slurm: bool = False, subproc: bool = False, dependency=None) -> list[int]:
+    script = f'big_rl_experiments/{EXP_NAME}/__main__.py'
+    action = 'archive'
+    if slurm:
+        slurm_kwargs = {}
+        if dependency is not None:
+            slurm_kwargs['dependency'] = dependency
+        s = Slurm(
+            job_name=job_name,
+            cpus_per_task=1,
+            mem=f'1G',
+            output='/network/scratch/h/huanghow/slurm/%A.out',
+
+            # Ask for 1h
+            time='1:00:00',
+
+            #partition='main',
+            partition='unkillable-cpu',
+            signal='USR1@120', # Send a signal to the job 120 seconds before it is killed
+
+            **slurm_kwargs,
+        )
+        s.add_cmd('module load libffi') # Fixes the "ImportError: libffi.so.6: cannot open shared object file: No such file or directory" error
+        s.add_cmd('module load python/3.10')
+        s.add_cmd('source ENV2204/bin/activate')
+        s.add_cmd('export PYTHONUNBUFFERED=1')
+        #ps://stackoverflow.com/questions/76348342/how-to-use-trap-in-my-sbatch-bash-job-script-in-compute-canada
+        s.add_cmd("trap 'echo SIGUSR1 1>&2' SIGUSR1") # Handles time limit
+        s.add_cmd("trap 'echo SIGUSR1 1>&2' SIGTERM") # Handles preemption (I think this is needed if PreemptParameters isn't set with send_user_signal enabled. Check if it's set in /etc/slurm/slurm.conf)
+        
+        cmd = f'srun python {script} {action} {" ".join(args)}'
+
+        print('-'*80)
+        print(s.script(shell=SHELL))
+        print(cmd)
+        print('-'*80)
+
+        job_id = s.sbatch(cmd, shell=SHELL)
+        return [job_id]
+    elif subproc:
+        cmd = f'python3 {script} {action} {" ".join(args)}'
+
+        print(cmd)
+
+        p = subprocess.Popen(cmd, shell=True) # if shell=True, then the subprocesses will have the same environment variables as this process. Needed to pass the CUDA_VISIBLE_DEVICES variable.
+        p.wait()
+        return []
+    else:
+        main([action, *args])
+        return []
+
+
 def get_args(with_tasks: bool = True):
     args = sys.argv[1:]
     if not with_tasks:
@@ -395,6 +514,16 @@ def launch(args):
     max_steps_single_task = 30_000 if args.debug else args.max_steps_single_task
     max_steps_multi_task = (30_000 if args.debug else args.max_steps_multi_task)
     job_ids_by_task = defaultdict(list)
+
+    def make_launcher_task(task_name, dependency = None):
+        if f'{task_name}--launcher' in args.actions:
+            job_ids = relaunch(
+                actions = [task_name],
+                dependency = dependency,
+                slurm = args.slurm,
+                subproc = args.subproc,
+            )
+            job_ids_by_task[task_name].extend(job_ids)
 
     # Train inner models
     task_name = 'train_single_task'
@@ -536,16 +665,10 @@ def launch(args):
         job_ids_by_task[task_name].extend(job_ids)
 
     # Evaluation (eval each model on test task so we can compare their performance to the mutual info between hiden state and task)
-    task_name = 'eval--launcher'
-    if task_name in args.actions:
-        checkpoint_subdirs = ['train_multi_task_pt', 'train_multi_task_pt_frozen', 'train_multi_task_tr', 'train_single_task']
-        job_ids = relaunch(
-            actions = ['eval'],
-            dependency = make_dependency_string(sum([job_ids_by_task[k] for k in checkpoint_subdirs], [])),
-            slurm = args.slurm,
-            subproc = args.subproc,
-        )
-        job_ids_by_task[task_name].extend(job_ids)
+    make_launcher_task(
+            'eval',
+            dependency = make_dependency_string(sum([job_ids_by_task[k] for k in ['train_multi_task_pt', 'train_multi_task_pt_frozen', 'train_multi_task_tr', 'train_single_task']], [])),
+    )
 
     task_name = 'eval'
     if task_name in args.actions:
@@ -576,7 +699,7 @@ def launch(args):
         )
         job_ids_by_task[task_name].extend(job_ids)
 
-    task_name = 'analyse'
+    task_name = 'probe_module_beliefs'
     if task_name in args.actions:
         checkpoint_subdirs = ['train_multi_task_pt', 'train_multi_task_pt_frozen', 'train_multi_task_tr', 'train_single_task']
         task_args = [[
@@ -588,13 +711,31 @@ def launch(args):
             '--num-epochs', '10_000',
             '--cache-dataset',
         ] for subdir in checkpoint_subdirs for i in range(5)]
-        job_id = run_analysis(
+        job_id = run_probe_module_beliefs(
                 task_args,
                 job_name=task_name,
                 slurm=args.slurm,
                 subproc=args.subproc,
                 mem_per_task=2,
                 dependency=make_dependency_string(sum([job_ids_by_task[k] for k in checkpoint_subdirs], [])),
+        )
+        job_ids_by_task[task_name].extend(job_id)
+
+    task_name = 'plot_module_beliefs'
+    if task_name in args.actions:
+        checkpoint_subdirs = ['train_multi_task_pt', 'train_multi_task_pt_frozen', 'train_multi_task_tr', 'train_single_task']
+        task_args = [[
+            '--results-dir', results_dir,
+            '--output-dir',
+                os.path.join(results_dir, 'plots'),
+        ]]
+        job_id = run_plot_module_beliefs(
+                task_args,
+                job_name=task_name,
+                slurm=args.slurm,
+                subproc=args.subproc,
+                mem_per_task=2,
+                dependency=make_dependency_string(job_ids_by_task['probe_module_beliefs']),
         )
         job_ids_by_task[task_name].extend(job_id)
 
@@ -634,6 +775,7 @@ def launch(args):
             '--checkpoint-interval', '1_000_000',
             '--max-steps-total', '10_000_000',
             '--eval-interval', '100_000',
+            '--eval-episodes', '10',
             '--eval-results-dir',
                 os.path.join(results_dir, 'learning_curve', task_name, '{RUN_ID}'),
             '--run-id', f'{i}',
@@ -658,15 +800,10 @@ def launch(args):
         )
         job_ids_by_task[task_name].extend(job_ids)
 
-    task_name = 'train_ball_pt--launcher'
-    if task_name in args.actions:
-        job_ids = relaunch(
-            actions = ['train_ball_pt'],
-            dependency = make_dependency_string(job_ids_by_task['train_multi_task_pt_frozen']),
-            slurm = args.slurm,
-            subproc = args.subproc,
-        )
-        job_ids_by_task[task_name].extend(job_ids)
+    make_launcher_task(
+            'train_ball_pt',
+            dependency=make_dependency_string(job_ids_by_task['train_multi_task_pt_frozen'])
+    )
 
     task_name = 'train_ball_pt'
     if task_name in args.actions:
@@ -703,6 +840,7 @@ def launch(args):
                         '--checkpoint-interval', '1_000_000',
                         '--max-steps-total', '10_000_000',
                         '--eval-interval', '100_000',
+                        '--eval-episodes', '10',
                         '--eval-results-dir',
                             os.path.join(results_dir, 'learning_curve', task_name, '{RUN_ID}'),
                         '--run-id', f'{subdir}{checkpoint_num}_m{i}',
@@ -728,6 +866,11 @@ def launch(args):
         )
         job_ids_by_task[task_name].extend(job_ids)
 
+    make_launcher_task(
+            'train_ball_pt',
+            dependency=make_dependency_string(job_ids_by_task['train_multi_task_pt_frozen'])
+    )
+
     task_name = 'plot_ball_learning_curve'
     if task_name in args.actions:
         task_args = [
@@ -737,15 +880,15 @@ def launch(args):
                 for i in range(5)
             ],
             '--directories-pt-0', *[
-                os.path.join(results_dir, 'learning_curve', 'train_ball_pt', 'train_multi_task_pt_frozen', f'{i}_0')
+                os.path.join(results_dir, 'learning_curve', 'train_ball_pt', f'train_multi_task_pt_frozen{i}_m0')
                 for i in range(5)
             ],
             '--directories-pt-1', *[
-                os.path.join(results_dir, 'learning_curve', 'train_ball_pt', 'train_multi_task_pt_frozen', f'{i}_1')
+                os.path.join(results_dir, 'learning_curve', 'train_ball_pt', f'train_multi_task_pt_frozen{i}_m1')
                 for i in range(5)
             ],
             '--directories-pt-2', *[
-                os.path.join(results_dir, 'learning_curve', 'train_ball_pt', 'train_multi_task_pt_frozen', f'{i}_2')
+                os.path.join(results_dir, 'learning_curve', 'train_ball_pt', f'train_multi_task_pt_frozen{i}_m2')
                 for i in range(5)
             ],
         ]
@@ -754,6 +897,25 @@ def launch(args):
                 slurm=args.slurm,
                 subproc=args.subproc,
                 dependency=make_dependency_string(job_ids_by_task['train_ball_pt'] + job_ids_by_task['train_ball_tr']),
+        )
+
+    make_launcher_task(
+            'plot_ball_learning_curve',
+            dependency=make_dependency_string(job_ids_by_task['train_ball_pt'] + job_ids_by_task['train_ball_tr']),
+    )
+
+    task_name = 'archive'
+    if task_name in args.actions:
+        if 'ARCHIVE' not in os.environ:
+            print('ARCHIVE environment variable not set. Skipping archiving.')
+        archive_dir = os.path.join(os.environ['ARCHIVE'], 'results', 'big_rl_experiments', EXP_NAME)
+        archive_file = os.path.join(archive_dir, f'{args.exp_id}.tar')
+        run_archive(
+                [results_dir, archive_file],
+                job_name=task_name,
+                slurm=args.slurm,
+                subproc=args.subproc,
+                dependency=make_dependency_string(sum(job_ids_by_task.values(), [])),
         )
 
     print(f'Launched {sum(len(v) for v in job_ids_by_task.values())} jobs')
@@ -765,7 +927,7 @@ def init_arg_parser():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('actions', type=str, nargs='*',
-                        default=['train_single_task', 'train_multi_task_tr', 'train_multi_task_pt', 'train_multi_task_pt_frozen', 'eval--launcher', 'analyse', 'train_ball_tr', 'train_ball_pt--launcher'],
+                        default=['train_single_task', 'train_multi_task_tr', 'train_multi_task_pt', 'train_multi_task_pt_frozen', 'eval--launcher', 'analyse', 'train_ball_tr', 'train_ball_pt--launcher', 'plot_ball_learning_curve--launcher'],
                         help='')
 
     parser.add_argument('--exp-id', type=str, required=True,

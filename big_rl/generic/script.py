@@ -20,17 +20,17 @@ import torch.nn.utils
 import numpy as np
 import wandb
 
-from frankenstein.buffer.vec_history import VecHistoryBuffer
-from frankenstein.advantage.gae import generalized_advantage_estimate 
-from frankenstein.loss.policy_gradient import clipped_advantage_policy_gradient_loss
+from frankenstein.buffer.vec_history import VecHistoryBuffer # type: ignore
+from frankenstein.advantage.gae import generalized_advantage_estimate # type: ignore
+from frankenstein.loss.policy_gradient import clipped_advantage_policy_gradient_loss # type: ignore
 
 from big_rl.minigrid.arguments import init_parser_trainer, init_parser_model
 from big_rl.utils import torch_save, zip2, merge_space, generate_id
 from big_rl.utils.make_env import EnvGroup, get_config_from_yaml, make_env_from_yaml#, make_env_labels_from_yaml, make_env_group_labels_from_yaml, make_env_to_model_mapping_from_yaml, make_eval_only_from_yaml
 from big_rl.model import factory as model_factory
 import big_rl.mujoco.envs # type: ignore (import for the env registration)
-from .evaluate_model import main as evaluate_model_main_, init_arg_parser as evaluate_model_init_arg_parser_
-from .common import to_tensor, reset_hidden, get_action_dist_function
+from big_rl.generic.evaluate_model import main as evaluate_model_main_, init_arg_parser as evaluate_model_init_arg_parser_
+from big_rl.generic.common import to_tensor, reset_hidden, get_action_dist_function
 
 
 WANDB_PROJECT_NAME = 'ppo-generic'
@@ -719,12 +719,14 @@ def init_arg_parser():
                         help='Number of transitions between checkpoints.')
     parser.add_argument('--eval-interval', type=int, default=1_000_000,
                         help='Number of transitions between evaluations.')
-    parser.add_argument('--eval-episodes', type=int, default=10,
+    parser.add_argument('--eval-episodes', type=int, default=0,
                         help='Number of episodes to evaluate the model for.')
     parser.add_argument('--eval-results-dir', type=str, default=None,
                         help='Directory in which to save evaluation results. If not specified, then the results are not saved.')
     parser.add_argument('--ignore-checkpoint-optimizer', action='store_true',
                         help='If set, then the optimizer state is not loaded from the checkpoint.')
+    parser.add_argument('--step-count-label', type=str, default=None,
+                        help='Label to use for the step count saved in the checkpoint. This is useful if we want to continue training from a checkpoint, but want to start the step count from a different value (e.g. for the purposes of `--max-step` or `--max-step-total`).')
     parser.add_argument('--sync-vector-env', action='store_true',
                         help='If set, then the vectorized environments are synchronized. This is useful for debugging, but is likely slower, so it should not be used for training.')
 
@@ -844,6 +846,7 @@ def main(args, callbacks=Callbacks()):
     lr_scheduler = None # TODO
 
     # Load checkpoint
+    step_count_key = 'step' if args.step_count_label is None else f'step ({args.step_count_label})'
     start_step = 0
     checkpoint = None
     is_resume = False # Useful info for callbacks
@@ -867,8 +870,13 @@ def main(args, callbacks=Callbacks()):
             optimizer.load_state_dict(checkpoint['optimizer'])
         if lr_scheduler is not None and 'lr_scheduler' in checkpoint:
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-        start_step = checkpoint.get('step', 0)
+        start_step = checkpoint.get(step_count_key, 0)
         print(f'Loaded checkpoint successfully. Starting from step {start_step}.')
+
+    if checkpoint is None:
+        all_step_counts = {'step': 0}
+    else:
+        all_step_counts = {k: v for k,v in checkpoint.items() if k.startswith('step')}
 
     if callbacks.on_checkpoint_load is not None:
         callbacks.on_checkpoint_load(locals())
@@ -911,7 +919,9 @@ def main(args, callbacks=Callbacks()):
         torch_save({
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
-            'step': x['step'],
+            **all_step_counts,
+            'step': all_step_counts['step'] + (x['step'] - start_step),
+            step_count_key: x['step'],
         }, filename+'.tmp')
         os.replace(filename+'.tmp', filename) # POSIX requires that this is atomic
         print(f'Saved checkpoint to {os.path.abspath(filename)}')

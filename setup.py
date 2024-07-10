@@ -31,7 +31,7 @@ setup(name='big_rl',
         'lxml',
 
         # Atari
-        'gymnasium[atari,accept-rom-license]',
+        #'gymnasium[atari,accept-rom-license]',
 
         # Dev stuff
         'pytest',

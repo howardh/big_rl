@@ -24,6 +24,10 @@ def get_xy_from_dir(directory):
     ]
     files = sorted(files, key=lambda x: x[0])
 
+    # Check that the list isn't empty
+    if len(files) == 0:
+        raise ValueError(f'No files found in {directory}')
+
     # Check if it starts at 0. If not, then shift all steps.
     if files[0][0] != 0:
         shift = files[0][0]

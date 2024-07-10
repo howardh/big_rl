@@ -102,70 +102,80 @@ def train_belief_model(data, num_epochs=10, plot_dir: str | None = None):
             )
 
     if plot_dir is not None:
-        # Plot loss wrt step
-        colors = list(mcd.TABLEAU_COLORS.values())
-        plt.figure()
-        for i in range(num_core_modules):
-            for j in range(num_splits):
-                plt.plot(
-                    losses_over_time[i][j],
-                    c=colors[j],
-                    alpha=0.03,
-                )
-        for i in range(num_core_modules):
-            plt.plot(
-                # axis 2 = number of episodes, axis 0 = train-val split
-                np.array(losses_over_time[i]).mean(axis=2).mean(axis=0),
-                label=f'Module {i}',
-                c=colors[i],
-            )
-        plt.xlabel('Step')
-        plt.ylabel('Loss')
-        plt.yscale('log')
-        plt.grid()
-        plt.legend()
-        filename = os.path.join(plot_dir, 'loss_over_time.png')
-        plt.savefig(filename)
-        print(f'Plot saved to {os.path.abspath(filename)}')
-        plt.close()
-
-        # Plot loss over time
-        _, ax = plt.subplots(1, num_core_modules, figsize=(5*num_core_modules, 5), sharey=True)
-        for i in range(num_core_modules):
-            ax[i].plot(
-                    list(zip(*loss_history[i]['train'])),
-                    c='tab:blue',
-                    alpha=0.1,
-            )
-            ax[i].plot(
-                    list(zip(*loss_history[i]['val'])),
-                    c='tab:orange',
-                    alpha=0.1,
-            )
-            ax[i].plot(
-                    np.mean(loss_history[i]['train'], axis=0),
-                    label='train',
-                    c='tab:blue',
-            )
-            ax[i].plot(
-                    np.mean(loss_history[i]['val'], axis=0),
-                    label='val',
-                    c='tab:orange',
-            )
-            ax[i].set_title(f'Module {i}')
-            ax[i].set_xlabel('Epoch')
-            ax[i].set_ylabel('Loss')
-            ax[i].set_yscale('log')
-            ax[i].grid()
-            ax[i].legend()
-        filename = os.path.join(plot_dir, 'loss.png')
-        plt.savefig(filename)
-        print(f'Plot saved to {os.path.abspath(filename)}')
-        plt.close()
+        plot(loss_history, losses_over_time, plot_dir)
 
     results = [np.mean(l['val'], axis=0).min() for l in loss_history]
 
-    return results
+    return {
+        'loss_history': loss_history,
+        'losses_over_time': losses_over_time,
+        'results': results,
+    }
+
+
+def plot(loss_history, losses_over_time, plot_dir):
+    # Plot loss wrt steps within an episode
+    colors = list(mcd.TABLEAU_COLORS.values())
+    plt.figure()
+    num_core_modules = len(losses_over_time)
+    for i in range(num_core_modules):
+        num_splits = len(losses_over_time[i])
+        for j in range(num_splits):
+            plt.plot(
+                losses_over_time[i][j],
+                c=colors[i],
+                alpha=0.03,
+            )
+    for i in range(num_core_modules):
+        plt.plot(
+            # axis 2 = number of episodes, axis 0 = train-val split
+            np.array(losses_over_time[i]).mean(axis=2).mean(axis=0),
+            label=f'Module {i}',
+            c=colors[i],
+        )
+    plt.xlabel('Step')
+    plt.ylabel('Loss')
+    plt.yscale('log')
+    plt.grid()
+    plt.legend()
+    filename = os.path.join(plot_dir, 'loss_over_time.png')
+    plt.savefig(filename)
+    print(f'Plot saved to {os.path.abspath(filename)}')
+    plt.close()
+
+    # Plot loss over the course of optimizing the linear probe
+    _, ax = plt.subplots(1, num_core_modules, figsize=(5*num_core_modules, 5), sharey=True)
+    for i in range(num_core_modules):
+        ax[i].plot(
+                list(zip(*loss_history[i]['train'])),
+                c='tab:blue',
+                alpha=0.1,
+        )
+        ax[i].plot(
+                list(zip(*loss_history[i]['val'])),
+                c='tab:orange',
+                alpha=0.1,
+        )
+        ax[i].plot(
+                np.mean(loss_history[i]['train'], axis=0),
+                label='train',
+                c='tab:blue',
+        )
+        ax[i].plot(
+                np.mean(loss_history[i]['val'], axis=0),
+                label='val',
+                c='tab:orange',
+        )
+        ax[i].set_title(f'Module {i}')
+        ax[i].set_xlabel('Epoch')
+        ax[i].set_ylabel('Loss')
+        ax[i].set_yscale('log')
+        ax[i].grid()
+        ax[i].legend()
+    filename = os.path.join(plot_dir, 'loss.png')
+    plt.savefig(filename)
+    print(f'Plot saved to {os.path.abspath(filename)}')
+    plt.close()
 
 
 ##################################################
